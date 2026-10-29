@@ -1,0 +1,29 @@
+---
+source: crates/hydra-symbols/tests/fixtures.rs
+expression: to_svg(&drawing.primitives)
+---
+<svg xmlns="http://www.w3.org/2000/svg" width="34.00mm" height="20.50mm" viewBox="-22.00 -10.25 34.00 20.50">
+<g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
+<polygon points="-15.00,-5.00 -5.00,-5.00 -5.00,5.00 -15.00,5.00"/>
+<polyline points="-11.67,5.00 -11.67,-5.00"/>
+<polygon points="-11.67,-5.00 -11.07,-3.40 -12.27,-3.40" fill="black"/>
+<polyline points="-8.33,-5.00 -8.33,5.00"/>
+<polygon points="-8.33,5.00 -8.93,3.40 -7.73,3.40" fill="black"/>
+<polygon points="-5.00,-5.00 5.00,-5.00 5.00,5.00 -5.00,5.00"/>
+<polyline points="-1.67,5.00 1.67,-5.00"/>
+<polygon points="1.67,-5.00 1.73,-3.29 0.59,-3.67" fill="black"/>
+<polyline points="-1.67,-5.00 1.67,5.00"/>
+<polygon points="1.67,5.00 0.59,3.67 1.73,3.29" fill="black"/>
+<polyline points="-1.67,-5.00 -1.67,-8.00"/>
+<text x="-1.07" y="-7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<polyline points="1.67,-5.00 1.67,-8.00"/>
+<text x="2.27" y="-7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<polyline points="-1.67,5.00 -1.67,8.00"/>
+<text x="-1.07" y="7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<polyline points="1.67,5.00 1.67,8.00"/>
+<text x="2.27" y="7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<polygon points="-20.00,-3.00 -15.00,-3.00 -15.00,3.00 -20.00,3.00"/>
+<polyline points="-18.75,3.00 -16.25,-3.00"/>
+<polyline points="5.00,0.00 5.42,2.10 6.25,-2.10 7.08,2.10 7.92,-2.10 8.75,2.10 9.58,-2.10 10.00,0.00"/>
+</g>
+</svg>

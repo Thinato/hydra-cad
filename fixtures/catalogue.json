@@ -1,0 +1,85 @@
+{
+  "manufacturers": [
+    {"id": "argo-hytos", "name": "Argo-Hytos"},
+    {"id": "demo", "name": "Demo (fixture data, not a real product)"}
+  ],
+  "symbol_defs": [
+    {
+      "id": "sym-4-3-closed-centre", "version": 1,
+      "definition": {
+        "kind": "directional_valve",
+        "ports": [
+          {"name": "A", "side": "top"}, {"name": "B", "side": "top"},
+          {"name": "P", "side": "bottom"}, {"name": "T", "side": "bottom"}
+        ],
+        "positions": [
+          {"flows": [["P", "A"], ["B", "T"]]},
+          {"blocked": ["A", "B", "P", "T"]},
+          {"flows": [["P", "B"], ["A", "T"]]}
+        ],
+        "normal_position": 1,
+        "left": ["solenoid", "spring"],
+        "right": ["solenoid", "spring"]
+      }
+    },
+    {
+      "id": "sym-4-3-tandem-centre", "version": 1,
+      "definition": {
+        "kind": "directional_valve",
+        "ports": [
+          {"name": "A", "side": "top"}, {"name": "B", "side": "top"},
+          {"name": "P", "side": "bottom"}, {"name": "T", "side": "bottom"}
+        ],
+        "positions": [
+          {"flows": [["P", "A"], ["B", "T"]]},
+          {"links": [["P", "T"]], "blocked": ["A", "B"]},
+          {"flows": [["P", "B"], ["A", "T"]]}
+        ],
+        "normal_position": 1,
+        "left": ["lever", "detent"],
+        "right": ["pilot", "spring"]
+      }
+    },
+    {
+      "id": "sym-4-2-spring-return", "version": 1,
+      "definition": {
+        "kind": "directional_valve",
+        "ports": [
+          {"name": "A", "side": "top"}, {"name": "B", "side": "top"},
+          {"name": "P", "side": "bottom"}, {"name": "T", "side": "bottom"}
+        ],
+        "positions": [
+          {"flows": [["P", "A"], ["B", "T"]]},
+          {"flows": [["P", "B"], ["A", "T"]]}
+        ],
+        "normal_position": 1,
+        "left": ["solenoid"],
+        "right": ["spring"]
+      }
+    },
+    {"id": "sym-check-spring", "version": 1, "definition": {"kind": "check", "spring": true}},
+    {"id": "sym-check", "version": 1, "definition": {"kind": "check"}},
+    {"id": "sym-relief-adjustable", "version": 1, "definition": {"kind": "relief", "adjustable": true}},
+    {"id": "sym-orifice", "version": 1, "definition": {"kind": "orifice"}},
+    {"id": "sym-orifice-adjustable", "version": 1, "definition": {"kind": "orifice", "adjustable": true}}
+  ],
+  "valve_types": [
+    {
+      "id": "vt-rpe3-06-z11", "manufacturer_id": "argo-hytos", "series": "RPE3-06", "code": "Z11",
+      "symbol_def_id": "sym-4-3-closed-centre", "mounting": "ISO 4401-03"
+    },
+    {
+      "id": "vt-demo-4-2", "manufacturer_id": "demo", "series": "DEMO-06", "code": "4-2-S",
+      "symbol_def_id": "sym-4-2-spring-return", "mounting": "ISO 4401-03"
+    },
+    {
+      "id": "vt-demo-4-3-tandem", "manufacturer_id": "demo", "series": "DEMO-06", "code": "4-3-T",
+      "symbol_def_id": "sym-4-3-tandem-centre", "mounting": "ISO 4401-03"
+    },
+    {"id": "vt-demo-check", "manufacturer_id": "demo", "series": "DEMO-CV", "code": "1", "symbol_def_id": "sym-check-spring"},
+    {"id": "vt-demo-check-free", "manufacturer_id": "demo", "series": "DEMO-CV", "code": "0", "symbol_def_id": "sym-check"},
+    {"id": "vt-demo-relief", "manufacturer_id": "demo", "series": "DEMO-RV", "code": "210", "symbol_def_id": "sym-relief-adjustable"},
+    {"id": "vt-demo-orifice", "manufacturer_id": "demo", "series": "DEMO-OR", "code": "0.8", "symbol_def_id": "sym-orifice"},
+    {"id": "vt-demo-throttle", "manufacturer_id": "demo", "series": "DEMO-TH", "code": "1", "symbol_def_id": "sym-orifice-adjustable"}
+  ]
+}

@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/hydra-core", "crates/hydra-symbols", "crates/hydra-db", "crates/hydra"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/thinato/hydra-cad"
+
+[workspace.dependencies]
+hydra-core = { path = "crates/hydra-core" }
+hydra-symbols = { path = "crates/hydra-symbols" }
+hydra-db = { path = "crates/hydra-db" }
+
+anyhow = "1"
+bytemuck = { version = "1", features = ["derive"] }
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "wgpu", "wayland", "x11"] }
+egui_dock = "0.21"
+glam = { version = "0.34", features = ["bytemuck"] }
+gltf = "1.4"
+insta = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"

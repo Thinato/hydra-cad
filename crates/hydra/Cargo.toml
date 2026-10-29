@@ -1,0 +1,20 @@
+[package]
+name = "hydra"
+description = "Hydra desktop app: hydraulic circuits, ISO 1219 schematics and 3D valve viewing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hydra-core.workspace = true
+hydra-symbols.workspace = true
+anyhow.workspace = true
+bytemuck.workspace = true
+eframe.workspace = true
+egui_dock.workspace = true
+glam.workspace = true
+gltf.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

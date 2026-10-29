@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "name": "Demo manifold (stand-in until the Germani transcription is added)",
+  "components": [
+    {"id": "P", "kind": "port", "label": "P"},
+    {"id": "T", "kind": "port", "label": "T"},
+    {"id": "A1", "kind": "port", "label": "A1"},
+    {"id": "B1", "kind": "port", "label": "B1"},
+    {"id": "A2", "kind": "port", "label": "A2"},
+    {"id": "B2", "kind": "port", "label": "B2"},
+    {"id": "RV1", "kind": "valve", "valve_type": "vt-demo-relief"},
+    {"id": "K1", "kind": "valve", "valve_type": "vt-demo-check"},
+    {"id": "V1", "kind": "valve", "valve_type": "vt-rpe3-06-z11"},
+    {"id": "V2", "kind": "valve", "valve_type": "vt-demo-4-2"},
+    {"id": "O1", "kind": "valve", "valve_type": "vt-demo-orifice"}
+  ],
+  "nets": [
+    {"id": "n-p", "name": "P", "ports": [
+      {"component": "RV1", "port": "P"}, {"component": "P", "port": "port"}, {"component": "K1", "port": "A"}
+    ]},
+    {"id": "n-supply", "name": "P after check", "ports": [
+      {"component": "K1", "port": "B"}, {"component": "V1", "port": "P"}, {"component": "V2", "port": "P"}
+    ]},
+    {"id": "n-t", "name": "T", "ports": [
+      {"component": "T", "port": "port"}, {"component": "RV1", "port": "T"},
+      {"component": "V1", "port": "T"}, {"component": "V2", "port": "T"}
+    ]},
+    {"id": "n-a1", "ports": [{"component": "V1", "port": "A"}, {"component": "A1", "port": "port"}]},
+    {"id": "n-b1", "ports": [{"component": "V1", "port": "B"}, {"component": "B1", "port": "port"}]},
+    {"id": "n-a2", "ports": [{"component": "V2", "port": "A"}, {"component": "O1", "port": "A"}]},
+    {"id": "n-a2-out", "ports": [{"component": "O1", "port": "B"}, {"component": "A2", "port": "port"}]},
+    {"id": "n-b2", "ports": [{"component": "V2", "port": "B"}, {"component": "B2", "port": "port"}]}
+  ],
+  "layout": {
+    "components": {
+      "P": {"x": 0, "y": 60},
+      "T": {"x": 0, "y": 80},
+      "RV1": {"x": 20, "y": 68, "rotation": 180},
+      "K1": {"x": 40, "y": 60, "rotation": 90},
+      "V1": {"x": 70, "y": 40},
+      "V2": {"x": 125, "y": 40},
+      "A1": {"x": 60, "y": 18},
+      "B1": {"x": 80, "y": 18},
+      "O1": {"x": 115, "y": 20},
+      "A2": {"x": 115, "y": 4},
+      "B2": {"x": 140, "y": 18}
+    }
+  }
+}
