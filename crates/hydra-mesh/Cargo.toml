@@ -1,0 +1,12 @@
+[package]
+name = "hydra-mesh"
+description = "Hydra 3D models: load glTF assets into triangle meshes and check them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+glam.workspace = true
+gltf.workspace = true
+tracing.workspace = true

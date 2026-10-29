@@ -15,12 +15,31 @@ pub struct Shared {
     pub catalogue: Catalogue,
     /// sha256 of each valve type's datasheet.
     pub datasheets: HashMap<CatalogueRef, String>,
+    /// sha256 of the 3D model (glb) of each valve type and block that has one.
+    pub valve_models: HashMap<CatalogueRef, String>,
+    pub block_models: HashMap<CatalogueRef, String>,
     /// `None` when running offline from a fixture file: browsing works, editing does not.
     pub db: Option<Db>,
     pub error: Option<String>,
     pub notice: Option<String>,
     /// A valve type the user asked to place in the schematic.
     pub place: Option<CatalogueRef>,
+}
+
+impl Shared {
+    /// Offline, until a database connection is set.
+    pub fn new(catalogue: Catalogue) -> Self {
+        Shared {
+            catalogue,
+            datasheets: HashMap::new(),
+            valve_models: HashMap::new(),
+            block_models: HashMap::new(),
+            db: None,
+            error: None,
+            notice: None,
+            place: None,
+        }
+    }
 }
 
 #[derive(Default)]

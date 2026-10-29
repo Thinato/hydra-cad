@@ -1,7 +1,7 @@
 //! Edits to a circuit. The editor changes a circuit only through [`Command`]s, which gives
 //! undo/redo and a readable log of what changed.
 
-use crate::{Circuit, Component, ComponentKind, Net, Placement, PortRef};
+use crate::{Assembly, CatalogueRef, Circuit, Component, ComponentKind, Net, Placement, PortRef};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
@@ -21,6 +21,15 @@ pub enum Command {
     SetLabel { id: String, label: String },
     /// Rename the circuit.
     Rename { name: String },
+    /// Build the circuit on a block, or on none. Mounts are kept only for a new version of the
+    /// same block.
+    SetBlock { block: Option<CatalogueRef> },
+    /// Mount a valve on a face of the circuit's block, taking off any valve already there, or
+    /// take it off with `None`.
+    Mount {
+        component: String,
+        face: Option<String>,
+    },
 }
 
 impl Command {
@@ -34,6 +43,16 @@ impl Command {
             Command::Disconnect { port } => format!("Disconnect {port}"),
             Command::SetLabel { id, label } => format!("Rename {id} to {label}"),
             Command::Rename { name } => format!("Rename circuit to {name}"),
+            Command::SetBlock { block: Some(b) } => format!("Use block {b}"),
+            Command::SetBlock { block: None } => "Remove the block".into(),
+            Command::Mount {
+                component,
+                face: Some(f),
+            } => format!("Mount {component} on {f}"),
+            Command::Mount {
+                component,
+                face: None,
+            } => format!("Unmount {component}"),
         }
     }
 
@@ -57,6 +76,9 @@ impl Command {
                 exists(circuit, id)?;
                 circuit.components.retain(|c| &c.id != id);
                 circuit.layout.components.remove(id);
+                if let Some(a) = &mut circuit.assembly {
+                    a.mounts.remove(id);
+                }
                 let touched = nets_of(circuit, id);
                 for net in &mut circuit.nets {
                     net.ports.retain(|p| &p.component != id);
@@ -140,6 +162,49 @@ impl Command {
                     return Err("a circuit needs a name".into());
                 }
                 circuit.name = name.trim().to_string();
+            }
+            Command::SetBlock { block } => {
+                let current = circuit.assembly.as_ref().map(|a| &a.block);
+                if current == block.as_ref() {
+                    return Err("the circuit already uses that block".into());
+                }
+                let old = circuit.assembly.take();
+                circuit.assembly = block.clone().map(|block| Assembly {
+                    mounts: old
+                        .filter(|o| o.block.key == block.key)
+                        .map(|o| o.mounts)
+                        .unwrap_or_default(),
+                    block,
+                });
+            }
+            Command::Mount { component, face } => {
+                let is_valve = circuit
+                    .component(component)
+                    .map(|c| matches!(c.kind, ComponentKind::Valve { .. }));
+                match is_valve {
+                    None => return Err(format!("{component} is not in the circuit")),
+                    Some(false) => return Err(format!("{component} is not a valve")),
+                    Some(true) => {}
+                }
+                let assembly = circuit
+                    .assembly
+                    .as_mut()
+                    .ok_or("choose a block for the circuit first")?;
+                match face {
+                    Some(face) => {
+                        if assembly.mounts.get(component) == Some(face) {
+                            return Err(format!("{component} is already on {face}"));
+                        }
+                        // A valve already on that face comes off it.
+                        assembly.mounts.retain(|_, f| f != face);
+                        assembly.mounts.insert(component.clone(), face.clone());
+                    }
+                    None => {
+                        if assembly.mounts.remove(component).is_none() {
+                            return Err(format!("{component} is not mounted"));
+                        }
+                    }
+                }
             }
         }
         Ok(())

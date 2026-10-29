@@ -1,11 +1,10 @@
 mod catalogue;
 mod db;
 mod editor;
-mod mesh;
+mod models;
 mod schematic;
 mod viewer3d;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
@@ -15,9 +14,8 @@ use hydra_core::{Catalogue, Circuit};
 use catalogue::{CataloguePanel, Shared};
 use db::{Db, Reply};
 
-// ponytail: dev paths baked in at compile time; models move to the asset cache in phase 4.
+// ponytail: dev paths baked in at compile time; installers set real defaults in phase 6.
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-const PLACEHOLDER_VALVE: &str = "assets/valve-cetop3-placeholder.glb";
 const DEMO_CIRCUIT: &str = "fixtures/circuits/demo-manifold.json";
 const CATALOGUE: &str = "fixtures/catalogue.json";
 /// Postgres URL of the shared database; without it the app runs read-only on a fixture catalogue.
@@ -34,7 +32,7 @@ struct Panels {
     shared: Shared,
     schematic: editor::SchematicEditor,
     catalogue: CataloguePanel,
-    viewer: viewer3d::Viewer3d,
+    models: models::ModelPanel,
 }
 
 impl TabViewer for Panels {
@@ -56,7 +54,7 @@ impl TabViewer for Panels {
         match tab {
             Tab::Schematic => self.schematic.ui(ui, &mut self.shared),
             Tab::Catalogue => self.catalogue.ui(ui, &mut self.shared),
-            Tab::View3d => self.viewer.ui(ui),
+            Tab::View3d => self.models.ui(ui, &self.shared, &mut self.schematic),
         }
     }
 
@@ -74,6 +72,9 @@ impl Panels {
                 Reply::Catalogue(loaded) => {
                     self.shared.catalogue = loaded.catalogue;
                     self.shared.datasheets = loaded.datasheets;
+                    self.shared.valve_models = loaded.valve_models;
+                    self.shared.block_models = loaded.block_models;
+                    self.models.retry_failed();
                     self.shared.error = None;
                 }
                 Reply::Saved(r) => {
@@ -85,11 +86,12 @@ impl Panels {
                 }
                 Reply::Imported(r) => {
                     self.shared.notice = Some(format!(
-                        "Imported {} manufacturers, {} symbols, {} valve types and {} parts ({} rows unchanged).",
+                        "Imported {} manufacturers, {} symbols, {} valve types, {} parts and {} blocks ({} rows unchanged).",
                         r.manufacturers_added,
                         r.symbol_defs_added,
                         r.valve_types_added,
                         r.parts_added,
+                        r.blocks_added,
                         r.unchanged
                     ))
                 }
@@ -109,6 +111,7 @@ impl Panels {
                     self.schematic
                         .revision_preview(n, &c, &self.shared.catalogue)
                 }
+                Reply::Model(sha, mesh) => self.models.loaded(sha, mesh),
                 Reply::Error(e) => self.shared.error = Some(e),
             }
         }
@@ -181,16 +184,7 @@ fn main() -> eframe::Result {
         "Hydra",
         options,
         Box::new(move |cc| {
-            let mesh =
-                mesh::load_glb(&std::fs::read(PathBuf::from(ROOT).join(PLACEHOLDER_VALVE))?)?;
-            let mut shared = Shared {
-                catalogue: Catalogue::default(),
-                datasheets: HashMap::new(),
-                db: None,
-                error: None,
-                notice: None,
-                place: None,
-            };
+            let mut shared = Shared::new(Catalogue::default());
             match database_url {
                 Some(url) => shared.db = Some(Db::connect(url, cc.egui_ctx.clone())),
                 None => match read(&catalogue_path)
@@ -225,7 +219,11 @@ fn main() -> eframe::Result {
                     shared,
                     schematic,
                     catalogue: CataloguePanel::default(),
-                    viewer: viewer3d::Viewer3d::new(cc, &mesh)?,
+                    models: models::ModelPanel::new(
+                        viewer3d::Viewer3d::new(cc)
+                            .inspect_err(|e| tracing::error!("3D view: {e:#}"))
+                            .ok(),
+                    ),
                 },
             }))
         }),

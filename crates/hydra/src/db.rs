@@ -1,6 +1,7 @@
 //! Database access on a background thread. The UI stays synchronous and talks to it over channels.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use eframe::egui;
@@ -8,6 +9,7 @@ use hydra_core::{Catalogue, CatalogueRef, Circuit, ValveType};
 use hydra_db::{
     CircuitSummary, ImportReport, LoadedCatalogue, OpenedCircuit, PgPool, RevisionSummary,
 };
+use hydra_mesh::Mesh;
 
 pub enum Request {
     LoadCatalogue,
@@ -37,6 +39,8 @@ pub enum Request {
         sha256: String,
         extension: &'static str,
     },
+    /// Fetch a 3D model (glb) into the local cache and load it.
+    LoadModel(String),
 }
 
 /// Each request answers with its own outcome first; a catalogue reload follows any write.
@@ -63,6 +67,8 @@ pub enum Reply {
     CircuitFailed(String),
     Revisions(Vec<RevisionSummary>),
     RevisionPreview(i32, Circuit),
+    /// A [`Request::LoadModel`] answer, by hash.
+    Model(String, Result<Arc<Mesh>, String>),
     Error(String),
 }
 
@@ -138,6 +144,7 @@ fn failed(request: &Request, e: String) -> Reply {
     match request {
         Request::SaveValveType(_) => Reply::SaveFailed(e),
         Request::SaveCircuit { .. } => Reply::CircuitSaveFailed(e),
+        Request::LoadModel(sha) => Reply::Model(sha.clone(), Err(e)),
         Request::RestoreRevision { .. }
         | Request::OpenCircuit(_)
         | Request::ListCircuits
@@ -157,6 +164,9 @@ async fn handle(pool: &PgPool, request: Request) -> Vec<Reply> {
                 Ok(()) => Vec::new(),
                 Err(e) => vec![Reply::Error(e)],
             };
+        }
+        Request::LoadModel(sha) => {
+            return vec![Reply::Model(sha.clone(), load_model(pool, sha).await)];
         }
         Request::SaveValveType(v) => (db::save_valve_type(pool, v).await.map(Reply::Saved), true),
         Request::AttachDatasheet(r, pdf) => (
@@ -229,6 +239,22 @@ async fn reload(pool: &PgPool) -> Reply {
 
 /// Fetch an asset into the local cache if needed, then open it with the system viewer.
 async fn open_asset(pool: &PgPool, sha256: &str, extension: &str) -> Result<(), String> {
+    let (path, _) = fetch_asset(pool, sha256, extension).await?;
+    open_with_system(&path).map_err(|e| format!("could not open {}: {e}", path.display()))
+}
+
+/// Fetch a model into the local cache if needed, then load it off the UI thread.
+async fn load_model(pool: &PgPool, sha256: &str) -> Result<Arc<Mesh>, String> {
+    let (_, bytes) = fetch_asset(pool, sha256, "glb").await?;
+    hydra_mesh::load_glb(&bytes).map(Arc::new)
+}
+
+/// An asset's cache path and bytes, from the local cache or else from the database.
+async fn fetch_asset(
+    pool: &PgPool,
+    sha256: &str,
+    extension: &str,
+) -> Result<(PathBuf, Vec<u8>), String> {
     // The hash names a file on disk, so only ever use one that is exactly a sha256.
     if !is_sha256_hex(sha256) {
         return Err(format!(
@@ -237,8 +263,12 @@ async fn open_asset(pool: &PgPool, sha256: &str, extension: &str) -> Result<(), 
     }
     let path = cache_dir().join(format!("{sha256}.{extension}"));
     // Re-check cached files too: one could be truncated or from an older build.
-    let cached_ok = std::fs::read(&path).is_ok_and(|b| hydra_db::sha256_hex(&b) == sha256);
-    if !cached_ok {
+    if let Ok(bytes) = std::fs::read(&path)
+        && hydra_db::sha256_hex(&bytes) == sha256
+    {
+        return Ok((path, bytes));
+    }
+    {
         let bytes = hydra_db::asset_bytes(pool, sha256)
             .await
             .map_err(|e| e.to_string())?
@@ -253,9 +283,12 @@ async fn open_asset(pool: &PgPool, sha256: &str, extension: &str) -> Result<(), 
             std::fs::write(&partial, &bytes)?;
             std::fs::rename(&partial, &path)
         };
-        write().map_err(|e| format!("could not cache {}: {e}", path.display()))?;
+        // The bytes are good either way; a cache that can't be written only costs a re-fetch.
+        if let Err(e) = write() {
+            tracing::warn!("could not cache {}: {e}", path.display());
+        }
+        Ok((path, bytes))
     }
-    open_with_system(&path).map_err(|e| format!("could not open {}: {e}", path.display()))
 }
 
 fn is_sha256_hex(s: &str) -> bool {
@@ -310,6 +343,56 @@ mod tests {
         }
         assert_eq!(replies.len(), n, "unexpected extra replies");
         replies
+    }
+
+    #[test]
+    #[ignore = "needs DATABASE_URL (Postgres with the fixture catalogue imported)"]
+    fn worker_fetches_and_loads_models() {
+        let url = std::env::var("DATABASE_URL").unwrap();
+        let glb = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/models/demo-block.glb"
+        ))
+        .unwrap();
+        let block = hydra_db::ModelOwner::Block(CatalogueRef::new("blk-demo", 1));
+        let sha = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let pool = hydra_db::connect(&url).await.unwrap();
+            hydra_db::attach_model(&pool, &block, &glb, None)
+                .await
+                .unwrap()
+        });
+
+        let db = Db::connect(url, egui::Context::default());
+        let [Reply::Catalogue(loaded)] = &take(&db, 1)[..] else {
+            panic!("expected the catalogue")
+        };
+        assert_eq!(
+            loaded.block_models.get(&CatalogueRef::new("blk-demo", 1)),
+            Some(&sha)
+        );
+        // Twice: once from the database, once from the local cache.
+        let cached = cache_dir().join(format!("{sha}.glb"));
+        let _ = std::fs::remove_file(&cached);
+        for _ in 0..2 {
+            db.send(Request::LoadModel(sha.clone()));
+            let [Reply::Model(got, Ok(mesh))] = &take(&db, 1)[..] else {
+                panic!("expected the model")
+            };
+            assert_eq!(got, &sha);
+            let (lo, hi) = mesh.bounds();
+            assert!((hi[0] - lo[0] - 130.0).abs() < 0.5, "{lo:?}..{hi:?}");
+            assert!(cached.exists(), "the first load caches the model");
+        }
+        db.send(Request::LoadModel("0".repeat(64)));
+        let [Reply::Model(_, Err(e))] = &take(&db, 1)[..] else {
+            panic!("expected a failure")
+        };
+        assert!(e.contains("not in the database"), "{e}");
+        db.send(Request::LoadModel("../etc/passwd".into()));
+        let [Reply::Model(_, Err(e))] = &take(&db, 1)[..] else {
+            panic!("expected a failure")
+        };
+        assert!(e.contains("malformed hash"), "{e}");
     }
 
     #[test]

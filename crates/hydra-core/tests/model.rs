@@ -66,6 +66,7 @@ fn catalogue() -> Catalogue {
                 params: serde_json::Value::Null,
             },
         ],
+        blocks: vec![],
     }
 }
 
@@ -104,6 +105,7 @@ fn port(id: &str) -> Component {
 fn circuit() -> Circuit {
     Circuit {
         schema: SCHEMA_VERSION,
+        assembly: None,
         name: "test".into(),
         components: vec![
             valve("V1", "rpe3-z11@1"),
@@ -149,7 +151,7 @@ fn json_round_trip_is_lossless() {
     assert_eq!(Circuit::from_json(&json).unwrap(), c);
 
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["schema"], 1);
+    assert_eq!(value["schema"], SCHEMA_VERSION);
     assert_eq!(value["components"][0]["valve_type"], "rpe3-z11@1");
     assert_eq!(value["layout"]["components"]["V1"]["rotation"], 270);
 }
@@ -165,10 +167,13 @@ fn catalogue_round_trip_is_lossless() {
 
 #[test]
 fn unknown_or_missing_schema_is_an_error() {
-    assert!(matches!(
-        Circuit::from_json(r#"{"schema": 2, "name": "x", "components": []}"#),
-        Err(LoadError::UnsupportedSchema(2))
-    ));
+    for v in [0, SCHEMA_VERSION + 1] {
+        let json = format!(r#"{{"schema": {v}, "name": "x", "components": []}}"#);
+        assert!(matches!(
+            Circuit::from_json(&json),
+            Err(LoadError::UnsupportedSchema(n)) if n == u64::from(v)
+        ));
+    }
     assert!(matches!(
         Circuit::from_json(r#"{"name": "x", "components": []}"#),
         Err(LoadError::MissingSchema)
@@ -386,4 +391,166 @@ fn keys_parts_and_duplicates_are_checked() {
     assert_eq!(key_problem(""), Some("is empty"));
     assert_eq!(key_problem("a@b"), Some("contains '@'"));
     assert_eq!(key_problem("vt-rpe3-06-z11"), None);
+}
+
+#[test]
+fn version_1_documents_load_and_save_as_the_current_version() {
+    let c = Circuit::from_json(r#"{"schema": 1, "name": "old", "components": []}"#).unwrap();
+    assert_eq!(c.schema, SCHEMA_VERSION);
+    assert_eq!(c.assembly, None);
+}
+
+fn face(name: &str, pattern: &str, origin: [f64; 3], normal: [f64; 3]) -> MountFace {
+    MountFace {
+        name: name.into(),
+        pattern: pattern.into(),
+        origin,
+        normal,
+        x_axis: [1.0, 0.0, 0.0],
+    }
+}
+
+/// Top faces F1 and F2 take CETOP 3 valves; front face F3 takes CETOP 5.
+fn block() -> Block {
+    Block {
+        key: "blk".into(),
+        version: 1,
+        name: "Test block".into(),
+        mount_faces: vec![
+            face("F1", "ISO 4401-03", [45.0, 10.0, 70.0], [0.0, 0.0, 1.0]),
+            face("F2", "ISO 4401-03", [45.0, 62.0, 70.0], [0.0, 0.0, 1.0]),
+            face("F3", "ISO 4401-05", [30.0, 0.0, 15.0], [0.0, -1.0, 0.0]),
+        ],
+    }
+}
+
+fn on_block(mounts: &[(&str, &str)]) -> (Circuit, Catalogue) {
+    let mut cat = catalogue();
+    cat.blocks.push(block());
+    let mut c = circuit();
+    c.components.push(valve("V2", "rpe3-z11@1"));
+    c.nets[0].ports.push(pr("V2", "P"));
+    c.nets[1].ports.push(pr("V2", "T"));
+    c.nets[2].ports.push(pr("V2", "A"));
+    c.nets[4].ports.push(pr("V2", "B"));
+    c.assembly = Some(Assembly {
+        block: CatalogueRef::new("blk", 1),
+        mounts: mounts
+            .iter()
+            .map(|(c, f)| (c.to_string(), f.to_string()))
+            .collect(),
+    });
+    (c, cat)
+}
+
+#[test]
+fn mounted_valves_validate_and_round_trip() {
+    let (c, cat) = on_block(&[("V1", "F1"), ("V2", "F2")]);
+    assert_eq!(cat.problems(), Vec::<String>::new());
+    assert_eq!(c.validate(&cat), vec![]);
+    let json = c.to_json();
+    assert_eq!(Circuit::from_json(&json).unwrap(), c);
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["assembly"]["block"], "blk@1");
+    assert_eq!(value["assembly"]["mounts"]["V2"], "F2");
+}
+
+#[test]
+fn assembly_mistakes_are_reported() {
+    let (c, cat) = on_block(&[("V1", "F1"), ("V2", "F1"), ("P", "F2"), ("V9", "F2")]);
+    let issues = c.validate(&cat);
+    assert!(issues.contains(&Issue::FaceTaken {
+        face: "F1".into(),
+        components: ["V1".into(), "V2".into()],
+    }));
+    assert!(issues.contains(&Issue::MountedPort("P".into())));
+    assert!(issues.contains(&Issue::MountedUnknownComponent {
+        component: "V9".into(),
+        face: "F2".into(),
+    }));
+
+    let (c, cat) = on_block(&[("V1", "F3"), ("V2", "F7"), ("K1", "F2")]);
+    assert_eq!(
+        c.validate(&cat),
+        vec![
+            Issue::PatternMismatch {
+                component: "K1".into(),
+                face: "F2".into(),
+                face_pattern: "ISO 4401-03".into(),
+                mounting: None,
+            },
+            Issue::PatternMismatch {
+                component: "V1".into(),
+                face: "F3".into(),
+                face_pattern: "ISO 4401-05".into(),
+                mounting: Some("ISO 4401-03".into()),
+            },
+            Issue::UnknownFace {
+                component: "V2".into(),
+                face: "F7".into(),
+            },
+        ]
+    );
+
+    // A subplate valve left off the block is a warning; a line-mounted check valve is not.
+    let (c, cat) = on_block(&[("V1", "F1")]);
+    let issues = c.validate(&cat);
+    assert_eq!(issues, vec![Issue::Unmounted("V2".into())]);
+    assert_eq!(issues[0].severity(), Severity::Warning);
+
+    let (c, _) = on_block(&[("V1", "F1")]);
+    assert_eq!(
+        c.validate(&catalogue()),
+        vec![
+            Issue::UnknownBlock(CatalogueRef::new("blk", 1)),
+            Issue::Unmounted("V2".into())
+        ]
+    );
+}
+
+#[test]
+fn face_transform_puts_the_valve_frame_on_the_face() {
+    let apply = |m: [[f64; 4]; 4], p: [f64; 3]| {
+        [0, 1, 2].map(|r| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r])
+    };
+    let b = block();
+    // Top face: the valve's datum lands on the face origin and its body points up.
+    let top = b.face("F1").unwrap().transform().unwrap();
+    assert_eq!(apply(top, [0.0, 0.0, 0.0]), [45.0, 10.0, 70.0]);
+    assert_eq!(apply(top, [1.0, 2.0, 3.0]), [46.0, 12.0, 73.0]);
+    // Front face: valve +z goes out of the block (-y), valve +y goes up (+z).
+    let front = b.face("F3").unwrap().transform().unwrap();
+    assert_eq!(apply(front, [1.0, 2.0, 3.0]), [31.0, -3.0, 17.0]);
+    // Axes given at any length are normalised.
+    let mut f = face("F", "p", [0.0; 3], [0.0, 0.0, 5.0]);
+    f.x_axis = [2.0, 0.0, 0.0];
+    assert_eq!(
+        apply(f.transform().unwrap(), [1.0, 1.0, 1.0]),
+        [1.0, 1.0, 1.0]
+    );
+}
+
+#[test]
+fn bad_blocks_are_problems() {
+    let mut cat = catalogue();
+    let mut b = block();
+    b.mount_faces[1].name = "F1".into();
+    b.mount_faces[2].x_axis = [0.0, 1.0, 0.0];
+    b.mount_faces.push(face("", "", [0.0; 3], [0.0; 3]));
+    cat.blocks.push(b.clone());
+    cat.blocks.push(b);
+    let problems = cat.problems();
+    for expected in [
+        "block blk@1 is defined twice",
+        "block blk@1: face F1 is defined twice",
+        "block blk@1: face F3: x axis is not in the face plane (not perpendicular to the normal)",
+        "block blk@1: a mount face has no name",
+        "block blk@1: face  has no mounting pattern",
+        "block blk@1: face : normal has no direction",
+    ] {
+        assert!(
+            problems.iter().any(|p| p == expected),
+            "missing {expected:?} in {problems:#?}"
+        );
+    }
 }

@@ -45,7 +45,7 @@ async fn check_schema_rejects_newer_database(pool: PgPool) {
     .unwrap();
     assert!(matches!(
         check_schema(&pool).await,
-        Err(Error::DatabaseTooNew { db: 999999, app: 2 })
+        Err(Error::DatabaseTooNew { db: 999999, app: 3 })
     ));
 }
 
@@ -157,6 +157,48 @@ async fn catalogue_rows_are_immutable(pool: PgPool) {
     refused(&pool, "UPDATE symbol_defs SET kind = 'x'").await;
     refused(&pool, "UPDATE parts SET part_number = 'P2'").await;
     refused(&pool, "DELETE FROM parts").await;
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn blocks_are_immutable(pool: PgPool) {
+    sqlx::query("INSERT INTO blocks (name, key) VALUES ('B', 'blk')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    refused(&pool, "UPDATE blocks SET name = 'X'").await;
+    refused(&pool, "DELETE FROM blocks").await;
+    let not_array = "INSERT INTO blocks (name, key, mount_faces) VALUES ('B', 'blk2', '{}')";
+    assert!(sqlx::query(not_array).execute(&pool).await.is_err());
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn one_display_model_per_owner(pool: PgPool) {
+    sqlx::raw_sql(
+        "INSERT INTO assets (sha256, kind, bytes, size) VALUES \
+             (repeat('a', 64), 'gltf', '\\x00', 1), (repeat('b', 64), 'gltf', '\\x01', 1); \
+         INSERT INTO part_assets (owner_id, asset_id, role) \
+         SELECT '00000000-0000-0000-0000-000000000001', id, 'display' \
+         FROM assets WHERE sha256 = repeat('a', 64);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let second = sqlx::query(
+        "INSERT INTO part_assets (owner_id, asset_id, role) \
+         SELECT '00000000-0000-0000-0000-000000000001', id, 'display' \
+         FROM assets WHERE sha256 = repeat('b', 64)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap_err();
+    assert!(
+        second
+            .as_database_error()
+            .is_some_and(|d| d.is_unique_violation()),
+        "{second}"
+    );
 }
 
 #[sqlx::test(migrator = "hydra_db::MIGRATOR")]

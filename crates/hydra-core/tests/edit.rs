@@ -35,6 +35,7 @@ fn connect(a: &str, b: &str) -> Command {
 fn doc(ids: &[&str]) -> Document {
     let mut d = Document::new(Circuit {
         schema: SCHEMA_VERSION,
+        assembly: None,
         name: "t".into(),
         components: vec![],
         nets: vec![],
@@ -235,4 +236,94 @@ fn edits_leave_untouched_nets_alone_and_merging_keeps_names() {
     assert!(d.circuit.nets.iter().any(|n| n.id == "lone"));
     let merged = d.circuit.nets.iter().find(|n| n.ports.len() == 4).unwrap();
     assert_eq!(merged.name.as_deref(), Some("supply"));
+}
+
+fn valve(id: &str) -> Command {
+    Command::Add {
+        component: Component {
+            id: id.into(),
+            kind: ComponentKind::Valve {
+                valve_type: CatalogueRef::new("vt", 1),
+            },
+        },
+        placement: Placement::default(),
+    }
+}
+
+fn set_block(key: &str, version: u32) -> Command {
+    Command::SetBlock {
+        block: Some(CatalogueRef::new(key, version)),
+    }
+}
+
+fn mount(component: &str, face: Option<&str>) -> Command {
+    Command::Mount {
+        component: component.into(),
+        face: face.map(Into::into),
+    }
+}
+
+fn mounts(d: &Document) -> Vec<(String, String)> {
+    let a = d.circuit.assembly.as_ref().expect("a block");
+    a.mounts.clone().into_iter().collect()
+}
+
+#[test]
+fn mounting_valves_on_a_block() {
+    let mut d = doc(&["P"]);
+    d.apply(valve("V1")).unwrap();
+    d.apply(valve("V2")).unwrap();
+    assert_eq!(
+        d.apply(mount("V1", Some("F1"))),
+        Err("choose a block for the circuit first".into())
+    );
+    d.apply(set_block("blk", 1)).unwrap();
+    assert_eq!(
+        d.apply(set_block("blk", 1)),
+        Err("the circuit already uses that block".into())
+    );
+    d.apply(mount("V1", Some("F1"))).unwrap();
+    assert_eq!(d.undo_label(), Some("Mount V1 on F1"));
+    // A valve put on a taken face replaces the one there, in one undoable step.
+    d.apply(mount("V2", Some("F1"))).unwrap();
+    assert_eq!(mounts(&d), [("V2".into(), "F1".into())]);
+    d.undo();
+    assert_eq!(mounts(&d), [("V1".into(), "F1".into())]);
+    assert_eq!(
+        d.apply(mount("V1", Some("F1"))),
+        Err("V1 is already on F1".into())
+    );
+    assert_eq!(
+        d.apply(mount("P", Some("F2"))),
+        Err("P is not a valve".into())
+    );
+    assert_eq!(
+        d.apply(mount("V9", Some("F2"))),
+        Err("V9 is not in the circuit".into())
+    );
+    assert_eq!(d.apply(mount("V2", None)), Err("V2 is not mounted".into()));
+    // Moving a valve to another face frees the first one.
+    d.apply(mount("V1", Some("F2"))).unwrap();
+    d.apply(mount("V2", Some("F1"))).unwrap();
+    assert_eq!(
+        mounts(&d),
+        [("V1".into(), "F2".into()), ("V2".into(), "F1".into())]
+    );
+
+    // A new version of the same block keeps the mounts; another block starts empty.
+    d.apply(set_block("blk", 2)).unwrap();
+    assert_eq!(mounts(&d).len(), 2);
+    d.apply(set_block("other", 1)).unwrap();
+    assert_eq!(mounts(&d), []);
+    d.undo();
+    assert_eq!(mounts(&d).len(), 2);
+
+    // Deleting a valve takes it off its face.
+    d.apply(Command::Remove { id: "V1".into() }).unwrap();
+    assert_eq!(mounts(&d), [("V2".into(), "F1".into())]);
+    d.apply(mount("V2", None)).unwrap();
+    assert_eq!(d.undo_label(), Some("Unmount V2"));
+    d.apply(Command::SetBlock { block: None }).unwrap();
+    assert_eq!(d.circuit.assembly, None);
+    assert_eq!(d.undo_label(), Some("Remove the block"));
 }

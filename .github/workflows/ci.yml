@@ -50,3 +50,29 @@ jobs:
       - run: cargo run -p hydra-db --bin hydra-admin -- migrate
       - run: cargo run -p hydra-db --bin hydra-admin -- import fixtures/catalogue.json
       - run: cargo test -p hydra -- --ignored
+      # Attach the demo models, then smoke-test every stored model.
+      - run: cargo run -p hydra-db --bin hydra-admin -- model block blk-demo@1 fixtures/models/demo-block.glb --source fixtures/models/demo-block.step
+      - run: cargo run -p hydra-db --bin hydra-admin -- model valve vt-rpe3-06-z11@1 fixtures/models/demo-valve-cetop3.glb
+      - run: cargo run -p hydra-db --bin hydra-admin -- model valve vt-demo-4-2@1 fixtures/models/demo-valve-cetop3.glb
+      - run: cargo run -p hydra-db --bin hydra-admin -- models
+
+  # The STEP-to-glTF converter needs OpenCASCADE, which Ubuntu packages; Debian's OCCT CMake
+  # targets also link TBB and fontconfig, whose -dev packages are not pulled in automatically.
+  converter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y --no-install-recommends cmake g++ make libocct-data-exchange-dev libtbb-dev libfontconfig-dev
+      - run: cmake -S tools/step2gltf -B "$RUNNER_TEMP/step2gltf"
+      - run: cmake --build "$RUNNER_TEMP/step2gltf" -j"$(nproc)"
+      - name: Convert the demo fixtures
+        run: |
+          bin="$RUNNER_TEMP/step2gltf"
+          out="$RUNNER_TEMP/models"
+          mkdir -p "$out"
+          "$bin/make_fixtures" "$out"
+          for model in demo-valve-cetop3 demo-block; do
+            "$bin/step2gltf" "$out/$model.step" "$out/$model.glb"
+            test -s "$out/$model.glb"
+          done

@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "name": "Demo manifold (stand-in until the Germani transcription is added)",
   "components": [
     {"id": "P", "kind": "port", "label": "P"},
@@ -45,5 +45,9 @@
       "A2": {"x": 115, "y": 4},
       "B2": {"x": 140, "y": 18}
     }
+  },
+  "assembly": {
+    "block": "blk-demo@1",
+    "mounts": {"V1": "F1", "V2": "F2"}
   }
 }

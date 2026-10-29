@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 hydra-core.workspace = true
+hydra-mesh.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx.workspace = true

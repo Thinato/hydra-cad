@@ -4,8 +4,8 @@ mod catalogue;
 mod circuits;
 
 pub use catalogue::{
-    ImportReport, LoadedCatalogue, asset_bytes, attach_datasheet, import_catalogue, load_catalogue,
-    save_valve_type,
+    ImportReport, LoadedCatalogue, ModelOwner, asset_bytes, attach_datasheet, attach_model,
+    import_catalogue, load_catalogue, save_valve_type,
 };
 pub use circuits::{
     CircuitSummary, OpenedCircuit, RevisionSummary, create_circuit, list_circuits, list_revisions,

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/hydra-core", "crates/hydra-symbols", "crates/hydra-db", "crates/hydra"]
+members = ["crates/hydra-core", "crates/hydra-symbols", "crates/hydra-mesh", "crates/hydra-db", "crates/hydra"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,7 @@ repository = "https://github.com/thinato/hydra-cad"
 hydra-core = { path = "crates/hydra-core" }
 hydra-symbols = { path = "crates/hydra-symbols" }
 hydra-db = { path = "crates/hydra-db" }
+hydra-mesh = { path = "crates/hydra-mesh" }
 
 anyhow = "1"
 bytemuck = { version = "1", features = ["derive"] }

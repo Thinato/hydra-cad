@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use hydra_core::Circuit;
+use hydra_core::{Circuit, SCHEMA_VERSION};
 use hydra_db::{
     Error, create_circuit, list_circuits, list_revisions, open_circuit, open_revision,
     restore_revision, save_revision,
@@ -244,7 +244,7 @@ async fn unsupported_schema_is_invalid(pool: PgPool) {
     let id = create_circuit(&pool, &demo(), None, None).await.unwrap().id;
     sqlx::query(
         "WITH r AS (INSERT INTO circuit_revisions (circuit_id, number, document) \
-                    VALUES ($1::uuid, 2, '{\"schema\": 2, \"name\": \"future\"}') RETURNING id) \
+                    VALUES ($1::uuid, 2, '{\"schema\": 99, \"name\": \"future\"}') RETURNING id) \
          UPDATE circuits SET current_revision_id = (SELECT id FROM r) WHERE id = $1::uuid",
     )
     .bind(&id)
@@ -254,12 +254,14 @@ async fn unsupported_schema_is_invalid(pool: PgPool) {
     let msgs = invalid(open_circuit(&pool, &id).await);
     assert_eq!(
         msgs,
-        ["circuit schema version 2 is not supported, this build reads version 1"]
+        [format!(
+            "circuit schema version 99 is not supported, this build reads versions 1 to {SCHEMA_VERSION}"
+        )]
     );
     invalid(open_revision(&pool, &id, 2).await);
     // And such a document is never written by this build.
     let mut future = demo();
-    future.schema = 2;
+    future.schema = SCHEMA_VERSION + 1;
     invalid(create_circuit(&pool, &future, None, None).await);
 }
 

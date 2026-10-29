@@ -215,6 +215,25 @@ impl SchematicEditor {
 
     // ---- editing ----
 
+    pub fn circuit(&self) -> &Circuit {
+        &self.doc.circuit
+    }
+
+    pub fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
+    }
+
+    /// An edit made outside the canvas, e.g. on the 3D tab. Refused while a circuit is being
+    /// opened, since its reply will replace the document.
+    pub fn edit(&mut self, command: Command) -> Result<(), String> {
+        if self.awaiting.is_some() {
+            return Err("Wait until the circuit has opened.".into());
+        }
+        let result = self.doc.apply(command);
+        self.prune_selection();
+        result
+    }
+
     fn apply(&mut self, command: Command) {
         self.status = self.doc.apply(command).err();
         self.prune_selection();
@@ -957,6 +976,7 @@ fn snap(v: f32) -> f32 {
 pub fn empty_circuit() -> Circuit {
     Circuit {
         schema: SCHEMA_VERSION,
+        assembly: None,
         name: "Untitled circuit".into(),
         components: Vec::new(),
         nets: Vec::new(),
@@ -1042,8 +1062,6 @@ fn port_at(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use egui_kittest::{
         Harness,
         kittest::{NodeT, Queryable},
@@ -1056,14 +1074,7 @@ mod tests {
 
     fn shared() -> Shared {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/catalogue.json");
-        Shared {
-            catalogue: serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap(),
-            datasheets: HashMap::new(),
-            db: None,
-            error: None,
-            notice: None,
-            place: None,
-        }
+        Shared::new(serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap())
     }
 
     fn harness() -> Harness<'static, State> {

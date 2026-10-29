@@ -1812,9 +1812,9 @@ dependencies = [
  "egui_extras",
  "egui_kittest",
  "glam",
- "gltf",
  "hydra-core",
  "hydra-db",
+ "hydra-mesh",
  "hydra-symbols",
  "serde_json",
  "tokio",
@@ -1836,11 +1836,21 @@ name = "hydra-db"
 version = "0.1.0"
 dependencies = [
  "hydra-core",
+ "hydra-mesh",
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "hydra-mesh"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "gltf",
+ "tracing",
 ]
 
 [[package]]

@@ -20,6 +20,7 @@ fn sorted(mut c: Catalogue) -> Catalogue {
     c.valve_types.sort_by_key(|v| v.reference());
     c.parts
         .sort_by(|a, b| (&a.valve_type, &a.part_number).cmp(&(&b.valve_type, &b.part_number)));
+    c.blocks.sort_by_key(|b| b.reference());
     c
 }
 
@@ -51,7 +52,9 @@ async fn import_then_load_round_trips(pool: PgPool) {
     assert_eq!(r.symbol_defs_added, f.symbol_defs.len());
     assert_eq!(r.valve_types_added, f.valve_types.len());
     assert_eq!(r.parts_added, f.parts.len());
+    assert_eq!(r.blocks_added, f.blocks.len());
     assert!(!f.parts.is_empty());
+    assert!(!f.blocks.is_empty());
     assert_eq!(r.unchanged, 0);
     let loaded = load_catalogue(&pool).await.unwrap();
     assert_eq!(loaded.catalogue, sorted(f));
@@ -73,15 +76,20 @@ async fn reimport_is_all_unchanged(pool: PgPool) {
     let f = fixture();
     import_catalogue(&pool, &f).await.unwrap();
     let r = import_catalogue(&pool, &f).await.unwrap();
-    let total = f.manufacturers.len() + f.symbol_defs.len() + f.valve_types.len() + f.parts.len();
+    let total = f.manufacturers.len()
+        + f.symbol_defs.len()
+        + f.valve_types.len()
+        + f.parts.len()
+        + f.blocks.len();
     assert_eq!(
         (
             r.manufacturers_added,
             r.symbol_defs_added,
             r.valve_types_added,
-            r.parts_added
+            r.parts_added,
+            r.blocks_added
         ),
-        (0, 0, 0, 0)
+        (0, 0, 0, 0, 0)
     );
     assert_eq!(r.unchanged, total);
 }
@@ -281,6 +289,7 @@ async fn datasheet_carries_over_from_lower_versions_only(pool: PgPool) {
         symbol_defs: f.symbol_defs.clone(),
         valve_types: vec![v2.clone()],
         parts: vec![],
+        blocks: vec![],
     };
     import_catalogue(&pool, &only_v2).await.unwrap();
     let sha = attach_datasheet(&pool, &v2.reference(), PDF).await.unwrap();

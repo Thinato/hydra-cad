@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Catalogue, CatalogueRef};
 
-/// Circuit JSON version this build reads and writes.
-pub const SCHEMA_VERSION: u32 = 1;
+/// Circuit JSON version this build writes. It also reads version 1, which had no assembly.
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Circuit {
@@ -19,6 +19,17 @@ pub struct Circuit {
     pub nets: Vec<Net>,
     #[serde(default)]
     pub layout: Layout,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assembly: Option<Assembly>,
+}
+
+/// The manifold block a circuit is built on, and which valve sits on which of its faces.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Assembly {
+    pub block: CatalogueRef,
+    /// Face name per component id.
+    #[serde(default)]
+    pub mounts: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,19 +127,26 @@ pub enum LoadError {
     #[error("circuit document has no schema version")]
     MissingSchema,
     #[error(
-        "circuit schema version {0} is not supported, this build reads version {SCHEMA_VERSION}"
+        "circuit schema version {0} is not supported, this build reads versions 1 to {SCHEMA_VERSION}"
     )]
     UnsupportedSchema(u64),
 }
 
 impl Circuit {
-    /// Parse a circuit document, refusing schema versions this build does not know.
+    /// Parse a circuit document, refusing schema versions this build does not know. Older
+    /// versions are upgraded, so the circuit saves as the current version.
     pub fn from_json(json: &str) -> Result<Circuit, LoadError> {
         let value: serde_json::Value = serde_json::from_str(json)?;
         match value.get("schema").and_then(|s| s.as_u64()) {
             None => Err(LoadError::MissingSchema),
-            Some(v) if v != u64::from(SCHEMA_VERSION) => Err(LoadError::UnsupportedSchema(v)),
-            Some(_) => Ok(serde_json::from_value(value)?),
+            Some(v) if !(1..=u64::from(SCHEMA_VERSION)).contains(&v) => {
+                Err(LoadError::UnsupportedSchema(v))
+            }
+            Some(_) => {
+                let mut circuit: Circuit = serde_json::from_value(value)?;
+                circuit.schema = SCHEMA_VERSION;
+                Ok(circuit)
+            }
         }
     }
 
@@ -206,7 +224,73 @@ impl Circuit {
                 }
             }
         }
+        if let Some(assembly) = &self.assembly {
+            self.validate_assembly(assembly, catalogue, &mut issues);
+        }
         issues
+    }
+
+    fn validate_assembly(
+        &self,
+        assembly: &Assembly,
+        catalogue: &Catalogue,
+        issues: &mut Vec<Issue>,
+    ) {
+        let block = catalogue.block(&assembly.block);
+        if block.is_none() {
+            issues.push(Issue::UnknownBlock(assembly.block.clone()));
+        }
+        let mut holders: BTreeMap<&str, &str> = BTreeMap::new();
+        for (component, face) in &assembly.mounts {
+            let valve_type = match self.component(component).map(|c| &c.kind) {
+                None => {
+                    issues.push(Issue::MountedUnknownComponent {
+                        component: component.clone(),
+                        face: face.clone(),
+                    });
+                    continue;
+                }
+                Some(ComponentKind::Port { .. }) => {
+                    issues.push(Issue::MountedPort(component.clone()));
+                    continue;
+                }
+                Some(ComponentKind::Valve { valve_type }) => valve_type,
+            };
+            if let Some(other) = holders.insert(face, component) {
+                issues.push(Issue::FaceTaken {
+                    face: face.clone(),
+                    components: [other.to_string(), component.clone()],
+                });
+            }
+            let Some(block) = block else { continue };
+            let Some(mount_face) = block.face(face) else {
+                issues.push(Issue::UnknownFace {
+                    component: component.clone(),
+                    face: face.clone(),
+                });
+                continue;
+            };
+            if let Some(v) = catalogue.valve_type(valve_type)
+                && v.mounting.as_deref() != Some(mount_face.pattern.as_str())
+            {
+                issues.push(Issue::PatternMismatch {
+                    component: component.clone(),
+                    face: face.clone(),
+                    face_pattern: mount_face.pattern.clone(),
+                    mounting: v.mounting.clone(),
+                });
+            }
+        }
+        for c in &self.components {
+            if let ComponentKind::Valve { valve_type } = &c.kind
+                && catalogue
+                    .valve_type(valve_type)
+                    .is_some_and(|v| v.mounting.is_some())
+                && !assembly.mounts.contains_key(&c.id)
+            {
+                issues.push(Issue::Unmounted(c.id.clone()));
+            }
+        }
     }
 }
 
@@ -251,6 +335,31 @@ pub enum Issue {
     PortOnTwoNets { port: PortRef, nets: [String; 2] },
     #[error("port {0} is not connected")]
     Unconnected(PortRef),
+    #[error("block {0} is not in the catalogue")]
+    UnknownBlock(CatalogueRef),
+    #[error("face {face} holds component {component}, which is not in the circuit")]
+    MountedUnknownComponent { component: String, face: String },
+    #[error("{0} is an external connection; only valves mount on the block")]
+    MountedPort(String),
+    #[error("{component} is mounted on face {face}, which the block does not have")]
+    UnknownFace { component: String, face: String },
+    #[error("face {face} holds both {} and {}", components[0], components[1])]
+    FaceTaken {
+        face: String,
+        components: [String; 2],
+    },
+    #[error("{component} {}, but face {face} takes {face_pattern}", match mounting {
+        Some(m) => format!("needs a {m} face"),
+        None => "is not a subplate valve".into(),
+    })]
+    PatternMismatch {
+        component: String,
+        face: String,
+        face_pattern: String,
+        mounting: Option<String>,
+    },
+    #[error("{0} is not mounted on the block")]
+    Unmounted(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,7 +371,7 @@ pub enum Severity {
 impl Issue {
     pub fn severity(&self) -> Severity {
         match self {
-            Issue::Unconnected(_) => Severity::Warning,
+            Issue::Unconnected(_) | Issue::Unmounted(_) => Severity::Warning,
             _ => Severity::Error,
         }
     }

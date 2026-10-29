@@ -8,11 +8,12 @@ mod edit;
 mod symbol;
 
 pub use catalogue::{
-    Catalogue, CatalogueRef, Manufacturer, Part, SymbolDefRecord, ValveType, key_problem,
+    Block, Catalogue, CatalogueRef, Manufacturer, MountFace, Part, SymbolDefRecord, ValveType,
+    key_problem,
 };
 pub use circuit::{
-    Circuit, Component, ComponentKind, Issue, Layout, LoadError, Net, PORT_PIN, Placement, PortRef,
-    Rotation, SCHEMA_VERSION, Severity,
+    Assembly, Circuit, Component, ComponentKind, Issue, Layout, LoadError, Net, PORT_PIN,
+    Placement, PortRef, Rotation, SCHEMA_VERSION, Severity,
 };
 pub use edit::{Command, Document, next_id};
 pub use symbol::{Actuator, DirectionalValve, Port, Side, SpoolPosition, SymbolDef};

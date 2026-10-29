@@ -1,6 +1,7 @@
-//! Catalogue rows the circuit model needs: manufacturers, symbol definitions, valve types.
+//! Catalogue rows the circuit model needs: manufacturers, symbol definitions, valve types and
+//! manifold blocks.
 //!
-//! Symbol definitions and valve types are versioned: a change adds a row with the same key and
+//! Symbol definitions, valve types and blocks are versioned: a change adds a row with the same key and
 //! the next version, and documents point at one exact version through a [`CatalogueRef`].
 
 use std::fmt;
@@ -91,6 +92,90 @@ pub struct Part {
     pub options: serde_json::Value,
 }
 
+/// A manifold block model and the faces valves mount on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Block {
+    pub key: String,
+    pub version: u32,
+    pub name: String,
+    #[serde(default)]
+    pub mount_faces: Vec<MountFace>,
+}
+
+/// A block face that takes one valve. Block coordinates: millimetres, Z up.
+///
+/// A valve model is drawn with its mounting-pattern datum at the origin, its mounting face in
+/// the plane z = 0 and its body in +z; [`MountFace::transform`] puts that frame on the face.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MountFace {
+    pub name: String,
+    /// Mounting pattern, e.g. `ISO 4401-03`; a valve fits when its `mounting` is the same.
+    pub pattern: String,
+    /// The pattern's datum point, on the face.
+    pub origin: [f64; 3],
+    /// Points out of the block.
+    pub normal: [f64; 3],
+    /// The pattern's x direction, in the face plane.
+    pub x_axis: [f64; 3],
+}
+
+impl MountFace {
+    /// Column-major 4x4 matrix from valve model space to block space, or why the frame is unusable.
+    pub fn transform(&self) -> Result<[[f64; 4]; 4], String> {
+        let unit = |v: [f64; 3], what: &str| {
+            let len = dot(v, v).sqrt();
+            if len.is_finite() && len > 1e-9 {
+                Ok(v.map(|c| c / len))
+            } else {
+                Err(format!("face {}: {what} has no direction", self.name))
+            }
+        };
+        let z = unit(self.normal, "normal")?;
+        let x = unit(self.x_axis, "x axis")?;
+        if dot(x, z).abs() > 1e-3 {
+            return Err(format!(
+                "face {}: x axis is not in the face plane (not perpendicular to the normal)",
+                self.name
+            ));
+        }
+        if !self.origin.iter().all(|c| c.is_finite()) {
+            return Err(format!("face {}: origin is not a point", self.name));
+        }
+        // Remove the small tilt the tolerance above allows, so the frame has no shear.
+        let x = unit([0, 1, 2].map(|k| x[k] - dot(x, z) * z[k]), "x axis")?;
+        let y = cross(z, x);
+        let [o0, o1, o2] = self.origin;
+        Ok([
+            [x[0], x[1], x[2], 0.0],
+            [y[0], y[1], y[2], 0.0],
+            [z[0], z[1], z[2], 0.0],
+            [o0, o1, o2, 1.0],
+        ])
+    }
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+impl Block {
+    pub fn reference(&self) -> CatalogueRef {
+        CatalogueRef::new(&self.key, self.version)
+    }
+
+    pub fn face(&self, name: &str) -> Option<&MountFace> {
+        self.mount_faces.iter().find(|f| f.name == name)
+    }
+}
+
 impl SymbolDefRecord {
     pub fn reference(&self) -> CatalogueRef {
         CatalogueRef::new(&self.key, self.version)
@@ -114,6 +199,8 @@ pub struct Catalogue {
     pub valve_types: Vec<ValveType>,
     #[serde(default)]
     pub parts: Vec<Part>,
+    #[serde(default)]
+    pub blocks: Vec<Block>,
 }
 
 impl Catalogue {
@@ -121,6 +208,12 @@ impl Catalogue {
         self.valve_types
             .iter()
             .find(|v| v.key == r.key && v.version == r.version)
+    }
+
+    pub fn block(&self, r: &CatalogueRef) -> Option<&Block> {
+        self.blocks
+            .iter()
+            .find(|b| b.key == r.key && b.version == r.version)
     }
 
     pub fn symbol_def(&self, r: &CatalogueRef) -> Option<&SymbolDef> {
@@ -155,7 +248,8 @@ impl Catalogue {
                 self.valve_types
                     .iter()
                     .map(|v| ("valve type", v.key.as_str())),
-            );
+            )
+            .chain(self.blocks.iter().map(|b| ("block", b.key.as_str())));
         for (what, key) in keys {
             if let Some(p) = key_problem(key) {
                 problems.push(format!("{what} key {key:?} {p}"));
@@ -211,6 +305,28 @@ impl Catalogue {
                     "part {}: unknown valve type {}",
                     p.part_number, p.valve_type
                 ));
+            }
+        }
+        for (i, b) in self.blocks.iter().enumerate() {
+            let r = b.reference();
+            if self.blocks[..i].iter().any(|o| o.reference() == r) {
+                problems.push(format!("block {r} is defined twice"));
+            }
+            for (j, f) in b.mount_faces.iter().enumerate() {
+                if f.name.trim().is_empty() {
+                    problems.push(format!("block {r}: a mount face has no name"));
+                } else if b.mount_faces[..j].iter().any(|o| o.name == f.name) {
+                    problems.push(format!("block {r}: face {} is defined twice", f.name));
+                }
+                if f.pattern.trim().is_empty() {
+                    problems.push(format!(
+                        "block {r}: face {} has no mounting pattern",
+                        f.name
+                    ));
+                }
+                if let Err(e) = f.transform() {
+                    problems.push(format!("block {r}: {e}"));
+                }
             }
         }
         problems

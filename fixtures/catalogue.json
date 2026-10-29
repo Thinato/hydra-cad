@@ -255,5 +255,17 @@
     {"part_number": "DEMO-06-4-2-S-24DC", "valve_type": "vt-demo-4-2@1", "options": {"voltage": "24 V DC", "connector": "EN 175301-803"}},
     {"part_number": "DEMO-06-4-2-S-230AC", "valve_type": "vt-demo-4-2@1", "options": {"voltage": "230 V AC", "connector": "EN 175301-803"}},
     {"part_number": "DEMO-RV-210", "valve_type": "vt-demo-relief@1", "options": {"setting_bar": 210}}
+  ],
+  "blocks": [
+    {
+      "key": "blk-demo",
+      "version": 1,
+      "name": "Demo manifold block (fixture data, matches fixtures/models/demo-block.step)",
+      "mount_faces": [
+        {"name": "F1", "pattern": "ISO 4401-03", "origin": [45, 10, 70], "normal": [0, 0, 1], "x_axis": [1, 0, 0]},
+        {"name": "F2", "pattern": "ISO 4401-03", "origin": [45, 62, 70], "normal": [0, 0, 1], "x_axis": [1, 0, 0]},
+        {"name": "F3", "pattern": "ISO 4401-05", "origin": [30, 0, 15], "normal": [0, -1, 0], "x_axis": [1, 0, 0]}
+      ]
+    }
   ]
 }
