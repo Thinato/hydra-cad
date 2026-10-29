@@ -1,5 +1,6 @@
 mod catalogue;
 mod db;
+mod editor;
 mod mesh;
 mod schematic;
 mod viewer3d;
@@ -31,8 +32,7 @@ enum Tab {
 
 struct Panels {
     shared: Shared,
-    /// Load errors are shown in the tab instead of stopping the app.
-    schematic: Result<schematic::SchematicView, String>,
+    schematic: editor::SchematicEditor,
     catalogue: CataloguePanel,
     viewer: viewer3d::Viewer3d,
 }
@@ -54,12 +54,7 @@ impl TabViewer for Panels {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Tab) {
         match tab {
-            Tab::Schematic => match &mut self.schematic {
-                Ok(view) => view.ui(ui),
-                Err(e) => {
-                    ui.colored_label(ui.visuals().error_fg_color, e.as_str());
-                }
-            },
+            Tab::Schematic => self.schematic.ui(ui, &mut self.shared),
             Tab::Catalogue => self.catalogue.ui(ui, &mut self.shared),
             Tab::View3d => self.viewer.ui(ui),
         }
@@ -80,9 +75,6 @@ impl Panels {
                     self.shared.catalogue = loaded.catalogue;
                     self.shared.datasheets = loaded.datasheets;
                     self.shared.error = None;
-                    if let Ok(view) = &mut self.schematic {
-                        view.set_catalogue(&self.shared.catalogue);
-                    }
                 }
                 Reply::Saved(r) => {
                     self.shared.notice = Some(format!("Saved {r}."));
@@ -106,6 +98,17 @@ impl Panels {
                         self.shared.error = Some(e);
                     }
                 }
+                Reply::Circuits(list) => self.schematic.circuits(list),
+                Reply::Opened(opened) => self.schematic.opened(opened),
+                Reply::CircuitSaved { id, revision } => self.schematic.circuit_saved(id, revision),
+                Reply::Conflict { current } => self.schematic.conflict(current),
+                Reply::CircuitSaveFailed(e) => self.schematic.save_failed(e),
+                Reply::CircuitFailed(e) => self.schematic.circuit_failed(e),
+                Reply::Revisions(list) => self.schematic.revisions(list),
+                Reply::RevisionPreview(n, c) => {
+                    self.schematic
+                        .revision_preview(n, &c, &self.shared.catalogue)
+                }
                 Reply::Error(e) => self.shared.error = Some(e),
             }
         }
@@ -120,6 +123,11 @@ struct HydraApp {
 impl eframe::App for HydraApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.panels.poll_db();
+        if ui.ctx().input(|i| i.viewport().close_requested()) && !self.panels.schematic.may_close()
+        {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
         let panels = &mut self.panels;
         panels
             .catalogue
@@ -181,6 +189,7 @@ fn main() -> eframe::Result {
                 db: None,
                 error: None,
                 notice: None,
+                place: None,
             };
             match database_url {
                 Some(url) => shared.db = Some(Db::connect(url, cc.egui_ctx.clone())),
@@ -197,13 +206,15 @@ fn main() -> eframe::Result {
                     Err(e) => shared.error = Some(format!("Could not load the catalogue: {e:#}")),
                 },
             }
-            let schematic = read(&circuit_path)
+            // The file opens as a new, unsaved circuit; Save puts it in the database.
+            let circuit = read(&circuit_path)
                 .and_then(|t| Ok(Circuit::from_json(&t)?))
-                .map(|c| schematic::SchematicView::new(c, &shared.catalogue))
-                .map_err(|e| {
+                .unwrap_or_else(|e| {
                     tracing::error!("could not load circuit: {e:#}");
-                    format!("Could not load the circuit: {e:#}")
+                    shared.error = Some(format!("Could not load the circuit: {e:#}"));
+                    editor::empty_circuit()
                 });
+            let schematic = editor::SchematicEditor::new(circuit, None);
 
             let mut dock = DockState::new(vec![Tab::Schematic, Tab::Catalogue]);
             dock.main_surface_mut()

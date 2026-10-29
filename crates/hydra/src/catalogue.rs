@@ -19,6 +19,8 @@ pub struct Shared {
     pub db: Option<Db>,
     pub error: Option<String>,
     pub notice: Option<String>,
+    /// A valve type the user asked to place in the schematic.
+    pub place: Option<CatalogueRef>,
 }
 
 #[derive(Default)]
@@ -164,28 +166,31 @@ impl CataloguePanel {
         }
     }
 
-    fn detail(&mut self, ui: &mut egui::Ui, shared: &Shared) {
+    fn detail(&mut self, ui: &mut egui::Ui, shared: &mut Shared) {
         let Some(v) = self
             .selected
             .as_ref()
             .and_then(|r| shared.catalogue.valve_type(r))
+            .cloned()
         else {
             ui.weak("Select a valve type.");
             return;
         };
-        let symbol = v
+        let primitives = v
             .symbol
             .as_ref()
-            .map(|s| (s, shared.catalogue.symbol_def(s)));
+            .and_then(|s| shared.catalogue.symbol_def(s))
+            .map(|def| render_symbol(def).primitives);
+        let symbol = v.symbol.as_ref().map(|s| (s, primitives.is_some()));
         ui.horizontal_top(|ui| {
             let side = Vec2::new(320.0, ui.available_height().clamp(120.0, 240.0));
-            match symbol {
-                Some((_, Some(def))) => draw_fitted(ui, side, &render_symbol(def).primitives),
-                _ => {
+            match &primitives {
+                Some(p) => draw_fitted(ui, side, p),
+                None => {
                     ui.allocate_exact_size(side, Sense::hover());
                 }
             }
-            ui.vertical(|ui| self.fields(ui, v, symbol.map(|(s, d)| (s, d.is_some())), shared));
+            ui.vertical(|ui| self.fields(ui, &v, symbol, shared));
         });
     }
 
@@ -194,7 +199,7 @@ impl CataloguePanel {
         ui: &mut egui::Ui,
         v: &ValveType,
         symbol: Option<(&CatalogueRef, bool)>,
-        shared: &Shared,
+        shared: &mut Shared,
     ) {
         ui.heading(format!("{} {}", v.series, v.code));
         ui.label(manufacturer_name(&shared.catalogue, &v.manufacturer));
@@ -265,6 +270,16 @@ impl CataloguePanel {
             (_, None) => {
                 ui.weak("Datasheets need the database connection.");
             }
+        }
+        // New parts use the latest version, like the editor's own valve list.
+        let newest = CatalogueRef::new(&v.key, latest);
+        if shared.catalogue.symbol_of(&newest).is_some()
+            && ui.button("Place in schematic").clicked()
+        {
+            shared.notice = Some(format!(
+                "{newest} will be placed when you open the Schematic tab."
+            ));
+            shared.place = Some(newest);
         }
         // A new version always builds on the latest one, whichever version is on screen.
         let label = if latest > v.version {

@@ -4,6 +4,7 @@
 
 mod catalogue;
 mod circuit;
+mod edit;
 mod symbol;
 
 pub use catalogue::{
@@ -13,4 +14,5 @@ pub use circuit::{
     Circuit, Component, ComponentKind, Issue, Layout, LoadError, Net, PORT_PIN, Placement, PortRef,
     Rotation, SCHEMA_VERSION, Severity,
 };
+pub use edit::{Command, Document, next_id};
 pub use symbol::{Actuator, DirectionalValve, Port, Side, SpoolPosition, SymbolDef};

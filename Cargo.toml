@@ -18,6 +18,7 @@ bytemuck = { version = "1", features = ["derive"] }
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "wgpu", "wayland", "x11"] }
 egui_dock = "0.21"
 egui_extras = "0.36"
+egui_kittest = "0.36"
 glam = { version = "0.34", features = ["bytemuck"] }
 gltf = "1.4"
 insta = "1"

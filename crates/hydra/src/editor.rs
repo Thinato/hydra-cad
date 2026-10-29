@@ -1,0 +1,1607 @@
+//! Schematic editor: place, move, rotate and connect components, undo and redo, save revisions
+//! to the shared database and restore older ones.
+//!
+//! Every change goes through a [`Command`] on the in-memory [`Document`]; nothing reaches the
+//! database until Save writes a whole new revision.
+
+use eframe::egui::{self, Color32, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2};
+use hydra_core::{
+    Catalogue, CatalogueRef, Circuit, Command, Component, ComponentKind, Document, Layout,
+    Placement, PortRef, Rotation, SCHEMA_VERSION, Severity, SymbolDef, next_id,
+};
+use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
+use hydra_symbols::{Drawing, bounds, render_circuit, render_component};
+
+use crate::catalogue::Shared;
+use crate::db::Request;
+use crate::schematic::{draw_fitted, fit, paint_sheet};
+
+/// Parts snap to this grid, in millimetres.
+const GRID: f32 = 2.5;
+/// How close to a port anchor, in screen points, a press or release must be.
+const PORT_REACH: f32 = 8.0;
+const ACCENT: Color32 = Color32::from_rgb(0, 120, 215);
+
+/// Where the open circuit lives in the database.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Saved {
+    pub id: String,
+    pub revision: i32,
+    pub project: Option<String>,
+}
+
+enum Drag {
+    /// Moving a part; `grab` is the pointer's offset from the part's origin.
+    Move {
+        id: String,
+        grab: [f32; 2],
+        to: Placement,
+    },
+    /// Drawing a connection from a port.
+    Wire {
+        from: PortRef,
+        start: [f32; 2],
+        end: [f32; 2],
+    },
+    Pan,
+}
+
+enum Dialog {
+    Open(Option<Vec<CircuitSummary>>),
+    History {
+        revisions: Option<Vec<RevisionSummary>>,
+        preview: Option<(i32, Drawing)>,
+    },
+    /// Someone saved since this circuit was opened; the user's changes aren't saved.
+    Conflict {
+        current: i32,
+    },
+    /// Someone saved since this circuit was opened, so a restore was refused.
+    RestoreConflict {
+        current: i32,
+    },
+    /// Unsaved changes would be lost by this action.
+    Discard(Pending),
+}
+
+#[derive(Clone)]
+enum Pending {
+    New,
+    Open(String),
+    /// Close the window.
+    Quit,
+}
+
+pub struct SchematicEditor {
+    doc: Document,
+    saved: Option<Saved>,
+    selected: Option<String>,
+    drag: Option<Drag>,
+    pan: Vec2,
+    zoom: f32,
+    /// View size last fitted to; refit on resize until the user pans or zooms.
+    fitted_to: Option<Vec2>,
+    /// Canvas rectangle of the last frame, for placing new parts in view.
+    view: Rect,
+    place: Option<CatalogueRef>,
+    /// Text fields, synced from the document while not being edited.
+    name: String,
+    label: String,
+    note: String,
+    dialog: Option<Dialog>,
+    /// The circuit as sent with a save that hasn't been answered yet.
+    in_flight: Option<Circuit>,
+    /// Id of a circuit being opened or restored. Editing waits, since the reply replaces it.
+    awaiting: Option<String>,
+    /// The user agreed to close the window despite unsaved changes.
+    allow_close: bool,
+    status: Option<String>,
+}
+
+impl SchematicEditor {
+    pub fn new(circuit: Circuit, saved: Option<Saved>) -> Self {
+        Self {
+            name: circuit.name.clone(),
+            doc: Document::new(circuit),
+            saved,
+            selected: None,
+            drag: None,
+            pan: Vec2::ZERO,
+            zoom: 1.0,
+            fitted_to: Some(Vec2::ZERO),
+            view: Rect::NOTHING,
+            place: None,
+            label: String::new(),
+            note: String::new(),
+            dialog: None,
+            in_flight: None,
+            awaiting: None,
+            allow_close: false,
+            status: None,
+        }
+    }
+
+    // ---- replies from the database worker ----
+
+    pub fn opened(&mut self, opened: OpenedCircuit) {
+        // Only the circuit asked for; a late reply must not replace newer work.
+        if self.awaiting.as_deref() != Some(opened.id.as_str()) {
+            return;
+        }
+        let saved = Saved {
+            id: opened.id,
+            revision: opened.revision,
+            project: opened.project,
+        };
+        let status = format!("Opened revision {}.", saved.revision);
+        *self = Self::new(opened.document, Some(saved));
+        self.status = Some(status);
+    }
+
+    pub fn circuit_saved(&mut self, id: String, revision: i32) {
+        // A reply for a document that has since been replaced (New, Open) is not about this one.
+        let Some(sent) = self.in_flight.take() else {
+            return;
+        };
+        self.doc.mark_saved_as(sent);
+        let project = self.saved.take().and_then(|s| s.project);
+        self.saved = Some(Saved {
+            id,
+            revision,
+            project,
+        });
+        self.note.clear();
+        self.status = Some(format!("Saved revision {revision}."));
+    }
+
+    pub fn conflict(&mut self, current: i32) {
+        if self.in_flight.take().is_some() {
+            self.dialog = Some(Dialog::Conflict { current });
+        } else if self.awaiting.take().is_some() {
+            self.dialog = Some(Dialog::RestoreConflict { current });
+        }
+    }
+
+    /// A save failed: stop waiting on it and say why.
+    pub fn save_failed(&mut self, message: String) {
+        self.in_flight = None;
+        self.status = Some(message);
+    }
+
+    /// Opening, listing or restoring failed: stop waiting on it and say why.
+    pub fn circuit_failed(&mut self, message: String) {
+        self.awaiting = None;
+        if matches!(
+            self.dialog,
+            Some(
+                Dialog::Open(None)
+                    | Dialog::History {
+                        revisions: None,
+                        ..
+                    }
+            )
+        ) {
+            self.dialog = None;
+        }
+        self.status = Some(message);
+    }
+
+    /// Whether the window may close now; if not, asks about unsaved changes first.
+    pub fn may_close(&mut self) -> bool {
+        if self.allow_close || !self.doc.is_dirty() {
+            return true;
+        }
+        self.dialog = Some(Dialog::Discard(Pending::Quit));
+        false
+    }
+
+    pub fn circuits(&mut self, list: Vec<CircuitSummary>) {
+        if let Some(Dialog::Open(slot)) = &mut self.dialog {
+            *slot = Some(list);
+        }
+    }
+
+    pub fn revisions(&mut self, list: Vec<RevisionSummary>) {
+        if let Some(Dialog::History { revisions, .. }) = &mut self.dialog {
+            *revisions = Some(list);
+        }
+    }
+
+    pub fn revision_preview(&mut self, number: i32, circuit: &Circuit, catalogue: &Catalogue) {
+        if let Some(Dialog::History { preview, .. }) = &mut self.dialog {
+            *preview = Some((number, render_circuit(circuit, catalogue)));
+        }
+    }
+
+    // ---- editing ----
+
+    fn apply(&mut self, command: Command) {
+        self.status = self.doc.apply(command).err();
+        self.prune_selection();
+    }
+
+    fn undo(&mut self) {
+        self.status = self.doc.undo().map(|what| format!("Undid: {what}"));
+        self.prune_selection();
+    }
+
+    fn redo(&mut self) {
+        self.status = self.doc.redo().map(|what| format!("Redid: {what}"));
+        self.prune_selection();
+    }
+
+    /// Forget a selected part that no longer exists, e.g. after undoing its placement.
+    fn prune_selection(&mut self) {
+        let circuit = &self.doc.circuit;
+        self.selected = self
+            .selected
+            .take()
+            .filter(|id| circuit.component(id).is_some());
+    }
+
+    /// Add a part in the middle of the view and select it.
+    fn add(&mut self, kind: ComponentKind, catalogue: &Catalogue) {
+        let prefix = match &kind {
+            ComponentKind::Port { .. } => "X",
+            ComponentKind::Valve { valve_type } => match catalogue.symbol_of(valve_type) {
+                Some(SymbolDef::Check { .. }) => "K",
+                Some(SymbolDef::Relief { .. }) => "RV",
+                Some(SymbolDef::Orifice { .. }) => "O",
+                _ => "V",
+            },
+        };
+        let id = next_id(
+            self.doc.circuit.components.iter().map(|c| c.id.as_str()),
+            prefix,
+        );
+        let kind = match kind {
+            ComponentKind::Port { .. } => ComponentKind::Port { label: id.clone() },
+            valve => valve,
+        };
+        let centre = if self.view.is_positive() {
+            self.to_sheet(self.view.center())
+        } else {
+            [0.0, 0.0]
+        };
+        let placement = Placement {
+            x: snap(centre[0]),
+            y: snap(centre[1]),
+            rotation: Rotation::R0,
+        };
+        self.apply(Command::Add {
+            component: Component {
+                id: id.clone(),
+                kind,
+            },
+            placement,
+        });
+        self.selected = Some(id);
+    }
+
+    fn rotate_selected(&mut self) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let mut placement = self.placement(&id);
+        placement.rotation = match placement.rotation {
+            Rotation::R0 => Rotation::R90,
+            Rotation::R90 => Rotation::R180,
+            Rotation::R180 => Rotation::R270,
+            Rotation::R270 => Rotation::R0,
+        };
+        self.apply(Command::Place { id, placement });
+    }
+
+    fn delete_selected(&mut self) {
+        if let Some(id) = self.selected.take() {
+            self.apply(Command::Remove { id });
+        }
+    }
+
+    fn placement(&self, id: &str) -> Placement {
+        self.doc
+            .circuit
+            .layout
+            .components
+            .get(id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn to_sheet(&self, p: Pos2) -> [f32; 2] {
+        let v = (p - self.view.min - self.pan) / self.zoom;
+        [v.x, v.y]
+    }
+
+    fn to_screen(&self, [x, y]: [f32; 2]) -> Pos2 {
+        self.view.min + self.pan + Vec2::new(x, y) * self.zoom
+    }
+
+    // ---- file actions ----
+
+    fn new_circuit(&mut self) {
+        *self = Self::new(empty_circuit(), None);
+    }
+
+    /// Run an action that replaces the document, asking first if there are unsaved changes.
+    fn guarded(&mut self, action: Pending, shared: &Shared, ctx: &egui::Context) {
+        if self.doc.is_dirty() {
+            self.dialog = Some(Dialog::Discard(action));
+        } else {
+            self.run(action, shared, ctx);
+        }
+    }
+
+    fn run(&mut self, action: Pending, shared: &Shared, ctx: &egui::Context) {
+        self.dialog = None;
+        match action {
+            Pending::New => self.new_circuit(),
+            Pending::Open(id) => {
+                if let Some(db) = &shared.db {
+                    self.awaiting = Some(id.clone());
+                    db.send(Request::OpenCircuit(id));
+                }
+            }
+            Pending::Quit => {
+                self.allow_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
+    fn can_save(&self, shared: &Shared) -> bool {
+        // A clean, saved document has nothing to save; a new one can always be saved.
+        let changed = self.saved.is_none() || self.doc.is_dirty();
+        shared.db.is_some() && self.in_flight.is_none() && self.awaiting.is_none() && changed
+    }
+
+    fn save(&mut self, shared: &Shared, as_copy: bool) {
+        let Some(db) = &shared.db else {
+            return;
+        };
+        if as_copy {
+            let name = format!("{} (copy)", self.doc.circuit.name);
+            self.apply(Command::Rename { name });
+        }
+        let target = self.saved.as_ref().filter(|_| !as_copy);
+        let note = self.note.trim();
+        self.in_flight = Some(self.doc.circuit.clone());
+        db.send(Request::SaveCircuit {
+            id: target.map(|s| s.id.clone()),
+            base: target.map_or(0, |s| s.revision),
+            document: self.doc.circuit.clone(),
+            project: self.saved.as_ref().and_then(|s| s.project.clone()),
+            message: (!note.is_empty()).then(|| note.to_string()),
+        });
+    }
+
+    // ---- UI ----
+
+    pub fn ui(&mut self, ui: &mut egui::Ui, shared: &mut Shared) {
+        // Not while a circuit is being opened: its reply would replace the new part.
+        if self.awaiting.is_none()
+            && let Some(r) = shared.place.take()
+        {
+            self.add(ComponentKind::Valve { valve_type: r }, &shared.catalogue);
+        }
+        // While a circuit is being opened or restored, its reply will replace the document.
+        let locked = self.awaiting.is_some();
+        ui.add_enabled_ui(!locked, |ui| {
+            self.toolbar(ui, shared);
+            self.selection_bar(ui);
+            self.validation(ui, &shared.catalogue);
+            ui.weak(
+                "Drag parts to move them. Drag from a valve port to another port to connect \
+             (Shift-drag from an external port). Right-click a port to disconnect. \
+             R rotates, Delete removes, double-click fits.",
+            );
+            self.canvas(ui, &shared.catalogue);
+        });
+        if !locked {
+            self.keys(ui, shared);
+        }
+        self.dialogs(ui.ctx(), shared);
+    }
+
+    fn toolbar(&mut self, ui: &mut egui::Ui, shared: &Shared) {
+        let online = shared.db.is_some();
+        let offline = "Needs the database connection";
+        let busy = self.in_flight.is_some() || self.awaiting.is_some();
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("New").clicked() {
+                self.guarded(Pending::New, shared, ui.ctx());
+            }
+            let open = ui
+                .add_enabled(online, egui::Button::new("Open…"))
+                .on_disabled_hover_text(offline);
+            if open.clicked()
+                && let Some(db) = &shared.db
+            {
+                self.dialog = Some(Dialog::Open(None));
+                db.send(Request::ListCircuits);
+            }
+            let save = ui
+                .add_enabled(self.can_save(shared), egui::Button::new("Save"))
+                .on_disabled_hover_text(if online { "Nothing to save" } else { offline });
+            if save.clicked() {
+                self.save(shared, false);
+            }
+            if ui
+                .add_enabled(
+                    online && !busy && self.saved.is_some(),
+                    egui::Button::new("Save as copy"),
+                )
+                .clicked()
+            {
+                self.save(shared, true);
+            }
+            if busy {
+                ui.spinner();
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut self.note)
+                    .hint_text("note for this save")
+                    .desired_width(160.0),
+            );
+            let history = ui
+                .add_enabled(
+                    online && self.saved.is_some(),
+                    egui::Button::new("History…"),
+                )
+                .on_disabled_hover_text("Save the circuit first");
+            if history.clicked()
+                && let (Some(db), Some(saved)) = (&shared.db, &self.saved)
+            {
+                self.dialog = Some(Dialog::History {
+                    revisions: None,
+                    preview: None,
+                });
+                db.send(Request::ListRevisions(saved.id.clone()));
+            }
+            ui.separator();
+            let name = ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(200.0));
+            if name.lost_focus() && self.name.trim() != self.doc.circuit.name {
+                self.apply(Command::Rename {
+                    name: self.name.clone(),
+                });
+            }
+            if !name.has_focus() {
+                self.name = self.doc.circuit.name.clone();
+            }
+            let state = match (&self.saved, self.doc.is_dirty()) {
+                (Some(s), false) => format!("revision {}", s.revision),
+                (Some(s), true) => format!("revision {}, unsaved changes", s.revision),
+                (None, _) => "not saved yet".to_string(),
+            };
+            ui.weak(state);
+        });
+        ui.horizontal_wrapped(|ui| {
+            let undo = ui.add_enabled(self.doc.undo_label().is_some(), egui::Button::new("Undo"));
+            let undo = match self.doc.undo_label() {
+                Some(what) => undo.on_hover_text(format!("Undo {what}")),
+                None => undo,
+            };
+            if undo.clicked() {
+                self.undo();
+            }
+            if ui
+                .add_enabled(self.doc.redo_label().is_some(), egui::Button::new("Redo"))
+                .clicked()
+            {
+                self.redo();
+            }
+            ui.separator();
+            let catalogue = &shared.catalogue;
+            let choice =
+                |r: &Option<CatalogueRef>| match r.as_ref().and_then(|r| catalogue.valve_type(r)) {
+                    Some(v) => format!("{} {} (v{})", v.series, v.code, v.version),
+                    None => "Choose a valve type".to_string(),
+                };
+            egui::ComboBox::from_id_salt("place-valve")
+                .selected_text(choice(&self.place))
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    for v in latest_drawable(catalogue) {
+                        let r = Some(v.reference());
+                        let text = choice(&r);
+                        ui.selectable_value(&mut self.place, r, text);
+                    }
+                });
+            if ui
+                .add_enabled(self.place.is_some(), egui::Button::new("Place"))
+                .clicked()
+                && let Some(r) = self.place.clone()
+            {
+                self.add(ComponentKind::Valve { valve_type: r }, catalogue);
+            }
+            if ui.button("Add port").clicked() {
+                self.add(
+                    ComponentKind::Port {
+                        label: String::new(),
+                    },
+                    catalogue,
+                );
+            }
+            if let Some(s) = &self.status {
+                ui.weak(s);
+            }
+        });
+    }
+
+    fn selection_bar(&mut self, ui: &mut egui::Ui) {
+        let Some(c) = self
+            .selected
+            .as_ref()
+            .and_then(|id| self.doc.circuit.component(id))
+            .cloned()
+        else {
+            return;
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.strong(&c.id);
+            match &c.kind {
+                ComponentKind::Valve { valve_type } => {
+                    ui.monospace(valve_type.to_string());
+                }
+                ComponentKind::Port { label } => {
+                    ui.label("Label");
+                    let edit =
+                        ui.add(egui::TextEdit::singleline(&mut self.label).desired_width(80.0));
+                    if edit.lost_focus()
+                        && self.label.trim() != label
+                        && !self.label.trim().is_empty()
+                    {
+                        self.apply(Command::SetLabel {
+                            id: c.id.clone(),
+                            label: self.label.trim().to_string(),
+                        });
+                    }
+                    if !edit.has_focus() {
+                        self.label = label.clone();
+                    }
+                }
+            }
+            if ui.button("Rotate").clicked() {
+                self.rotate_selected();
+            }
+            if ui.button("Delete").clicked() {
+                self.delete_selected();
+            }
+        });
+    }
+
+    fn validation(&self, ui: &mut egui::Ui, catalogue: &Catalogue) {
+        let issues: Vec<(Severity, String)> = catalogue
+            .problems()
+            .into_iter()
+            .map(|p| (Severity::Error, format!("catalogue: {p}")))
+            .chain(
+                self.doc
+                    .circuit
+                    .validate(catalogue)
+                    .iter()
+                    .map(|i| (i.severity(), i.to_string())),
+            )
+            .collect();
+        let errors = issues.iter().filter(|(s, _)| *s == Severity::Error).count();
+        let title = format!(
+            "Validation: {errors} errors, {} warnings",
+            issues.len() - errors
+        );
+        egui::CollapsingHeader::new(title)
+            .id_salt("validation")
+            .default_open(false)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(120.0)
+                    .show(ui, |ui| {
+                        for (severity, message) in &issues {
+                            let color = match severity {
+                                Severity::Error => ui.visuals().error_fg_color,
+                                Severity::Warning => ui.visuals().warn_fg_color,
+                            };
+                            ui.colored_label(color, message);
+                        }
+                    });
+            });
+    }
+
+    fn canvas(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue) {
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        self.view = rect;
+
+        // What to draw: the document, with a part being dragged shown at its new spot.
+        let mut shown = self.doc.circuit.clone();
+        if let Some(Drag::Move { id, to, .. }) = &self.drag {
+            shown.layout.components.insert(id.clone(), *to);
+        }
+        let drawing = render_circuit(&shown, catalogue);
+        let parts = render_parts(&shown, catalogue);
+
+        if response.double_clicked() || self.fitted_to.is_some_and(|s| s != rect.size()) {
+            (self.pan, self.zoom) = fit(&drawing.primitives, rect.size());
+            self.fitted_to = Some(rect.size());
+        }
+        let reach = PORT_REACH / self.zoom;
+        let shift = ui.input(|i| i.modifiers.shift);
+
+        if response.drag_started()
+            && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+        {
+            let p = self.to_sheet(origin);
+            self.drag = Some(
+                match (port_at(&parts, &shown, p, reach, shift), part_at(&parts, p)) {
+                    (Some((from, start)), _) => Drag::Wire {
+                        from,
+                        start,
+                        end: p,
+                    },
+                    (None, Some(id)) => {
+                        let place = self.placement(&id);
+                        self.selected = Some(id.clone());
+                        Drag::Move {
+                            grab: [p[0] - place.x, p[1] - place.y],
+                            to: place,
+                            id,
+                        }
+                    }
+                    (None, None) => Drag::Pan,
+                },
+            );
+        }
+        if let (Some(drag), Some(pointer)) = (&mut self.drag, response.interact_pointer_pos()) {
+            let v = (pointer - rect.min - self.pan) / self.zoom;
+            let p = [v.x, v.y];
+            match drag {
+                Drag::Move { grab, to, .. } => {
+                    to.x = snap(p[0] - grab[0]);
+                    to.y = snap(p[1] - grab[1]);
+                }
+                Drag::Wire { end, .. } => *end = p,
+                Drag::Pan => {
+                    self.pan += response.drag_delta();
+                    self.fitted_to = None;
+                }
+            }
+        }
+        if response.drag_stopped() {
+            match self.drag.take() {
+                Some(Drag::Move { id, to, .. }) if to != self.placement(&id) => {
+                    self.apply(Command::Place { id, placement: to });
+                }
+                Some(Drag::Wire { from, end, .. }) => {
+                    // Any port is a valid target, including external ones.
+                    if let Some((to, _)) = port_at(&parts, &shown, end, reach, true)
+                        && to != from
+                    {
+                        self.apply(Command::Connect { a: from, b: to });
+                    }
+                }
+                _ => {}
+            }
+        }
+        if response.clicked()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.selected = part_at(&parts, self.to_sheet(pos));
+        }
+        if response.secondary_clicked()
+            && let Some(pos) = response.interact_pointer_pos()
+            && let Some((port, _)) = port_at(&parts, &shown, self.to_sheet(pos), reach, true)
+        {
+            self.apply(Command::Disconnect { port });
+        }
+        if let Some(pointer) = response.hover_pos() {
+            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+            let zoom = (self.zoom * (scroll * 0.002).exp() * pinch).clamp(0.05, 200.0);
+            let factor = zoom / self.zoom;
+            if factor != 1.0 {
+                let anchor = pointer - rect.min;
+                self.pan = anchor - (anchor - self.pan) * factor;
+                self.zoom = zoom;
+                self.fitted_to = None;
+            }
+        }
+
+        let painter = ui.painter_at(rect);
+        paint_sheet(&painter, rect, self.pan, self.zoom, &drawing.primitives);
+        let accent = Stroke::new(1.5, ACCENT);
+        if let Some((_, part)) = self
+            .selected
+            .as_ref()
+            .and_then(|id| parts.iter().find(|(p, _)| p == id))
+            && let Some((min, max)) = bounds(&part.primitives)
+        {
+            let r = Rect::from_min_max(self.to_screen(min), self.to_screen(max)).expand(4.0);
+            painter.rect_stroke(r, 2.0, accent, egui::StrokeKind::Outside);
+        }
+        if let Some(Drag::Wire { start, end, .. }) = &self.drag {
+            painter.line_segment([self.to_screen(*start), self.to_screen(*end)], accent);
+        }
+        let hover = response.hover_pos().map(|p| self.to_sheet(p));
+        let target =
+            hover.and_then(|p| port_at(&parts, &shown, p, reach, shift || self.drag.is_some()));
+        if let Some((_, at)) = target {
+            painter.circle_stroke(self.to_screen(at), 5.0, accent);
+        }
+    }
+
+    fn keys(&mut self, ui: &mut egui::Ui, shared: &Shared) {
+        // Not while typing, and not behind a dialog that is asking about this document.
+        if self.dialog.is_some() || ui.ctx().egui_wants_keyboard_input() {
+            return;
+        }
+        let (save, redo, undo, delete, rotate, escape) = ui.input_mut(|i| {
+            let redo = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+                || i.consume_key(Modifiers::CTRL, Key::Y);
+            (
+                i.consume_key(Modifiers::COMMAND, Key::S),
+                redo,
+                i.consume_key(Modifiers::COMMAND, Key::Z),
+                i.consume_key(Modifiers::NONE, Key::Delete)
+                    || i.consume_key(Modifiers::NONE, Key::Backspace),
+                i.consume_key(Modifiers::NONE, Key::R),
+                i.consume_key(Modifiers::NONE, Key::Escape),
+            )
+        });
+        if save && self.can_save(shared) {
+            self.save(shared, false);
+        }
+        if redo {
+            self.redo();
+        } else if undo {
+            self.undo();
+        }
+        if delete {
+            self.delete_selected();
+        }
+        if rotate {
+            self.rotate_selected();
+        }
+        if escape {
+            self.drag = None;
+            self.selected = None;
+        }
+    }
+
+    fn dialogs(&mut self, ctx: &egui::Context, shared: &Shared) {
+        let Some(dialog) = &mut self.dialog else {
+            return;
+        };
+        let mut open = true;
+        // Actions that replace the document: `guard` asks about unsaved changes first.
+        let mut action: Option<Pending> = None;
+        let mut guard: Option<Pending> = None;
+        let mut restoring = false;
+        let mut close = false;
+        match dialog {
+            Dialog::Open(list) => {
+                egui::Window::new("Open circuit")
+                    .open(&mut open)
+                    .show(ctx, |ui| match list {
+                        None => {
+                            ui.spinner();
+                        }
+                        Some(list) if list.is_empty() => {
+                            ui.weak("No circuits saved yet.");
+                        }
+                        Some(list) => {
+                            egui::Grid::new("circuits").striped(true).show(ui, |ui| {
+                                for h in ["Name", "Project", "Revision", "Saved", "By", ""] {
+                                    ui.strong(h);
+                                }
+                                ui.end_row();
+                                for c in list.iter() {
+                                    ui.label(&c.name);
+                                    ui.label(c.project.as_deref().unwrap_or(""));
+                                    ui.label(c.revision.to_string());
+                                    ui.label(&c.saved_at);
+                                    ui.label(&c.saved_by);
+                                    if ui.button("Open").clicked() {
+                                        guard = Some(Pending::Open(c.id.clone()));
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                        }
+                    });
+            }
+            Dialog::History { revisions, preview } => {
+                let (Some(saved), Some(db)) = (&self.saved, &shared.db) else {
+                    self.dialog = None;
+                    return;
+                };
+                let dirty = self.doc.is_dirty();
+                egui::Window::new("Revision history")
+                    .open(&mut open)
+                    .default_width(520.0)
+                    .show(ctx, |ui| {
+                        let Some(revisions) = revisions else {
+                            ui.spinner();
+                            return;
+                        };
+                        if dirty {
+                            ui.weak("Save or undo your changes before restoring.");
+                        }
+                        egui::ScrollArea::vertical()
+                            .max_height(240.0)
+                            .show(ui, |ui| {
+                                egui::Grid::new("revisions").striped(true).show(ui, |ui| {
+                                    for r in revisions.iter() {
+                                        ui.label(format!("#{}", r.number));
+                                        ui.label(&r.created_at);
+                                        ui.label(&r.created_by);
+                                        let note = match r.restored_from {
+                                            Some(n) => format!("restored from #{n}"),
+                                            None => r.message.clone().unwrap_or_default(),
+                                        };
+                                        ui.label(note);
+                                        if ui.button("Preview").clicked() {
+                                            db.send(Request::OpenRevision(
+                                                saved.id.clone(),
+                                                r.number,
+                                            ));
+                                        }
+                                        let restorable = !dirty && r.number != saved.revision;
+                                        if ui
+                                            .add_enabled(restorable, egui::Button::new("Restore"))
+                                            .clicked()
+                                        {
+                                            db.send(Request::RestoreRevision {
+                                                id: saved.id.clone(),
+                                                number: r.number,
+                                                base: saved.revision,
+                                            });
+                                            restoring = true;
+                                            close = true;
+                                        }
+                                        ui.end_row();
+                                    }
+                                });
+                            });
+                        if let Some((number, drawing)) = preview {
+                            ui.separator();
+                            ui.label(format!("Revision {number}"));
+                            let width = ui.available_width();
+                            draw_fitted(ui, Vec2::new(width, 260.0), &drawing.primitives);
+                        }
+                    });
+            }
+            Dialog::Conflict { current } => {
+                let current = *current;
+                egui::Window::new("Circuit changed")
+                    .collapsible(false)
+                    .open(&mut open)
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "Someone saved revision {current} since you opened this circuit. \
+                             Your changes are not saved."
+                        ));
+                        ui.horizontal(|ui| {
+                            if ui.button("Reload, discarding my changes").clicked()
+                                && let Some(saved) = &self.saved
+                            {
+                                action = Some(Pending::Open(saved.id.clone()));
+                            }
+                            if ui.button("Save mine as a copy").clicked() {
+                                close = true;
+                                self.save(shared, true);
+                            }
+                            if ui.button("Cancel").clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+            }
+            Dialog::RestoreConflict { current } => {
+                let current = *current;
+                egui::Window::new("Circuit changed")
+                    .collapsible(false)
+                    .open(&mut open)
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "Someone saved revision {current} since you opened this circuit, \
+                             so nothing was restored. Reload to see it, then restore again."
+                        ));
+                        ui.horizontal(|ui| {
+                            if ui.button("Reload").clicked()
+                                && let Some(saved) = &self.saved
+                            {
+                                action = Some(Pending::Open(saved.id.clone()));
+                            }
+                            if ui.button("Cancel").clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+            }
+            Dialog::Discard(pending) => {
+                let pending = pending.clone();
+                egui::Window::new("Unsaved changes")
+                    .collapsible(false)
+                    .open(&mut open)
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "Discard your unsaved changes to {}?",
+                            self.doc.circuit.name
+                        ));
+                        ui.horizontal(|ui| {
+                            if ui.button("Discard").clicked() {
+                                action = Some(pending.clone());
+                            }
+                            if ui.button("Cancel").clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+            }
+        }
+        if restoring {
+            self.awaiting = self.saved.as_ref().map(|s| s.id.clone());
+        }
+        if let Some(action) = guard {
+            self.dialog = None;
+            self.guarded(action, shared, ctx);
+        } else if let Some(action) = action {
+            self.run(action, shared, ctx);
+        } else if close || !open {
+            self.dialog = None;
+        }
+    }
+}
+
+fn snap(v: f32) -> f32 {
+    (v / GRID).round() * GRID
+}
+
+pub fn empty_circuit() -> Circuit {
+    Circuit {
+        schema: SCHEMA_VERSION,
+        name: "Untitled circuit".into(),
+        components: Vec::new(),
+        nets: Vec::new(),
+        layout: Layout::default(),
+    }
+}
+
+/// Valve types worth offering for placement: the latest version of each key that has a symbol.
+fn latest_drawable(catalogue: &Catalogue) -> Vec<&hydra_core::ValveType> {
+    let mut latest: Vec<&hydra_core::ValveType> = Vec::new();
+    for v in catalogue
+        .valve_types
+        .iter()
+        .filter(|v| catalogue.symbol_of(&v.reference()).is_some())
+    {
+        match latest.iter_mut().find(|l| l.key == v.key) {
+            Some(l) if l.version < v.version => *l = v,
+            Some(_) => {}
+            None => latest.push(v),
+        }
+    }
+    latest.sort_by_key(|v| (&v.series, &v.code));
+    latest
+}
+
+/// Each component's own drawing, for hit testing.
+fn render_parts(circuit: &Circuit, catalogue: &Catalogue) -> Vec<(String, Drawing)> {
+    circuit
+        .components
+        .iter()
+        .filter_map(|c| {
+            let place = circuit
+                .layout
+                .components
+                .get(&c.id)
+                .copied()
+                .unwrap_or_default();
+            render_component(c, place, catalogue).map(|d| (c.id.clone(), d))
+        })
+        .collect()
+}
+
+/// The topmost part whose drawing covers `p`, with a millimetre of slack.
+fn part_at(parts: &[(String, Drawing)], p: [f32; 2]) -> Option<String> {
+    parts.iter().rev().find_map(|(id, d)| {
+        let (min, max) = bounds(&d.primitives)?;
+        let inside = (min[0] - 1.0..=max[0] + 1.0).contains(&p[0])
+            && (min[1] - 1.0..=max[1] + 1.0).contains(&p[1]);
+        inside.then(|| id.clone())
+    })
+}
+
+/// The port anchor nearest `p` within `reach`. External ports (whose anchor is the whole part)
+/// only count when `include_external`, so that dragging one moves it instead.
+fn port_at(
+    parts: &[(String, Drawing)],
+    circuit: &Circuit,
+    p: [f32; 2],
+    reach: f32,
+    include_external: bool,
+) -> Option<(PortRef, [f32; 2])> {
+    let external = |id: &str| {
+        matches!(
+            circuit.component(id).map(|c| &c.kind),
+            Some(ComponentKind::Port { .. })
+        )
+    };
+    parts
+        .iter()
+        .filter(|(id, _)| include_external || !external(id))
+        .flat_map(|(id, d)| d.ports.iter().map(move |(port, at)| (id, port, *at)))
+        .map(|(id, port, at)| ((at[0] - p[0]).hypot(at[1] - p[1]), id, port, at))
+        .filter(|(dist, ..)| *dist <= reach)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, id, port, at)| {
+            let port = PortRef {
+                component: id.clone(),
+                port: port.clone(),
+            };
+            (port, at)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT, Queryable},
+    };
+    use hydra_core::PORT_PIN;
+
+    use super::*;
+
+    type State = (SchematicEditor, Shared);
+
+    fn shared() -> Shared {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/catalogue.json");
+        Shared {
+            catalogue: serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap(),
+            datasheets: HashMap::new(),
+            db: None,
+            error: None,
+            notice: None,
+            place: None,
+        }
+    }
+
+    fn harness() -> Harness<'static, State> {
+        let mut h = Harness::builder()
+            .with_size(Vec2::new(1100.0, 750.0))
+            .build_ui_state(
+                |ui, (e, s): &mut State| e.ui(ui, s),
+                (SchematicEditor::new(empty_circuit(), None), shared()),
+            );
+        h.run();
+        // A fixed zoom, so ports a few millimetres apart are far enough apart on screen.
+        let e = &mut h.state_mut().0;
+        (e.zoom, e.pan, e.fitted_to) = (6.0, Vec2::new(500.0, 300.0), None);
+        h.run();
+        h
+    }
+
+    fn anchor(h: &Harness<State>, component: &str, port: &str) -> Pos2 {
+        let (e, s) = h.state();
+        let parts = render_parts(&e.doc.circuit, &s.catalogue);
+        let (_, d) = parts.iter().find(|(id, _)| id == component).unwrap();
+        let at = d.ports.iter().find(|(p, _)| p == port).unwrap().1;
+        e.to_screen(at)
+    }
+
+    fn drag(h: &mut Harness<State>, from: Pos2, to: Pos2) {
+        h.hover_at(from);
+        h.drag_at(from);
+        h.run();
+        for t in [0.25, 0.5, 0.75, 1.0] {
+            h.hover_at(from + (to - from) * t);
+            h.run();
+        }
+        h.drop_at(to);
+        h.run();
+    }
+
+    fn click(h: &mut Harness<State>, at: Pos2, button: egui::PointerButton) {
+        h.hover_at(at);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: at,
+                button,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        h.run();
+    }
+
+    fn nets(h: &Harness<State>) -> Vec<Vec<String>> {
+        h.state()
+            .0
+            .doc
+            .circuit
+            .nets
+            .iter()
+            .map(|n| n.ports.iter().map(|p| p.to_string()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn place_move_connect_undo_rotate_disconnect_delete() {
+        let mut h = harness();
+
+        // Place an external port, then drag it down: it moves and snaps to the grid.
+        h.get_by_label("Add port").click();
+        h.run();
+        let x1 = anchor(&h, "X1", PORT_PIN);
+        drag(&mut h, x1, x1 + Vec2::new(0.0, 150.0));
+        let moved = h.state().0.placement("X1");
+        assert!(moved.y > 20.0, "X1 moved down: {moved:?}");
+        assert_eq!(moved.y % GRID, 0.0, "snapped to the grid");
+
+        // Place a 4/2 valve from the toolbar.
+        h.state_mut().0.place = Some(CatalogueRef::new("vt-demo-4-2", 1));
+        h.get_by_label("Place").click();
+        h.run();
+        assert!(h.state().0.doc.circuit.component("V1").is_some());
+
+        // Drag from the valve's P port onto the external port: they connect.
+        let (p, x1) = (anchor(&h, "V1", "P"), anchor(&h, "X1", PORT_PIN));
+        // Drop a few points off the port, as a hand would.
+        drag(&mut h, p + Vec2::new(2.0, 1.0), x1 + Vec2::new(-3.0, 4.0));
+        assert_eq!(nets(&h), [["V1.P", "X1.port"]]);
+
+        // Undo and redo from the keyboard.
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert!(nets(&h).is_empty());
+        h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+        h.run();
+        assert_eq!(nets(&h).len(), 1);
+
+        // Select the valve by clicking its body and rotate it with R.
+        let body = anchor(&h, "V1", "P") + Vec2::new(0.0, -6.0 * 8.0);
+        click(&mut h, body, egui::PointerButton::Primary);
+        assert_eq!(h.state().0.selected.as_deref(), Some("V1"));
+        h.key_press(Key::R);
+        h.run();
+        assert_eq!(h.state().0.placement("V1").rotation, Rotation::R90);
+        assert_eq!(nets(&h).len(), 1, "rotating keeps connections");
+
+        // Right-click the external port to disconnect it.
+        let x1 = anchor(&h, "X1", PORT_PIN);
+        click(&mut h, x1, egui::PointerButton::Secondary);
+        assert!(nets(&h).is_empty());
+
+        // Select it and delete it.
+        click(&mut h, x1, egui::PointerButton::Primary);
+        assert_eq!(h.state().0.selected.as_deref(), Some("X1"));
+        h.key_press(Key::Delete);
+        h.run();
+        assert!(h.state().0.doc.circuit.component("X1").is_none());
+        assert!(h.state().0.doc.is_dirty());
+    }
+
+    #[test]
+    fn dragging_empty_sheet_pans_and_bad_drops_do_nothing() {
+        let mut h = harness();
+        h.get_by_label("Add port").click();
+        h.run();
+        let before = h.state().0.doc.circuit.clone();
+        let pan = h.state().0.pan;
+        drag(&mut h, Pos2::new(150.0, 600.0), Pos2::new(250.0, 650.0));
+        assert_ne!(h.state().0.pan, pan, "empty sheet pans");
+        // A wire dropped on nothing connects nothing.
+        h.state_mut().0.place = Some(CatalogueRef::new("vt-demo-check", 1));
+        h.get_by_label("Place").click();
+        h.run();
+        let a = anchor(&h, "K1", "A");
+        drag(&mut h, a, a + Vec2::new(200.0, 200.0));
+        assert!(h.state().0.doc.circuit.nets.is_empty());
+        assert_eq!(
+            h.state().0.doc.circuit.components.len(),
+            before.components.len() + 1
+        );
+    }
+
+    #[test]
+    fn placing_from_the_catalogue_tab_and_unique_designators() {
+        let mut h = harness();
+        h.state_mut().1.place = Some(CatalogueRef::new("vt-demo-relief", 1));
+        h.run();
+        h.state_mut().1.place = Some(CatalogueRef::new("vt-demo-relief", 1));
+        h.run();
+        let ids: Vec<_> = h
+            .state()
+            .0
+            .doc
+            .circuit
+            .components
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        assert_eq!(ids, ["RV1", "RV2"]);
+        assert!(h.state().1.place.is_none());
+    }
+
+    #[test]
+    fn hit_testing_prefers_valve_ports_and_skips_external_ones_unless_asked() {
+        let s = shared();
+        let mut e = SchematicEditor::new(empty_circuit(), None);
+        e.add(
+            ComponentKind::Port {
+                label: String::new(),
+            },
+            &s.catalogue,
+        );
+        let parts = render_parts(&e.doc.circuit, &s.catalogue);
+        let centre = [0.0, 0.0];
+        assert_eq!(part_at(&parts, centre).as_deref(), Some("X1"));
+        assert!(port_at(&parts, &e.doc.circuit, centre, 1.0, false).is_none());
+        let (port, _) = port_at(&parts, &e.doc.circuit, centre, 1.0, true).unwrap();
+        assert_eq!(port.to_string(), "X1.port");
+        assert!(part_at(&parts, [50.0, 50.0]).is_none());
+    }
+
+    #[test]
+    fn saving_offline_is_disabled_and_new_asks_before_discarding() {
+        let mut h = harness();
+        h.get_by_label("Add port").click();
+        h.run();
+        assert!(h.state().0.doc.is_dirty());
+        // Clicking Save offline does nothing.
+        h.get_by_label("Save").click();
+        h.run();
+        assert!(h.state().0.in_flight.is_none());
+        // New with unsaved changes asks first; Cancel keeps the work.
+        h.get_by_label("New").click();
+        h.run();
+        h.get_by_label("Cancel").click();
+        h.run();
+        assert_eq!(h.state().0.doc.circuit.components.len(), 1);
+        h.get_by_label("New").click();
+        h.run();
+        h.get_by_label("Discard").click();
+        h.run();
+        assert!(h.state().0.doc.circuit.components.is_empty());
+    }
+
+    /// An editor on a saved circuit at revision 2, with a worker that goes nowhere.
+    /// Its tests step a fixed number of frames: spinners repaint forever, so `run` never settles.
+    fn saved_harness() -> Harness<'static, State> {
+        let mut h = harness();
+        let ctx = egui::Context::default();
+        let (e, s) = h.state_mut();
+        s.db = Some(crate::db::Db::connect(
+            "postgres://nobody@127.0.0.1:1/none".into(),
+            ctx,
+        ));
+        e.saved = Some(Saved {
+            id: "c1".into(),
+            revision: 2,
+            project: None,
+        });
+        h.run_steps(4);
+        h
+    }
+
+    fn revision(number: i32, restored_from: Option<i32>) -> RevisionSummary {
+        RevisionSummary {
+            number,
+            created_by: "paulo".into(),
+            created_at: "2026-10-29 18:00".into(),
+            message: Some(format!("save {number}")),
+            restored_from,
+        }
+    }
+
+    #[test]
+    fn history_lists_previews_and_restores() {
+        let mut h = saved_harness();
+        h.get_by_label("History…").click();
+        h.run_steps(4);
+        assert!(matches!(
+            h.state().0.dialog,
+            Some(Dialog::History {
+                revisions: None,
+                ..
+            })
+        ));
+        h.state_mut()
+            .0
+            .revisions(vec![revision(2, Some(1)), revision(1, None)]);
+        h.run_steps(4);
+        h.get_by_label("restored from #1");
+        h.get_by_label("save 1");
+
+        let (e, s) = h.state_mut();
+        let old = e.doc.circuit.clone();
+        e.revision_preview(1, &old, &s.catalogue);
+        h.run_steps(4);
+        h.get_by_label("Revision 1");
+
+        // The current revision can't be restored; an older one can, which closes the dialog.
+        let restore = h.get_all_by_label("Restore").collect::<Vec<_>>();
+        assert_eq!(restore.len(), 2);
+        assert!(
+            restore[0].accesskit_node().is_disabled(),
+            "revision 2 is current"
+        );
+        restore[1].click();
+        h.run_steps(4);
+        assert!(h.state().0.dialog.is_none());
+    }
+
+    #[test]
+    fn restoring_waits_until_changes_are_saved_or_undone() {
+        let mut h = saved_harness();
+        h.get_by_label("Add port").click();
+        h.run_steps(4);
+        h.get_by_label("History…").click();
+        h.run_steps(4);
+        h.state_mut()
+            .0
+            .revisions(vec![revision(2, None), revision(1, None)]);
+        h.run_steps(4);
+        h.get_by_label("Save or undo your changes before restoring.");
+        assert!(
+            h.get_all_by_label("Restore")
+                .all(|b| b.accesskit_node().is_disabled())
+        );
+    }
+
+    #[test]
+    fn conflict_offers_reload_or_save_as_copy() {
+        let mut h = saved_harness();
+        h.get_by_label("Add port").click();
+        h.run_steps(4);
+        // Save; the reply is a conflict.
+        h.get_by_label("Save").click();
+        h.run_steps(4);
+        assert!(h.state().0.in_flight.is_some());
+        h.state_mut().0.conflict(3);
+        h.run_steps(4);
+        h.get_by_label_contains("Someone saved revision 3");
+        h.get_by_label("Save mine as a copy").click();
+        h.run_steps(4);
+        assert!(h.state().0.dialog.is_none());
+        assert!(h.state().0.in_flight.is_some(), "the copy is being saved");
+        // The reply for a copy names a new circuit at revision 1.
+        h.state_mut().0.circuit_saved("c2".into(), 1);
+        assert_eq!(
+            h.state()
+                .0
+                .saved
+                .as_ref()
+                .map(|s| (s.id.as_str(), s.revision)),
+            Some(("c2", 1))
+        );
+        assert!(!h.state().0.doc.is_dirty());
+    }
+
+    fn opened(id: &str, revision: i32) -> OpenedCircuit {
+        OpenedCircuit {
+            id: id.into(),
+            project: None,
+            revision,
+            document: empty_circuit(),
+        }
+    }
+
+    #[test]
+    fn open_from_the_dialog_asks_before_discarding_changes() {
+        let mut h = saved_harness();
+        h.get_by_label("Add port").click();
+        h.run_steps(4);
+        h.get_by_label("Open…").click();
+        h.run_steps(4);
+        h.state_mut().0.circuits(vec![CircuitSummary {
+            id: "c9".into(),
+            name: "Other".into(),
+            project: None,
+            owner: "paulo".into(),
+            revision: 1,
+            saved_by: "paulo".into(),
+            saved_at: "2026-10-29 18:00".into(),
+        }]);
+        h.run_steps(4);
+        h.get_by_label("Open").click();
+        h.run_steps(4);
+        assert!(matches!(
+            h.state().0.dialog,
+            Some(Dialog::Discard(Pending::Open(_)))
+        ));
+        assert!(h.state().0.awaiting.is_none(), "nothing requested yet");
+        h.get_by_label("Discard").click();
+        h.run_steps(4);
+        assert_eq!(h.state().0.awaiting.as_deref(), Some("c9"));
+    }
+
+    #[test]
+    fn late_replies_never_land_on_a_different_document() {
+        let s = shared();
+        let mut e = SchematicEditor::new(
+            empty_circuit(),
+            Some(Saved {
+                id: "A".into(),
+                revision: 2,
+                project: None,
+            }),
+        );
+        e.add(
+            ComponentKind::Port {
+                label: String::new(),
+            },
+            &s.catalogue,
+        );
+        e.in_flight = Some(e.doc.circuit.clone());
+        e.new_circuit();
+        e.circuit_saved("A".into(), 3);
+        assert_eq!(
+            e.saved, None,
+            "the save of A doesn't make Untitled part of A"
+        );
+        e.conflict(4);
+        assert!(e.dialog.is_none());
+
+        // An Opened reply is applied only for the circuit being waited on.
+        e.opened(opened("B", 5));
+        assert_eq!(e.saved, None);
+        e.awaiting = Some("C".into());
+        e.opened(opened("B", 5));
+        assert_eq!(e.saved, None);
+        e.opened(opened("C", 1));
+        assert_eq!(e.saved.as_ref().map(|s| s.id.as_str()), Some("C"));
+        assert!(e.awaiting.is_none());
+    }
+
+    #[test]
+    fn editing_waits_while_a_circuit_is_being_opened() {
+        let mut h = saved_harness();
+        h.state_mut().0.awaiting = Some("c1".into());
+        h.run_steps(4);
+        h.get_by_label("Add port").click();
+        h.run_steps(4);
+        assert!(h.state().0.doc.circuit.components.is_empty());
+        // A failed open unlocks the editor again.
+        h.state_mut().0.circuit_failed("unknown circuit".into());
+        h.run_steps(4);
+        h.get_by_label("Add port").click();
+        h.run_steps(4);
+        assert_eq!(h.state().0.doc.circuit.components.len(), 1);
+    }
+
+    #[test]
+    fn shortcuts_are_ignored_behind_dialogs_and_selection_follows_undo() {
+        let mut h = harness();
+        h.get_by_label("Add port").click();
+        h.run();
+        assert_eq!(h.state().0.selected.as_deref(), Some("X1"));
+        h.get_by_label("New").click();
+        h.run();
+        assert!(matches!(h.state().0.dialog, Some(Dialog::Discard(_))));
+        h.key_press(Key::Delete);
+        h.run();
+        assert_eq!(
+            h.state().0.doc.circuit.components.len(),
+            1,
+            "Delete behind the dialog does nothing"
+        );
+        h.get_by_label("Cancel").click();
+        h.run();
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert!(
+            h.state().0.selected.is_none(),
+            "the undone part is no longer selected"
+        );
+    }
+
+    #[test]
+    fn save_needs_changes_and_closing_asks_about_them() {
+        let mut h = saved_harness();
+        h.get_by_label("Save").click();
+        h.run_steps(4);
+        assert!(
+            h.state().0.in_flight.is_none(),
+            "a clean saved circuit has nothing to save"
+        );
+        assert!(h.state_mut().0.may_close());
+
+        h.get_by_label("Add port").click();
+        h.run_steps(4);
+        assert!(!h.state_mut().0.may_close());
+        assert!(matches!(
+            h.state().0.dialog,
+            Some(Dialog::Discard(Pending::Quit))
+        ));
+        h.run_steps(4);
+        h.get_by_label("Discard").click();
+        h.run_steps(4);
+        assert!(
+            h.state_mut().0.may_close(),
+            "the user agreed to lose the changes"
+        );
+    }
+
+    #[test]
+    fn failures_only_cancel_what_they_are_about() {
+        let mut h = saved_harness();
+        h.get_by_label("Add port").click();
+        h.run_steps(4);
+        let (e, s) = h.state_mut();
+        e.in_flight = Some(e.doc.circuit.clone());
+        e.awaiting = Some("B".into());
+        // A part requested from the catalogue waits until the open has landed.
+        s.place = Some(CatalogueRef::new("vt-demo-check", 1));
+        h.run_steps(4);
+        assert!(h.state().1.place.is_some());
+        h.state_mut().0.save_failed("disk full".into());
+        assert_eq!(
+            h.state().0.awaiting.as_deref(),
+            Some("B"),
+            "the open is still on"
+        );
+        assert!(h.state().0.in_flight.is_none());
+        // A failed listing closes its spinner and unlocks the editor.
+        h.state_mut().0.dialog = Some(Dialog::Open(None));
+        h.state_mut().0.circuit_failed("connection lost".into());
+        assert!(h.state().0.dialog.is_none() && h.state().0.awaiting.is_none());
+        h.run_steps(4);
+        assert!(
+            h.state().1.place.is_none(),
+            "the waiting part is placed once unlocked"
+        );
+        assert!(h.state().0.doc.circuit.component("K1").is_some());
+    }
+
+    #[test]
+    fn a_refused_restore_explains_and_offers_reload() {
+        let mut e = SchematicEditor::new(
+            empty_circuit(),
+            Some(Saved {
+                id: "A".into(),
+                revision: 2,
+                project: None,
+            }),
+        );
+        e.awaiting = Some("A".into());
+        e.conflict(3);
+        assert!(matches!(
+            e.dialog,
+            Some(Dialog::RestoreConflict { current: 3 })
+        ));
+        assert!(e.awaiting.is_none());
+    }
+
+    #[test]
+    fn save_replies_track_revisions_and_edits_made_while_saving() {
+        let s = shared();
+        let mut e = SchematicEditor::new(empty_circuit(), None);
+        e.add(
+            ComponentKind::Port {
+                label: String::new(),
+            },
+            &s.catalogue,
+        );
+        e.in_flight = Some(e.doc.circuit.clone());
+        e.add(
+            ComponentKind::Port {
+                label: String::new(),
+            },
+            &s.catalogue,
+        );
+        e.circuit_saved("c1".into(), 1);
+        assert_eq!(
+            e.saved.as_ref().map(|s| (s.id.as_str(), s.revision)),
+            Some(("c1", 1))
+        );
+        assert!(e.doc.is_dirty(), "X2 was added after the save was sent");
+        e.undo();
+        assert!(!e.doc.is_dirty());
+
+        e.in_flight = Some(e.doc.circuit.clone());
+        e.conflict(4);
+        assert!(matches!(e.dialog, Some(Dialog::Conflict { current: 4 })));
+        assert!(e.in_flight.is_none());
+    }
+}

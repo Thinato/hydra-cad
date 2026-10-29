@@ -5,8 +5,8 @@
 //! the nets. The canvas, SVG and PDF export all draw the same primitives.
 
 use hydra_core::{
-    Actuator, Catalogue, Circuit, ComponentKind, DirectionalValve, PORT_PIN, Rotation, Side,
-    SymbolDef,
+    Actuator, Catalogue, Circuit, Component, ComponentKind, DirectionalValve, PORT_PIN, Placement,
+    Rotation, Side, SymbolDef,
 };
 
 mod svg;
@@ -443,6 +443,81 @@ pub fn bounds(primitives: &[Primitive]) -> Option<(Point, Point)> {
     (min[0] <= max[0]).then_some((min, max))
 }
 
+/// Draw one component at its placement, with port anchors named by port.
+///
+/// `None` when a valve's catalogue rows are missing; [`Circuit::validate`] reports those.
+pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) -> Option<Drawing> {
+    let symbol = match &c.kind {
+        ComponentKind::Valve { valve_type } => match catalogue.symbol_of(valve_type) {
+            Some(def) => render_symbol(def),
+            None => return None,
+        },
+        ComponentKind::Port { label } => port_marker(label),
+    };
+    let at = |p: Point| {
+        let [x, y] = rotate(p, place.rotation);
+        [x + place.x, y + place.y]
+    };
+    let mut d = Drawing::default();
+    for prim in symbol.primitives {
+        d.primitives.push(match prim {
+            Primitive::Polyline {
+                points,
+                closed,
+                dashed,
+                filled,
+            } => Primitive::Polyline {
+                points: points.into_iter().map(at).collect(),
+                closed,
+                dashed,
+                filled,
+            },
+            Primitive::Circle {
+                center,
+                radius,
+                filled,
+            } => Primitive::Circle {
+                center: at(center),
+                radius,
+                filled,
+            },
+            // Text stays upright, only its anchor moves; flip its side when turned over.
+            Primitive::Text {
+                at: p,
+                text,
+                size,
+                align,
+            } => {
+                let align = match (place.rotation, align) {
+                    (Rotation::R180, Align::Start) => Align::End,
+                    (Rotation::R180, Align::End) => Align::Start,
+                    _ => align,
+                };
+                Primitive::Text {
+                    at: at(p),
+                    text,
+                    size,
+                    align,
+                }
+            }
+        });
+    }
+    if matches!(c.kind, ComponentKind::Valve { .. })
+        && let Some((min, _)) = bounds(&d.primitives)
+    {
+        // Designator beside the symbol's top-left corner, clear of its port lines.
+        d.primitives.push(text(
+            [min[0] - 1.0, min[1] + LABEL / 2.0],
+            &c.id,
+            Align::End,
+        ));
+    }
+    for (name, p) in symbol.ports {
+        d.ports.push((name, at(p)));
+    }
+    Some(d)
+}
+
 /// Draw a whole circuit: every placed component, its designator, and its nets.
 ///
 /// Components without a placement sit at the origin. Components whose catalogue rows are
@@ -450,79 +525,18 @@ pub fn bounds(primitives: &[Primitive]) -> Option<(Point, Point)> {
 pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
     let mut d = Drawing::default();
     for c in &circuit.components {
-        let symbol = match &c.kind {
-            ComponentKind::Valve { valve_type } => match catalogue.symbol_of(valve_type) {
-                Some(def) => render_symbol(def),
-                None => continue,
-            },
-            ComponentKind::Port { label } => port_marker(label),
-        };
         let place = circuit
             .layout
             .components
             .get(&c.id)
             .copied()
             .unwrap_or_default();
-        let at = |p: Point| {
-            let [x, y] = rotate(p, place.rotation);
-            [x + place.x, y + place.y]
+        let Some(part) = render_component(c, place, catalogue) else {
+            continue;
         };
-        let start = d.primitives.len();
-        for prim in symbol.primitives {
-            d.primitives.push(match prim {
-                Primitive::Polyline {
-                    points,
-                    closed,
-                    dashed,
-                    filled,
-                } => Primitive::Polyline {
-                    points: points.into_iter().map(at).collect(),
-                    closed,
-                    dashed,
-                    filled,
-                },
-                Primitive::Circle {
-                    center,
-                    radius,
-                    filled,
-                } => Primitive::Circle {
-                    center: at(center),
-                    radius,
-                    filled,
-                },
-                // Text stays upright, only its anchor moves; flip its side when turned over.
-                Primitive::Text {
-                    at: p,
-                    text,
-                    size,
-                    align,
-                } => {
-                    let align = match (place.rotation, align) {
-                        (Rotation::R180, Align::Start) => Align::End,
-                        (Rotation::R180, Align::End) => Align::Start,
-                        _ => align,
-                    };
-                    Primitive::Text {
-                        at: at(p),
-                        text,
-                        size,
-                        align,
-                    }
-                }
-            });
-        }
-        if matches!(c.kind, ComponentKind::Valve { .. })
-            && let Some((min, _)) = bounds(&d.primitives[start..])
-        {
-            // Designator beside the symbol's top-left corner, clear of its port lines.
-            d.primitives.push(text(
-                [min[0] - 1.0, min[1] + LABEL / 2.0],
-                &c.id,
-                Align::End,
-            ));
-        }
-        for (name, p) in symbol.ports {
-            d.ports.push((format!("{}.{name}", c.id), at(p)));
+        d.primitives.extend(part.primitives);
+        for (name, p) in part.ports {
+            d.ports.push((format!("{}.{name}", c.id), p));
         }
     }
 

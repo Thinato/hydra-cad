@@ -1,10 +1,15 @@
 //! Hydra Postgres access: migrations, connection and schema-version check.
 
 mod catalogue;
+mod circuits;
 
 pub use catalogue::{
     ImportReport, LoadedCatalogue, asset_bytes, attach_datasheet, import_catalogue, load_catalogue,
     save_valve_type,
+};
+pub use circuits::{
+    CircuitSummary, OpenedCircuit, RevisionSummary, create_circuit, list_circuits, list_revisions,
+    open_circuit, open_revision, restore_revision, save_revision,
 };
 pub use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -27,9 +32,13 @@ pub enum Error {
         "database migration {version} differs from this app's copy; the schema was changed outside a release"
     )]
     Modified { version: i64 },
-    /// The request breaks a catalogue rule; nothing was written.
+    /// The request breaks a rule or names something unknown; nothing was written.
     #[error("{}", .0.join("; "))]
     Invalid(Vec<String>),
+    /// Someone saved the circuit after the caller opened it; nothing was written.
+    /// `current` is the circuit's revision number now.
+    #[error("someone saved revision {current} since you opened this circuit")]
+    Conflict { current: i32 },
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
 }

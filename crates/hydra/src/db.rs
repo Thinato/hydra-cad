@@ -4,14 +4,34 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use eframe::egui;
-use hydra_core::{Catalogue, CatalogueRef, ValveType};
-use hydra_db::{ImportReport, LoadedCatalogue, PgPool};
+use hydra_core::{Catalogue, CatalogueRef, Circuit, ValveType};
+use hydra_db::{
+    CircuitSummary, ImportReport, LoadedCatalogue, OpenedCircuit, PgPool, RevisionSummary,
+};
 
 pub enum Request {
     LoadCatalogue,
     SaveValveType(ValveType),
     AttachDatasheet(CatalogueRef, Vec<u8>),
     Import(Catalogue),
+    ListCircuits,
+    OpenCircuit(String),
+    /// Save a new revision from `base`, or create a new circuit when `id` is `None`.
+    SaveCircuit {
+        id: Option<String>,
+        base: i32,
+        document: Circuit,
+        project: Option<String>,
+        message: Option<String>,
+    },
+    ListRevisions(String),
+    OpenRevision(String, i32),
+    /// Restore an old revision as a new one, then reopen the circuit.
+    RestoreRevision {
+        id: String,
+        number: i32,
+        base: i32,
+    },
     /// Open an asset with the system viewer, fetching it into the local cache first.
     OpenAsset {
         sha256: String,
@@ -27,6 +47,22 @@ pub enum Reply {
     SaveFailed(String),
     Attached(CatalogueRef),
     Imported(ImportReport),
+    Circuits(Vec<CircuitSummary>),
+    Opened(OpenedCircuit),
+    CircuitSaved {
+        id: String,
+        revision: i32,
+    },
+    /// Someone saved the circuit since it was opened; nothing was written.
+    Conflict {
+        current: i32,
+    },
+    /// Saving a circuit failed, so the editor can stop waiting on the save.
+    CircuitSaveFailed(String),
+    /// Opening, listing or restoring circuits failed, so the editor can stop waiting on it.
+    CircuitFailed(String),
+    Revisions(Vec<RevisionSummary>),
+    RevisionPreview(i32, Circuit),
     Error(String),
 }
 
@@ -101,29 +137,85 @@ async fn connect(url: &str) -> Result<PgPool, String> {
 fn failed(request: &Request, e: String) -> Reply {
     match request {
         Request::SaveValveType(_) => Reply::SaveFailed(e),
+        Request::SaveCircuit { .. } => Reply::CircuitSaveFailed(e),
+        Request::RestoreRevision { .. }
+        | Request::OpenCircuit(_)
+        | Request::ListCircuits
+        | Request::ListRevisions(_)
+        | Request::OpenRevision(..) => Reply::CircuitFailed(e),
         _ => Reply::Error(e),
     }
 }
 
 async fn handle(pool: &PgPool, request: Request) -> Vec<Reply> {
-    let outcome = match &request {
+    use hydra_db as db;
+    // Catalogue writes are followed by a reload; circuit requests answer on their own.
+    let (outcome, reload_after) = match &request {
         Request::LoadCatalogue => return vec![reload(pool).await],
-        Request::SaveValveType(v) => hydra_db::save_valve_type(pool, v).await.map(Reply::Saved),
-        Request::AttachDatasheet(r, pdf) => hydra_db::attach_datasheet(pool, r, pdf)
-            .await
-            .map(|_| Reply::Attached(r.clone())),
-        Request::Import(c) => hydra_db::import_catalogue(pool, c)
-            .await
-            .map(Reply::Imported),
         Request::OpenAsset { sha256, extension } => {
             return match open_asset(pool, sha256, extension).await {
                 Ok(()) => Vec::new(),
                 Err(e) => vec![Reply::Error(e)],
             };
         }
+        Request::SaveValveType(v) => (db::save_valve_type(pool, v).await.map(Reply::Saved), true),
+        Request::AttachDatasheet(r, pdf) => (
+            db::attach_datasheet(pool, r, pdf)
+                .await
+                .map(|_| Reply::Attached(r.clone())),
+            true,
+        ),
+        Request::Import(c) => (
+            db::import_catalogue(pool, c).await.map(Reply::Imported),
+            true,
+        ),
+        Request::ListCircuits => (db::list_circuits(pool).await.map(Reply::Circuits), false),
+        Request::OpenCircuit(id) => (db::open_circuit(pool, id).await.map(Reply::Opened), false),
+        Request::SaveCircuit {
+            id,
+            base,
+            document,
+            project,
+            message,
+        } => {
+            let saved = match id {
+                Some(id) => db::save_revision(pool, id, *base, document, message.as_deref())
+                    .await
+                    .map(|revision| Reply::CircuitSaved {
+                        id: id.clone(),
+                        revision,
+                    }),
+                None => db::create_circuit(pool, document, project.as_deref(), message.as_deref())
+                    .await
+                    .map(|o| Reply::CircuitSaved {
+                        id: o.id,
+                        revision: o.revision,
+                    }),
+            };
+            (saved, false)
+        }
+        Request::ListRevisions(id) => (
+            db::list_revisions(pool, id).await.map(Reply::Revisions),
+            false,
+        ),
+        Request::OpenRevision(id, n) => (
+            db::open_revision(pool, id, *n)
+                .await
+                .map(|c| Reply::RevisionPreview(*n, c)),
+            false,
+        ),
+        Request::RestoreRevision { id, number, base } => {
+            let restored = match db::restore_revision(pool, id, *number, *base).await {
+                Ok(_) => db::open_circuit(pool, id).await.map(Reply::Opened),
+                Err(e) => Err(e),
+            };
+            (restored, false)
+        }
     };
     match outcome {
-        Ok(done) => vec![done, reload(pool).await],
+        Ok(done) if reload_after => vec![done, reload(pool).await],
+        Ok(done) => vec![done],
+        Err(db::Error::Conflict { current }) => vec![Reply::Conflict { current }],
         Err(e) => vec![failed(&request, e.to_string())],
     }
 }
@@ -270,6 +362,83 @@ mod tests {
             panic!("expected an error")
         };
         assert!(e.contains("not a PDF"), "{e}");
+    }
+
+    #[test]
+    #[ignore = "needs DATABASE_URL (Postgres with the fixture catalogue imported)"]
+    fn worker_saves_conflicts_and_restores_circuits() {
+        let url = std::env::var("DATABASE_URL").unwrap();
+        let db = Db::connect(url, egui::Context::default());
+        take(&db, 1); // initial catalogue
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/circuits/demo-manifold.json"
+        );
+        let mut doc = Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let save = |id: Option<String>, base: i32, document: Circuit| Request::SaveCircuit {
+            id,
+            base,
+            document,
+            project: Some("worker test".into()),
+            message: Some("from the worker test".into()),
+        };
+
+        db.send(save(None, 0, doc.clone()));
+        let [Reply::CircuitSaved { id, revision: 1 }] = &take(&db, 1)[..] else {
+            panic!("expected revision 1 of a new circuit")
+        };
+        let id = id.clone();
+        doc.name = "Demo manifold, edited".into();
+        db.send(save(Some(id.clone()), 1, doc.clone()));
+        assert!(matches!(
+            &take(&db, 1)[..],
+            [Reply::CircuitSaved { revision: 2, .. }]
+        ));
+
+        // A second editor still on revision 1 is told about revision 2.
+        db.send(save(Some(id.clone()), 1, doc.clone()));
+        assert!(matches!(
+            &take(&db, 1)[..],
+            [Reply::Conflict { current: 2 }]
+        ));
+
+        db.send(Request::ListRevisions(id.clone()));
+        let [Reply::Revisions(revs)] = &take(&db, 1)[..] else {
+            panic!("expected revisions")
+        };
+        assert_eq!(revs.iter().map(|r| r.number).collect::<Vec<_>>(), [2, 1]);
+
+        db.send(Request::OpenRevision(id.clone(), 1));
+        assert!(
+            matches!(&take(&db, 1)[..], [Reply::RevisionPreview(1, c)] if c.name.starts_with("Demo manifold ("))
+        );
+
+        // Restoring 1 creates revision 3 with 1's content and reopens the circuit.
+        db.send(Request::RestoreRevision {
+            id: id.clone(),
+            number: 1,
+            base: 2,
+        });
+        let [Reply::Opened(opened)] = &take(&db, 1)[..] else {
+            panic!("expected the reopened circuit")
+        };
+        assert_eq!(opened.revision, 3);
+        assert!(opened.document.name.starts_with("Demo manifold ("));
+
+        // A stale restore is a conflict that the editor hears about.
+        db.send(Request::RestoreRevision {
+            id: id.clone(),
+            number: 1,
+            base: 2,
+        });
+        assert!(matches!(
+            &take(&db, 1)[..],
+            [Reply::Conflict { current: 3 }]
+        ));
+        db.send(Request::OpenCircuit("not-a-uuid".into()));
+        assert!(
+            matches!(&take(&db, 1)[..], [Reply::CircuitFailed(e)] if e.contains("unknown circuit"))
+        );
     }
 
     #[test]
