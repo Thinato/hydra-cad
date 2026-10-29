@@ -5,7 +5,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Catalogue;
+use crate::{Catalogue, CatalogueRef};
 
 /// Circuit JSON version this build reads and writes.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -32,8 +32,8 @@ pub struct Component {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComponentKind {
-    /// A catalogue valve, by valve type id.
-    Valve { valve_type: String },
+    /// One version of a catalogue valve type.
+    Valve { valve_type: CatalogueRef },
     /// An external connection such as a manifold port `P` or `A1`. Its single port is [`PORT_PIN`].
     Port { label: String },
 }
@@ -236,12 +236,12 @@ pub enum Issue {
     #[error("component {component} uses valve type {valve_type}, which is not in the catalogue")]
     UnknownValveType {
         component: String,
-        valve_type: String,
+        valve_type: CatalogueRef,
     },
     #[error("component {component}: valve type {valve_type} has no symbol in the catalogue")]
     MissingSymbol {
         component: String,
-        valve_type: String,
+        valve_type: CatalogueRef,
     },
     #[error("net {net} refers to component {component}, which is not in the circuit")]
     UnknownComponent { net: String, component: String },

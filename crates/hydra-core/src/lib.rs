@@ -6,7 +6,9 @@ mod catalogue;
 mod circuit;
 mod symbol;
 
-pub use catalogue::{Catalogue, Manufacturer, SymbolDefRecord, ValveType};
+pub use catalogue::{
+    Catalogue, CatalogueRef, Manufacturer, Part, SymbolDefRecord, ValveType, key_problem,
+};
 pub use circuit::{
     Circuit, Component, ComponentKind, Issue, Layout, LoadError, Net, PORT_PIN, Placement, PortRef,
     Rotation, SCHEMA_VERSION, Severity,

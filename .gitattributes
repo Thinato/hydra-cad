@@ -1,0 +1,5 @@
+# Migrations are checksummed byte for byte and snapshots are compared as text, so every
+# checkout (including Windows CI and release builds) must keep LF line endings.
+* text=auto eol=lf
+*.glb binary
+*.pdf binary

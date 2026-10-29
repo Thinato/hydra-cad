@@ -1,85 +1,259 @@
 {
   "manufacturers": [
-    {"id": "argo-hytos", "name": "Argo-Hytos"},
-    {"id": "demo", "name": "Demo (fixture data, not a real product)"}
+    {"key": "argo-hytos", "name": "Argo-Hytos"},
+    {"key": "demo", "name": "Demo (fixture data, not a real product)"}
   ],
   "symbol_defs": [
     {
-      "id": "sym-4-3-closed-centre", "version": 1,
+      "key": "sym-4-3-closed-centre",
+      "version": 1,
       "definition": {
         "kind": "directional_valve",
         "ports": [
-          {"name": "A", "side": "top"}, {"name": "B", "side": "top"},
-          {"name": "P", "side": "bottom"}, {"name": "T", "side": "bottom"}
+          {
+            "name": "A",
+            "side": "top"
+          },
+          {
+            "name": "B",
+            "side": "top"
+          },
+          {
+            "name": "P",
+            "side": "bottom"
+          },
+          {
+            "name": "T",
+            "side": "bottom"
+          }
         ],
         "positions": [
-          {"flows": [["P", "A"], ["B", "T"]]},
-          {"blocked": ["A", "B", "P", "T"]},
-          {"flows": [["P", "B"], ["A", "T"]]}
+          {
+            "flows": [
+              [
+                "P",
+                "A"
+              ],
+              [
+                "B",
+                "T"
+              ]
+            ]
+          },
+          {
+            "blocked": [
+              "A",
+              "B",
+              "P",
+              "T"
+            ]
+          },
+          {
+            "flows": [
+              [
+                "P",
+                "B"
+              ],
+              [
+                "A",
+                "T"
+              ]
+            ]
+          }
         ],
         "normal_position": 1,
-        "left": ["solenoid", "spring"],
-        "right": ["solenoid", "spring"]
+        "left": [
+          "solenoid",
+          "spring"
+        ],
+        "right": [
+          "solenoid",
+          "spring"
+        ]
       }
     },
     {
-      "id": "sym-4-3-tandem-centre", "version": 1,
+      "key": "sym-4-3-tandem-centre",
+      "version": 1,
       "definition": {
         "kind": "directional_valve",
         "ports": [
-          {"name": "A", "side": "top"}, {"name": "B", "side": "top"},
-          {"name": "P", "side": "bottom"}, {"name": "T", "side": "bottom"}
+          {
+            "name": "A",
+            "side": "top"
+          },
+          {
+            "name": "B",
+            "side": "top"
+          },
+          {
+            "name": "P",
+            "side": "bottom"
+          },
+          {
+            "name": "T",
+            "side": "bottom"
+          }
         ],
         "positions": [
-          {"flows": [["P", "A"], ["B", "T"]]},
-          {"links": [["P", "T"]], "blocked": ["A", "B"]},
-          {"flows": [["P", "B"], ["A", "T"]]}
+          {
+            "flows": [
+              [
+                "P",
+                "A"
+              ],
+              [
+                "B",
+                "T"
+              ]
+            ]
+          },
+          {
+            "links": [
+              [
+                "P",
+                "T"
+              ]
+            ],
+            "blocked": [
+              "A",
+              "B"
+            ]
+          },
+          {
+            "flows": [
+              [
+                "P",
+                "B"
+              ],
+              [
+                "A",
+                "T"
+              ]
+            ]
+          }
         ],
         "normal_position": 1,
-        "left": ["lever", "detent"],
-        "right": ["pilot", "spring"]
+        "left": [
+          "lever",
+          "detent"
+        ],
+        "right": [
+          "pilot",
+          "spring"
+        ]
       }
     },
     {
-      "id": "sym-4-2-spring-return", "version": 1,
+      "key": "sym-4-2-spring-return",
+      "version": 1,
       "definition": {
         "kind": "directional_valve",
         "ports": [
-          {"name": "A", "side": "top"}, {"name": "B", "side": "top"},
-          {"name": "P", "side": "bottom"}, {"name": "T", "side": "bottom"}
+          {
+            "name": "A",
+            "side": "top"
+          },
+          {
+            "name": "B",
+            "side": "top"
+          },
+          {
+            "name": "P",
+            "side": "bottom"
+          },
+          {
+            "name": "T",
+            "side": "bottom"
+          }
         ],
         "positions": [
-          {"flows": [["P", "A"], ["B", "T"]]},
-          {"flows": [["P", "B"], ["A", "T"]]}
+          {
+            "flows": [
+              [
+                "P",
+                "A"
+              ],
+              [
+                "B",
+                "T"
+              ]
+            ]
+          },
+          {
+            "flows": [
+              [
+                "P",
+                "B"
+              ],
+              [
+                "A",
+                "T"
+              ]
+            ]
+          }
         ],
         "normal_position": 1,
-        "left": ["solenoid"],
-        "right": ["spring"]
+        "left": [
+          "solenoid"
+        ],
+        "right": [
+          "spring"
+        ]
       }
     },
-    {"id": "sym-check-spring", "version": 1, "definition": {"kind": "check", "spring": true}},
-    {"id": "sym-check", "version": 1, "definition": {"kind": "check"}},
-    {"id": "sym-relief-adjustable", "version": 1, "definition": {"kind": "relief", "adjustable": true}},
-    {"id": "sym-orifice", "version": 1, "definition": {"kind": "orifice"}},
-    {"id": "sym-orifice-adjustable", "version": 1, "definition": {"kind": "orifice", "adjustable": true}}
+    {
+      "key": "sym-check-spring",
+      "version": 1,
+      "definition": {
+        "kind": "check",
+        "spring": true
+      }
+    },
+    {
+      "key": "sym-check",
+      "version": 1,
+      "definition": {
+        "kind": "check"
+      }
+    },
+    {
+      "key": "sym-relief-adjustable",
+      "version": 1,
+      "definition": {
+        "kind": "relief",
+        "adjustable": true
+      }
+    },
+    {
+      "key": "sym-orifice",
+      "version": 1,
+      "definition": {
+        "kind": "orifice"
+      }
+    },
+    {
+      "key": "sym-orifice-adjustable",
+      "version": 1,
+      "definition": {
+        "kind": "orifice",
+        "adjustable": true
+      }
+    }
   ],
   "valve_types": [
-    {
-      "id": "vt-rpe3-06-z11", "manufacturer_id": "argo-hytos", "series": "RPE3-06", "code": "Z11",
-      "symbol_def_id": "sym-4-3-closed-centre", "mounting": "ISO 4401-03"
-    },
-    {
-      "id": "vt-demo-4-2", "manufacturer_id": "demo", "series": "DEMO-06", "code": "4-2-S",
-      "symbol_def_id": "sym-4-2-spring-return", "mounting": "ISO 4401-03"
-    },
-    {
-      "id": "vt-demo-4-3-tandem", "manufacturer_id": "demo", "series": "DEMO-06", "code": "4-3-T",
-      "symbol_def_id": "sym-4-3-tandem-centre", "mounting": "ISO 4401-03"
-    },
-    {"id": "vt-demo-check", "manufacturer_id": "demo", "series": "DEMO-CV", "code": "1", "symbol_def_id": "sym-check-spring"},
-    {"id": "vt-demo-check-free", "manufacturer_id": "demo", "series": "DEMO-CV", "code": "0", "symbol_def_id": "sym-check"},
-    {"id": "vt-demo-relief", "manufacturer_id": "demo", "series": "DEMO-RV", "code": "210", "symbol_def_id": "sym-relief-adjustable"},
-    {"id": "vt-demo-orifice", "manufacturer_id": "demo", "series": "DEMO-OR", "code": "0.8", "symbol_def_id": "sym-orifice"},
-    {"id": "vt-demo-throttle", "manufacturer_id": "demo", "series": "DEMO-TH", "code": "1", "symbol_def_id": "sym-orifice-adjustable"}
+    {"key": "vt-rpe3-06-z11", "version": 1, "manufacturer": "argo-hytos", "series": "RPE3-06", "code": "Z11", "symbol": "sym-4-3-closed-centre@1", "mounting": "ISO 4401-03"},
+    {"key": "vt-demo-4-2", "version": 1, "manufacturer": "demo", "series": "DEMO-06", "code": "4-2-S", "symbol": "sym-4-2-spring-return@1", "mounting": "ISO 4401-03"},
+    {"key": "vt-demo-4-3-tandem", "version": 1, "manufacturer": "demo", "series": "DEMO-06", "code": "4-3-T", "symbol": "sym-4-3-tandem-centre@1", "mounting": "ISO 4401-03"},
+    {"key": "vt-demo-check", "version": 1, "manufacturer": "demo", "series": "DEMO-CV", "code": "1", "symbol": "sym-check-spring@1"},
+    {"key": "vt-demo-check-free", "version": 1, "manufacturer": "demo", "series": "DEMO-CV", "code": "0", "symbol": "sym-check@1"},
+    {"key": "vt-demo-relief", "version": 1, "manufacturer": "demo", "series": "DEMO-RV", "code": "210", "symbol": "sym-relief-adjustable@1"},
+    {"key": "vt-demo-orifice", "version": 1, "manufacturer": "demo", "series": "DEMO-OR", "code": "0.8", "symbol": "sym-orifice@1"},
+    {"key": "vt-demo-throttle", "version": 1, "manufacturer": "demo", "series": "DEMO-TH", "code": "1", "symbol": "sym-orifice-adjustable@1"}
+  ],
+  "parts": [
+    {"part_number": "DEMO-06-4-2-S-24DC", "valve_type": "vt-demo-4-2@1", "options": {"voltage": "24 V DC", "connector": "EN 175301-803"}},
+    {"part_number": "DEMO-06-4-2-S-230AC", "valve_type": "vt-demo-4-2@1", "options": {"voltage": "230 V AC", "connector": "EN 175301-803"}},
+    {"part_number": "DEMO-RV-210", "valve_type": "vt-demo-relief@1", "options": {"setting_bar": 210}}
   ]
 }

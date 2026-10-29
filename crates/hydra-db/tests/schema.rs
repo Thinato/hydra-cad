@@ -64,9 +64,9 @@ async fn check_schema_rejects_edited_migration(pool: PgPool) {
 
 #[sqlx::test(migrator = "hydra_db::MIGRATOR")]
 #[ignore = "needs DATABASE_URL (Postgres)"]
-async fn catalogue_version_is_unique_per_lineage(pool: PgPool) {
-    let insert = "INSERT INTO symbol_defs (kind, definition, lineage_id, version) \
-                  VALUES ('check', '{}', '00000000-0000-0000-0000-000000000001', $1)";
+async fn catalogue_version_is_unique_per_key(pool: PgPool) {
+    let insert = "INSERT INTO symbol_defs (kind, definition, key, version) \
+                  VALUES ('check', '{}', 'sym-check', $1)";
     sqlx::query(insert).bind(1).execute(&pool).await.unwrap();
     sqlx::query(insert).bind(2).execute(&pool).await.unwrap();
     assert!(sqlx::query(insert).bind(2).execute(&pool).await.is_err());
@@ -122,4 +122,78 @@ async fn restore_revision_references_earlier_one(pool: PgPool) {
     .execute(&pool)
     .await
     .unwrap();
+}
+
+/// Insert a manufacturer, symbol `sym@1`, valve type `vt@1` and one part.
+async fn catalogue_rows(pool: &PgPool) {
+    sqlx::raw_sql(
+        "INSERT INTO manufacturers (key, name) VALUES ('m', 'M'); \
+         INSERT INTO symbol_defs (kind, definition, key) VALUES ('check', '{}', 'sym'); \
+         INSERT INTO valve_types (manufacturer_id, series, code, symbol_def_id, key) \
+         SELECT m.id, 'S', 'C', s.id, 'vt' FROM manufacturers m, symbol_defs s; \
+         INSERT INTO parts (valve_type_id, part_number) SELECT id, 'P1' FROM valve_types;",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn refused(pool: &PgPool, sql: &'static str) {
+    let err = sqlx::query(sql).execute(pool).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("catalogue rows are never edited in place; add a new version"),
+        "{sql}: {err}"
+    );
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn catalogue_rows_are_immutable(pool: PgPool) {
+    catalogue_rows(&pool).await;
+    refused(&pool, "UPDATE valve_types SET code = 'X'").await;
+    refused(&pool, "DELETE FROM valve_types").await;
+    refused(&pool, "DELETE FROM symbol_defs").await;
+    refused(&pool, "UPDATE symbol_defs SET kind = 'x'").await;
+    refused(&pool, "UPDATE parts SET part_number = 'P2'").await;
+    refused(&pool, "DELETE FROM parts").await;
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn valve_type_datasheet_can_be_linked(pool: PgPool) {
+    catalogue_rows(&pool).await;
+    let updated = sqlx::query(
+        "WITH a AS (INSERT INTO assets (sha256, kind, bytes, size) \
+                    VALUES (repeat('a', 64), 'pdf', '\\x00', 1) RETURNING id) \
+         UPDATE valve_types SET datasheet_asset_id = (SELECT id FROM a)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(updated.rows_affected(), 1);
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn asset_sha256_must_be_lowercase_hex(pool: PgPool) {
+    let insert = "INSERT INTO assets (sha256, kind, bytes, size) VALUES ($1, 'pdf', '\\x00', 1)";
+    for bad in ["A".repeat(64), "a".repeat(63)] {
+        assert!(sqlx::query(insert).bind(bad).execute(&pool).await.is_err());
+    }
+    sqlx::query(insert)
+        .bind("0".repeat(64))
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn catalogue_keys_are_checked(pool: PgPool) {
+    let insert = "INSERT INTO manufacturers (key, name) VALUES ($1, $1)";
+    for bad in ["", " m", "m@1"] {
+        assert!(sqlx::query(insert).bind(bad).execute(&pool).await.is_err());
+    }
+    sqlx::query(insert).bind("m").execute(&pool).await.unwrap();
 }

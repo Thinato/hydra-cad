@@ -27,8 +27,8 @@ fn every_catalogue_symbol_matches_its_snapshot() {
         let mut expected = record.definition.ports();
         names.sort();
         expected.sort();
-        assert_eq!(names, expected, "{} anchors every port", record.id);
-        insta::assert_snapshot!(record.id.clone(), to_svg(&drawing.primitives));
+        assert_eq!(names, expected, "{} anchors every port", record.key);
+        insta::assert_snapshot!(record.key.clone(), to_svg(&drawing.primitives));
     }
 }
 
@@ -92,7 +92,7 @@ fn kept(file: &serde_json::Value, saved: &serde_json::Value, at: String) -> Resu
 fn rotation_moves_port_anchors_clockwise() {
     let catalogue = catalogue();
     let json = r#"{"schema": 1, "name": "r", "components": [
-        {"id": "K", "kind": "valve", "valve_type": "vt-demo-check"}],
+        {"id": "K", "kind": "valve", "valve_type": "vt-demo-check@1"}],
         "layout": {"components": {"K": {"x": 100, "y": 50, "rotation": 90}}}}"#;
     let circuit = Circuit::from_json(json).unwrap();
     let drawing = render_circuit(&circuit, &catalogue);

@@ -1,6 +1,13 @@
 //! Hydra Postgres access: migrations, connection and schema-version check.
 
-use sqlx::{PgPool, postgres::PgPoolOptions};
+mod catalogue;
+
+pub use catalogue::{
+    ImportReport, LoadedCatalogue, asset_bytes, attach_datasheet, import_catalogue, load_catalogue,
+    save_valve_type,
+};
+pub use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
 /// Embedded migrations from `./migrations`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
@@ -20,13 +27,27 @@ pub enum Error {
         "database migration {version} differs from this app's copy; the schema was changed outside a release"
     )]
     Modified { version: i64 },
+    /// The request breaks a catalogue rule; nothing was written.
+    #[error("{}", .0.join("; "))]
+    Invalid(Vec<String>),
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
 }
 
+/// Lowercase sha256 hex of `bytes`: how assets are named.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
 /// Open a small connection pool.
 pub async fn connect(url: &str) -> Result<PgPool, Error> {
-    Ok(PgPoolOptions::new().max_connections(4).connect(url).await?)
+    Ok(PgPoolOptions::new()
+        .max_connections(4)
+        // Fail fast: a desktop user is waiting to hear the database is unreachable.
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(url)
+        .await?)
 }
 
 /// Check that the database holds exactly this build's migrations, unchanged.

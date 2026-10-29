@@ -46,3 +46,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p hydra-db -- --ignored
+      # The app's database-worker test runs against a migrated database holding the fixtures.
+      - run: cargo run -p hydra-db --bin hydra-admin -- migrate
+      - run: cargo run -p hydra-db --bin hydra-admin -- import fixtures/catalogue.json
+      - run: cargo test -p hydra -- --ignored

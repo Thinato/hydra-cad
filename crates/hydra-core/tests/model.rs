@@ -24,37 +24,44 @@ fn spool_4_3() -> SymbolDef {
 fn catalogue() -> Catalogue {
     Catalogue {
         manufacturers: vec![Manufacturer {
-            id: "argo".into(),
+            key: "argo".into(),
             name: "Argo-Hytos".into(),
         }],
         symbol_defs: vec![
             SymbolDefRecord {
-                id: "sym-4-3".into(),
+                key: "sym-4-3".into(),
                 version: 1,
                 definition: spool_4_3(),
             },
             SymbolDefRecord {
-                id: "sym-check".into(),
+                key: "sym-check".into(),
                 version: 1,
                 definition: SymbolDef::Check { spring: true },
             },
         ],
+        parts: vec![Part {
+            part_number: "TEST-PART-1".into(),
+            valve_type: CatalogueRef::new("rpe3-z11", 1),
+            options: json!({"voltage": "24 V DC"}),
+        }],
         valve_types: vec![
             ValveType {
-                id: "rpe3-z11".into(),
-                manufacturer_id: "argo".into(),
+                key: "rpe3-z11".into(),
+                version: 1,
+                manufacturer: "argo".into(),
                 series: "RPE3-06".into(),
                 code: "Z11".into(),
-                symbol_def_id: "sym-4-3".into(),
+                symbol: Some(CatalogueRef::new("sym-4-3", 1)),
                 mounting: Some("ISO 4401-03".into()),
                 params: serde_json::Value::Null,
             },
             ValveType {
-                id: "check".into(),
-                manufacturer_id: "argo".into(),
+                key: "check".into(),
+                version: 1,
+                manufacturer: "argo".into(),
                 series: "VJ3".into(),
                 code: "10".into(),
-                symbol_def_id: "sym-check".into(),
+                symbol: Some(CatalogueRef::new("sym-check", 1)),
                 mounting: None,
                 params: serde_json::Value::Null,
             },
@@ -81,7 +88,7 @@ fn valve(id: &str, valve_type: &str) -> Component {
     Component {
         id: id.into(),
         kind: ComponentKind::Valve {
-            valve_type: valve_type.into(),
+            valve_type: valve_type.to_string().try_into().unwrap(),
         },
     }
 }
@@ -99,8 +106,8 @@ fn circuit() -> Circuit {
         schema: SCHEMA_VERSION,
         name: "test".into(),
         components: vec![
-            valve("V1", "rpe3-z11"),
-            valve("K1", "check"),
+            valve("V1", "rpe3-z11@1"),
+            valve("K1", "check@1"),
             port("P"),
             port("T"),
             port("A1"),
@@ -143,7 +150,7 @@ fn json_round_trip_is_lossless() {
 
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["schema"], 1);
-    assert_eq!(value["components"][0]["valve_type"], "rpe3-z11");
+    assert_eq!(value["components"][0]["valve_type"], "rpe3-z11@1");
     assert_eq!(value["layout"]["components"]["V1"]["rotation"], 270);
 }
 
@@ -221,12 +228,12 @@ fn port_on_two_nets() {
 #[test]
 fn unknown_valve_type() {
     let mut c = circuit();
-    c.components.push(valve("V2", "nope"));
+    c.components.push(valve("V2", "rpe3-z11@2"));
     assert_eq!(
         c.validate(&catalogue()),
         vec![Issue::UnknownValveType {
             component: "V2".into(),
-            valve_type: "nope".into()
+            valve_type: CatalogueRef::new("rpe3-z11", 2)
         }]
     );
 }
@@ -313,13 +320,70 @@ fn malformed_symbols_are_rejected() {
 #[test]
 fn catalogue_problems_name_unknown_rows() {
     let mut cat = catalogue();
-    cat.valve_types[0].manufacturer_id = "bosch".into();
-    cat.valve_types[1].symbol_def_id = "gone".into();
+    cat.valve_types[0].manufacturer = "bosch".into();
+    cat.valve_types[1].symbol = Some(CatalogueRef::new("sym-check", 2));
+    cat.valve_types.push(cat.valve_types[0].clone());
     assert_eq!(
         cat.problems(),
         [
-            "valve type rpe3-z11: unknown manufacturer bosch",
-            "valve type check: unknown symbol gone"
+            "valve type rpe3-z11@1: unknown manufacturer bosch",
+            "valve type check@1: unknown symbol sym-check@2",
+            "valve type rpe3-z11@1 is defined twice",
+            "valve type rpe3-z11@1: unknown manufacturer bosch"
         ]
     );
+}
+
+#[test]
+fn catalogue_refs_parse_and_print() {
+    let r: CatalogueRef = "vt-rpe3-06-z11@3".to_string().try_into().unwrap();
+    assert_eq!(r, CatalogueRef::new("vt-rpe3-06-z11", 3));
+    assert_eq!(r.to_string(), "vt-rpe3-06-z11@3");
+    // The key may itself contain '@'; the version is after the last one.
+    let r: CatalogueRef = "a@b@2".to_string().try_into().unwrap();
+    assert_eq!(r, CatalogueRef::new("a@b", 2));
+    for bad in ["no-version", "@1", "key@0", "key@x", "key@"] {
+        assert!(CatalogueRef::try_from(bad.to_string()).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn draft_valve_type_without_symbol() {
+    let mut cat = catalogue();
+    cat.valve_types[1].symbol = None;
+    assert!(cat.problems().is_empty());
+    assert_eq!(
+        circuit().validate(&cat)[0],
+        Issue::MissingSymbol {
+            component: "K1".into(),
+            valve_type: CatalogueRef::new("check", 1)
+        }
+    );
+}
+
+#[test]
+fn keys_parts_and_duplicates_are_checked() {
+    let mut cat = catalogue();
+    assert_eq!(cat.parts_of(&CatalogueRef::new("rpe3-z11", 1)).count(), 1);
+    cat.manufacturers.push(cat.manufacturers[0].clone());
+    cat.symbol_defs[1].key = " sym-check".into();
+    cat.valve_types[1].symbol = None;
+    cat.parts.push(cat.parts[0].clone());
+    cat.parts.push(Part {
+        part_number: "X1".into(),
+        valve_type: CatalogueRef::new("rpe3-z11", 9),
+        options: serde_json::Value::Null,
+    });
+    assert_eq!(
+        cat.problems(),
+        [
+            r#"symbol key " sym-check" has spaces at the start or end"#,
+            "manufacturer argo is defined twice",
+            "part TEST-PART-1 of rpe3-z11@1 is defined twice",
+            "part X1: unknown valve type rpe3-z11@9",
+        ]
+    );
+    assert_eq!(key_problem(""), Some("is empty"));
+    assert_eq!(key_problem("a@b"), Some("contains '@'"));
+    assert_eq!(key_problem("vt-rpe3-06-z11"), None);
 }

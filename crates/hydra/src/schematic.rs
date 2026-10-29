@@ -1,13 +1,11 @@
 //! Read-only schematic view: draws a circuit's primitives with the egui painter.
 
-use std::path::Path;
-
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 use hydra_core::{Catalogue, Circuit, Severity};
 use hydra_symbols::{Align, Drawing, Primitive, bounds, render_circuit};
 
 pub struct SchematicView {
-    name: String,
+    circuit: Circuit,
     drawing: Drawing,
     /// Catalogue problems and circuit validation, in plain words.
     issues: Vec<(Severity, String)>,
@@ -20,31 +18,33 @@ pub struct SchematicView {
 }
 
 impl SchematicView {
-    /// Load a circuit document and the catalogue it is drawn against.
-    pub fn load(circuit: &Path, catalogue: &Path) -> anyhow::Result<Self> {
-        let read = |p: &Path| {
-            std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))
-        };
-        let catalogue: Catalogue = serde_json::from_str(&read(catalogue)?)?;
-        let circuit = Circuit::from_json(&read(circuit)?)?;
-        Ok(Self {
-            name: circuit.name.clone(),
-            drawing: render_circuit(&circuit, &catalogue),
-            issues: catalogue
-                .problems()
-                .into_iter()
-                .map(|p| (Severity::Error, format!("catalogue: {p}")))
-                .chain(
-                    circuit
-                        .validate(&catalogue)
-                        .iter()
-                        .map(|i| (i.severity(), i.to_string())),
-                )
-                .collect(),
+    pub fn new(circuit: Circuit, catalogue: &Catalogue) -> Self {
+        let mut view = Self {
+            circuit,
+            drawing: Drawing::default(),
+            issues: Vec::new(),
             pan: Vec2::ZERO,
             zoom: 1.0,
             fitted_to: Some(Vec2::ZERO),
-        })
+        };
+        view.set_catalogue(catalogue);
+        view
+    }
+
+    /// Redraw and revalidate against a changed catalogue, keeping the view where it is.
+    pub fn set_catalogue(&mut self, catalogue: &Catalogue) {
+        self.drawing = render_circuit(&self.circuit, catalogue);
+        self.issues = catalogue
+            .problems()
+            .into_iter()
+            .map(|p| (Severity::Error, format!("catalogue: {p}")))
+            .chain(
+                self.circuit
+                    .validate(catalogue)
+                    .iter()
+                    .map(|i| (i.severity(), i.to_string())),
+            )
+            .collect();
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -58,7 +58,7 @@ impl SchematicView {
             // Truncate so a long name never widens the panel past its visible size.
             ui.label(format!("{errors} errors, {warnings} warnings"));
             let hint = "drag to pan, scroll to zoom, double-click to fit";
-            ui.add(egui::Label::new(egui::RichText::new(&self.name).strong()).truncate())
+            ui.add(egui::Label::new(egui::RichText::new(&self.circuit.name).strong()).truncate())
                 .on_hover_text(hint);
         });
         if !self.issues.is_empty() {
@@ -81,7 +81,7 @@ impl SchematicView {
 
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         if response.double_clicked() || self.fitted_to.is_some_and(|s| s != rect.size()) {
-            self.fit(rect);
+            (self.pan, self.zoom) = fit(&self.drawing.primitives, rect.size());
             self.fitted_to = Some(rect.size());
         }
         if response.dragged() {
@@ -102,26 +102,48 @@ impl SchematicView {
             }
         }
 
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, Color32::WHITE);
-        let origin = rect.min + self.pan;
-        let to_screen = |[x, y]: [f32; 2]| origin + Vec2::new(x, y) * self.zoom;
-        let stroke = Stroke::new((0.25 * self.zoom).max(1.0), Color32::BLACK);
-        for prim in &self.drawing.primitives {
-            paint(&painter, prim, &to_screen, stroke, self.zoom);
-        }
+        paint_sheet(
+            &ui.painter_at(rect),
+            rect,
+            self.pan,
+            self.zoom,
+            &self.drawing.primitives,
+        );
     }
+}
 
-    /// Zoom and pan so the whole circuit fills `rect` with a small margin.
-    fn fit(&mut self, rect: Rect) {
-        let Some(([x0, y0], [x1, y1])) = bounds(&self.drawing.primitives) else {
-            self.zoom = 1.0;
-            return;
-        };
-        let size = Vec2::new(x1 - x0, y1 - y0).max(Vec2::splat(1.0));
-        self.zoom = (rect.width() / size.x).min(rect.height() / size.y) * 0.9;
-        let centre = Vec2::new(x0 + x1, y0 + y1) / 2.0;
-        self.pan = rect.size() / 2.0 - centre * self.zoom;
+/// Draw primitives scaled to fit a fixed-size box, e.g. a symbol preview.
+pub fn draw_fitted(ui: &mut egui::Ui, size: Vec2, primitives: &[Primitive]) {
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let (pan, zoom) = fit(primitives, size);
+    paint_sheet(&ui.painter_at(rect), rect, pan, zoom, primitives);
+}
+
+/// Pan and zoom that fit the primitives into a view of `size` with a small margin.
+fn fit(primitives: &[Primitive], size: Vec2) -> (Vec2, f32) {
+    let Some(([x0, y0], [x1, y1])) = bounds(primitives) else {
+        return (Vec2::ZERO, 1.0);
+    };
+    let extent = Vec2::new(x1 - x0, y1 - y0).max(Vec2::splat(1.0));
+    let zoom = (size.x / extent.x).min(size.y / extent.y) * 0.9;
+    let centre = Vec2::new(x0 + x1, y0 + y1) / 2.0;
+    (size / 2.0 - centre * zoom, zoom)
+}
+
+/// White sheet with black primitives; `pan` is the sheet origin's offset from `rect.min`.
+fn paint_sheet(
+    painter: &egui::Painter,
+    rect: Rect,
+    pan: Vec2,
+    zoom: f32,
+    primitives: &[Primitive],
+) {
+    painter.rect_filled(rect, 0.0, Color32::WHITE);
+    let origin = rect.min + pan;
+    let to_screen = |[x, y]: [f32; 2]| origin + Vec2::new(x, y) * zoom;
+    let stroke = Stroke::new((0.25 * zoom).max(1.0), Color32::BLACK);
+    for prim in primitives {
+        paint(painter, prim, &to_screen, stroke, zoom);
     }
 }
 
