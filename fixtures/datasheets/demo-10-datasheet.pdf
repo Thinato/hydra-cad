@@ -1,0 +1,79 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1372 >>
+stream
+BT
+/F1 20 Tf 1 0 0 1 56 772 Tm (DEMO-10 Directional Valve) Tj
+/F1 11 Tf 1 0 0 1 56 753 Tm (Demo \(fixture data, not a real product\)) Tj
+/F1 11 Tf 1 0 0 1 56 734 Tm () Tj
+/F1 13 Tf 1 0 0 1 56 713 Tm (DEMO-10 4/3 directional valve, solenoid operated, closed centre) Tj
+/F1 11 Tf 1 0 0 1 56 694 Tm () Tj
+/F1 11 Tf 1 0 0 1 56 675 Tm (Mounting: ISO 4401-05 \(CETOP 5\) subplate mounting) Tj
+/F1 11 Tf 1 0 0 1 56 656 Tm (Maximum operating pressure: 315 bar \(ports P, A, B\)) Tj
+/F1 11 Tf 1 0 0 1 56 637 Tm (Maximum flow: 120 l/min) Tj
+/F1 11 Tf 1 0 0 1 56 618 Tm () Tj
+/F1 13 Tf 1 0 0 1 56 597 Tm (Ports) Tj
+/F1 11 Tf 1 0 0 1 56 578 Tm (P  pressure supply from the pump) Tj
+/F1 11 Tf 1 0 0 1 56 559 Tm (T  return to tank) Tj
+/F1 11 Tf 1 0 0 1 56 540 Tm (A  working port A, to the actuator) Tj
+/F1 11 Tf 1 0 0 1 56 521 Tm (B  working port B, to the actuator) Tj
+/F1 11 Tf 1 0 0 1 56 502 Tm () Tj
+/F1 13 Tf 1 0 0 1 56 481 Tm (Symbol) Tj
+/F1 11 Tf 1 0 0 1 56 462 Tm (Three switching positions, drawn left to right:) Tj
+/F1 11 Tf 1 0 0 1 56 443 Tm (Left position \(solenoid a energised\): P -> A and B -> T) Tj
+/F1 11 Tf 1 0 0 1 56 424 Tm (Centre position \(rest\): P, T, A and B all blocked) Tj
+/F1 11 Tf 1 0 0 1 56 405 Tm (Right position \(solenoid b energised\): P -> B and A -> T) Tj
+/F1 11 Tf 1 0 0 1 56 386 Tm (Actuation: a solenoid and a centring spring on each end.) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 766 >>
+stream
+BT
+/F1 16 Tf 1 0 0 1 56 776 Tm (DEMO-10 Ordering code) Tj
+/F1 11 Tf 1 0 0 1 56 757 Tm () Tj
+/F1 11 Tf 1 0 0 1 56 738 Tm (DEMO-10 - 4 - 3 - C - voltage) Tj
+/F1 11 Tf 1 0 0 1 56 719 Tm (4 = four ports, 3 = three positions, C = closed centre) Tj
+/F1 11 Tf 1 0 0 1 56 700 Tm () Tj
+/F1 13 Tf 1 0 0 1 56 679 Tm (Part numbers) Tj
+/F1 11 Tf 1 0 0 1 56 660 Tm (Ordering code             Coil voltage   Connector) Tj
+/F1 11 Tf 1 0 0 1 56 641 Tm (DEMO-10-4-3-C-24DC        24 V DC        EN 175301-803) Tj
+/F1 11 Tf 1 0 0 1 56 622 Tm (DEMO-10-4-3-C-230AC       230 V AC       EN 175301-803) Tj
+/F1 11 Tf 1 0 0 1 56 603 Tm () Tj
+/F1 11 Tf 1 0 0 1 56 584 Tm (Seals: NBR as standard.) Tj
+/F1 11 Tf 1 0 0 1 56 565 Tm (Fixture document for software tests. Not a real product.) Tj
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000224 00000 n 
+0000000350 00000 n 
+0000001774 00000 n 
+0000001900 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+2717
+%%EOF

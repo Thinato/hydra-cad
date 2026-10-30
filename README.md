@@ -2,7 +2,7 @@
 
 Hydra is a desktop app for hydraulic circuits. You draw a circuit as an ISO 1219 schematic from a shared valve catalogue, view the valves in 3D, and keep everything in one Postgres database. It is written in Rust with egui and targets Windows 10/11 and macOS 15+.
 
-Status: early development. The circuit model, symbol rendering, the schematic editor with revision history, the Postgres-backed catalogue (browse, search, edit, datasheets, JSON import), STEP to glTF conversion and a 3D view of manifold blocks with their valves mounted exist. AI datasheet import and export are still to come.
+Status: early development. The circuit model, symbol rendering, the schematic editor with revision history, the Postgres-backed catalogue (browse, search, edit, datasheets, JSON import), STEP to glTF conversion, a 3D view of manifold blocks with their valves mounted, and AI datasheet import through an MCP server with a review queue exist. Export and packaging are still to come.
 
 ## Workspace
 
@@ -12,7 +12,8 @@ Status: early development. The circuit model, symbol rendering, the schematic ed
 | `crates/hydra-symbols` | Turns symbol definitions into lines, circles and text, lays out whole circuits, and writes SVG. |
 | `crates/hydra-mesh` | Loads glTF models into triangle meshes in Hydra's model space (millimetres, Z up) and runs the 3D smoke test. |
 | `crates/hydra-db` | Postgres migrations (`migrations/`), the schema guard, the catalogue and circuit repositories, and the `hydra-admin` tool. |
-| `crates/hydra` | The `hydra` desktop binary: docked Schematic, Catalogue and 3D tabs. |
+| `crates/hydra-mcp` | The `hydra-mcp` MCP server: lets an AI assistant read datasheets and the catalogue and submit catalogue proposals for review. |
+| `crates/hydra` | The `hydra` desktop binary: docked Schematic, Catalogue, Proposals and 3D tabs. |
 
 `tools/step2gltf` is the STEP to glTF converter, a small C++ program on OpenCascade that runs outside the app (see its README).
 
@@ -35,6 +36,28 @@ hydra-admin models                                           # 3D smoke test of 
 ```
 
 STEP files go through the converter named by `HYDRA_STEP2GLTF` (default `step2gltf` on the PATH); `--linear <mm>` sets the meshing tolerance. Every model is checked when attached and refused if it doesn't load or is empty or flat.
+
+## Datasheet import with an AI assistant
+
+1. In the Catalogue tab, create a valve type without a symbol (a draft) and drop its PDF datasheet on the window.
+2. Ask your AI assistant, with `hydra-mcp` connected, to fill in that valve type. It reads the datasheet and the symbol format, reuses or defines a symbol, and submits a proposal. Proposals are checked at once and problems go back to the assistant in plain words.
+3. In the Proposals tab, compare the rendered symbol with the datasheet ("Open datasheet"), correct series, code, mounting or parameters if needed, then approve, or reject with a reason the assistant can read through `proposal_status`. Only approval writes catalogue rows: the next version of the valve type, its parts, and a new symbol if the proposal has one.
+
+`hydra-mcp` runs on the engineer's machine over stdio and uses the same `HYDRA_DATABASE_URL` as the app, so proposals are recorded under the engineer's own Postgres role. Build it with `cargo build --release -p hydra-mcp`, then register it:
+
+```sh
+# Claude Code
+claude mcp add hydra --scope user --env HYDRA_DATABASE_URL=postgres://user:password@server:5433/hydra -- /path/to/hydra-mcp
+```
+
+Claude Desktop: add to `claude_desktop_config.json` (macOS `~/Library/Application Support/Claude/`, Windows `%APPDATA%\Claude\`):
+
+```json
+{"mcpServers": {"hydra": {"command": "/path/to/hydra-mcp",
+  "env": {"HYDRA_DATABASE_URL": "postgres://user:password@server:5433/hydra"}}}}
+```
+
+Any other MCP client works the same way. Its tools are `list_valve_types`, `get_valve_type`, `read_datasheet`, `symbol_format`, `submit_proposal` and `proposal_status`.
 
 ## Run
 
@@ -86,7 +109,7 @@ The database tests need a Postgres server, so they are marked `#[ignore]`. Start
 
 ```sh
 docker run -d --name hydra-pg -e POSTGRES_PASSWORD=hydra -e POSTGRES_DB=hydra -p 5433:5432 postgres:15
-DATABASE_URL=postgres://postgres:hydra@localhost:5433/hydra cargo test -p hydra-db -- --ignored
+DATABASE_URL=postgres://postgres:hydra@localhost:5433/hydra cargo test -p hydra-db -p hydra-mcp -- --ignored
 ```
 
 Each of those tests gets a fresh database with all migrations applied. The app's database-worker tests need a migrated database with the fixture catalogue imported (see Run), and add a valve type and a circuit to it on each run:

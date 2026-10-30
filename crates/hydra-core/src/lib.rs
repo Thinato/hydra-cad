@@ -5,6 +5,7 @@
 mod catalogue;
 mod circuit;
 mod edit;
+mod proposal;
 mod symbol;
 
 pub use catalogue::{
@@ -16,4 +17,5 @@ pub use circuit::{
     Placement, PortRef, Rotation, SCHEMA_VERSION, Severity,
 };
 pub use edit::{Command, Document, next_id};
+pub use proposal::{MAX_PROPOSAL_NOTES, MAX_PROPOSAL_PARTS, PartDraft, Proposal};
 pub use symbol::{Actuator, DirectionalValve, Port, Side, SpoolPosition, SymbolDef};

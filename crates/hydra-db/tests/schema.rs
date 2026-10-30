@@ -45,7 +45,7 @@ async fn check_schema_rejects_newer_database(pool: PgPool) {
     .unwrap();
     assert!(matches!(
         check_schema(&pool).await,
-        Err(Error::DatabaseTooNew { db: 999999, app: 3 })
+        Err(Error::DatabaseTooNew { db: 999999, app: 4 })
     ));
 }
 

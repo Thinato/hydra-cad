@@ -1,0 +1,22 @@
+[package]
+name = "hydra-mcp"
+description = "MCP server that lets an AI assistant draft catalogue entries from datasheets for review in Hydra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hydra-core.workspace = true
+hydra-db.workspace = true
+pdf-extract.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error.workspace = true
+tokio = { workspace = true, features = ["io-std", "time"] }
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+sqlx.workspace = true

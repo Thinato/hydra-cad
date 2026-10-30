@@ -57,7 +57,7 @@ pub async fn load_catalogue(pool: &PgPool) -> Result<LoadedCatalogue, Error> {
 }
 
 /// A version as Postgres stores it: 1 to `i32::MAX`.
-fn db_version(version: u32) -> Result<i32, Error> {
+pub(crate) fn db_version(version: u32) -> Result<i32, Error> {
     i32::try_from(version)
         .ok()
         .filter(|v| *v > 0)
@@ -84,7 +84,7 @@ fn json_or_null(v: &Value) -> Option<Json<&Value>> {
 }
 
 // Keys are ordered with the "C" collation so the order matches Rust's string order.
-async fn load(conn: &mut PgConnection) -> Result<LoadedCatalogue, Error> {
+pub(crate) async fn load(conn: &mut PgConnection) -> Result<LoadedCatalogue, Error> {
     let manufacturers: Vec<(String, String)> =
         sqlx::query_as("SELECT key, name FROM manufacturers ORDER BY key COLLATE \"C\"")
             .fetch_all(&mut *conn)
@@ -205,7 +205,7 @@ async fn load(conn: &mut PgConnection) -> Result<LoadedCatalogue, Error> {
 
 /// Insert one valve type row at `version`, resolving manufacturer and symbol by key.
 /// The row inherits the datasheet and 3D models of the latest lower version of its key, if any.
-async fn insert_valve_type(
+pub(crate) async fn insert_valve_type(
     conn: &mut PgConnection,
     v: &ValveType,
     version: i32,
@@ -269,6 +269,58 @@ async fn lock_models(conn: &mut PgConnection) -> Result<(), Error> {
     Ok(())
 }
 
+/// Lock every catalogue table against other writers, `part_assets` first (see `lock_models`).
+/// Validate-then-insert needs every committed row in view and no new ones until we commit.
+/// SHARE ROW EXCLUSIVE conflicts with itself and with writers, so concurrent imports, saves,
+/// approvals and attaches wait for us while readers carry on. Take it before the first read
+/// of a REPEATABLE READ transaction, so the snapshot includes everything committed before the
+/// lock. Chosen over SERIALIZABLE because it needs no retry loop.
+pub(crate) async fn lock_catalogue(conn: &mut PgConnection) -> Result<(), Error> {
+    sqlx::query(
+        "LOCK TABLE part_assets, manufacturers, symbol_defs, valve_types, parts, blocks \
+         IN SHARE ROW EXCLUSIVE MODE",
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn insert_symbol_def(
+    conn: &mut PgConnection,
+    s: &SymbolDefRecord,
+) -> Result<(), Error> {
+    sqlx::query(
+        "INSERT INTO symbol_defs (kind, definition, key, version) \
+         VALUES ($1->>'kind', $1, $2, $3)",
+    )
+    .bind(Json(&s.definition))
+    .bind(&s.key)
+    .bind(db_version(s.version)?)
+    .execute(conn)
+    .await
+    .map_err(unique_violation(|| {
+        format!("symbol {} already exists", s.reference())
+    }))?;
+    Ok(())
+}
+
+pub(crate) async fn insert_part(conn: &mut PgConnection, p: &Part) -> Result<(), Error> {
+    sqlx::query(
+        "INSERT INTO parts (valve_type_id, part_number, options) \
+         VALUES ((SELECT id FROM valve_types WHERE key = $1 AND version = $2), $3, $4)",
+    )
+    .bind(&p.valve_type.key)
+    .bind(db_version(p.valve_type.version)?)
+    .bind(&p.part_number)
+    .bind(json_or_null(&p.options))
+    .execute(conn)
+    .await
+    .map_err(unique_violation(|| {
+        format!("part {} of {} already exists", p.part_number, p.valve_type)
+    }))?;
+    Ok(())
+}
+
 /// Add the rows of `incoming` that are new, in one transaction.
 ///
 /// Rows identical to existing ones are skipped. A key@version or part that exists with
@@ -278,18 +330,10 @@ pub async fn import_catalogue(pool: &PgPool, incoming: &Catalogue) -> Result<Imp
     let mut tx = pool
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
         .await?;
-    // Validate-then-insert needs every committed row in view and no new ones until we commit.
-    // SHARE ROW EXCLUSIVE conflicts with itself and with writers, so concurrent imports, saves
-    // and attaches wait for us while readers carry on. Taken before the first read, so the
-    // snapshot includes everything committed before the lock. Chosen over SERIALIZABLE because
-    // it needs no retry loop. part_assets comes first: see `lock_models`.
-    sqlx::query(
-        "LOCK TABLE part_assets, manufacturers, symbol_defs, valve_types, parts, blocks \
-         IN SHARE ROW EXCLUSIVE MODE",
-    )
-    .execute(&mut *tx)
-    .await?;
+    lock_catalogue(&mut tx).await?;
     let mut merged = load(&mut tx).await?.catalogue;
+    // Rows already stored stay importable alongside, even if a later build checks harder.
+    let before = merged.problems();
     let mut report = ImportReport::default();
     let mut errors = Vec::new();
     let (mut new_m, mut new_s, mut new_v, mut new_p, mut new_b) =
@@ -360,7 +404,12 @@ pub async fn import_catalogue(pool: &PgPool, incoming: &Catalogue) -> Result<Imp
     merged.valve_types.extend(new_v.iter().map(|&v| v.clone()));
     merged.parts.extend(new_p.iter().map(|&p| p.clone()));
     merged.blocks.extend(new_b.iter().map(|&b| b.clone()));
-    errors.extend(merged.problems());
+    errors.extend(
+        merged
+            .problems()
+            .into_iter()
+            .filter(|p| !before.contains(p)),
+    );
     if !errors.is_empty() {
         return Err(Error::Invalid(errors));
     }
@@ -376,18 +425,7 @@ pub async fn import_catalogue(pool: &PgPool, incoming: &Catalogue) -> Result<Imp
             }))?;
     }
     for s in &new_s {
-        sqlx::query(
-            "INSERT INTO symbol_defs (kind, definition, key, version) \
-             VALUES ($1->>'kind', $1, $2, $3)",
-        )
-        .bind(Json(&s.definition))
-        .bind(&s.key)
-        .bind(db_version(s.version)?)
-        .execute(&mut *tx)
-        .await
-        .map_err(unique_violation(|| {
-            format!("symbol {} already exists", s.reference())
-        }))?;
+        insert_symbol_def(&mut tx, s).await?;
     }
     for v in &new_v {
         insert_valve_type(&mut tx, v, db_version(v.version)?)
@@ -397,19 +435,7 @@ pub async fn import_catalogue(pool: &PgPool, incoming: &Catalogue) -> Result<Imp
             }))?;
     }
     for p in &new_p {
-        sqlx::query(
-            "INSERT INTO parts (valve_type_id, part_number, options) \
-             VALUES ((SELECT id FROM valve_types WHERE key = $1 AND version = $2), $3, $4)",
-        )
-        .bind(&p.valve_type.key)
-        .bind(db_version(p.valve_type.version)?)
-        .bind(&p.part_number)
-        .bind(json_or_null(&p.options))
-        .execute(&mut *tx)
-        .await
-        .map_err(unique_violation(|| {
-            format!("part {} of {} already exists", p.part_number, p.valve_type)
-        }))?;
+        insert_part(&mut tx, p).await?;
     }
     for b in &new_b {
         sqlx::query("INSERT INTO blocks (name, mount_faces, key, version) VALUES ($1, $2, $3, $4)")

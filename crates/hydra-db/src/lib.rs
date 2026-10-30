@@ -2,6 +2,7 @@
 
 mod catalogue;
 mod circuits;
+mod proposals;
 
 pub use catalogue::{
     ImportReport, LoadedCatalogue, ModelOwner, asset_bytes, attach_datasheet, attach_model,
@@ -10,6 +11,10 @@ pub use catalogue::{
 pub use circuits::{
     CircuitSummary, OpenedCircuit, RevisionSummary, create_circuit, list_circuits, list_revisions,
     open_circuit, open_revision, restore_revision, save_revision,
+};
+pub use proposals::{
+    MAX_PROPOSAL_BYTES, ProposalRecord, ProposalStatus, approve_proposal, get_proposal,
+    list_proposals, reject_proposal, submit_proposal,
 };
 pub use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;

@@ -2,6 +2,7 @@ mod catalogue;
 mod db;
 mod editor;
 mod models;
+mod proposals;
 mod schematic;
 mod viewer3d;
 
@@ -25,6 +26,7 @@ const DATABASE_URL_VAR: &str = "HYDRA_DATABASE_URL";
 enum Tab {
     Schematic,
     Catalogue,
+    Proposals,
     View3d,
 }
 
@@ -33,6 +35,7 @@ struct Panels {
     schematic: editor::SchematicEditor,
     catalogue: CataloguePanel,
     models: models::ModelPanel,
+    proposals: proposals::ProposalsPanel,
 }
 
 impl TabViewer for Panels {
@@ -46,6 +49,7 @@ impl TabViewer for Panels {
         match tab {
             Tab::Schematic => "Schematic".into(),
             Tab::Catalogue => "Catalogue".into(),
+            Tab::Proposals => "Proposals".into(),
             Tab::View3d => "3D".into(),
         }
     }
@@ -54,6 +58,7 @@ impl TabViewer for Panels {
         match tab {
             Tab::Schematic => self.schematic.ui(ui, &mut self.shared),
             Tab::Catalogue => self.catalogue.ui(ui, &mut self.shared),
+            Tab::Proposals => self.proposals.ui(ui, &mut self.shared),
             Tab::View3d => self.models.ui(ui, &self.shared, &mut self.schematic),
         }
     }
@@ -112,6 +117,16 @@ impl Panels {
                         .revision_preview(n, &c, &self.shared.catalogue)
                 }
                 Reply::Model(sha, mesh) => self.models.loaded(sha, mesh),
+                Reply::Proposals(list) => self.proposals.listed(list),
+                Reply::ProposalApproved(r) => {
+                    self.shared.notice = Some(format!("Approved: {r} is in the catalogue."));
+                    self.proposals.reviewed(&self.shared);
+                }
+                Reply::ProposalRejected => {
+                    self.shared.notice = Some("Proposal rejected.".into());
+                    self.proposals.reviewed(&self.shared);
+                }
+                Reply::ProposalFailed(e) => self.proposals.failed(e),
                 Reply::Error(e) => self.shared.error = Some(e),
             }
         }
@@ -210,7 +225,7 @@ fn main() -> eframe::Result {
                 });
             let schematic = editor::SchematicEditor::new(circuit, None);
 
-            let mut dock = DockState::new(vec![Tab::Schematic, Tab::Catalogue]);
+            let mut dock = DockState::new(vec![Tab::Schematic, Tab::Catalogue, Tab::Proposals]);
             dock.main_surface_mut()
                 .split_right(NodeIndex::root(), 0.6, vec![Tab::View3d]);
             Ok(Box::new(HydraApp {
@@ -219,6 +234,7 @@ fn main() -> eframe::Result {
                     shared,
                     schematic,
                     catalogue: CataloguePanel::default(),
+                    proposals: proposals::ProposalsPanel::default(),
                     models: models::ModelPanel::new(
                         viewer3d::Viewer3d::new(cc)
                             .inspect_err(|e| tracing::error!("3D view: {e:#}"))

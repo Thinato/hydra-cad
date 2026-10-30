@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "hydra": {
+      "command": "path/to/hydra-mcp",
+      "env": {
+        "HYDRA_DATABASE_URL": "postgres://user:password@url:5432/hydra_app"
+      }
+    }
+  }
+}
+

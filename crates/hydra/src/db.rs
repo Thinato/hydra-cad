@@ -5,9 +5,10 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use eframe::egui;
-use hydra_core::{Catalogue, CatalogueRef, Circuit, ValveType};
+use hydra_core::{Catalogue, CatalogueRef, Circuit, Proposal, ValveType};
 use hydra_db::{
-    CircuitSummary, ImportReport, LoadedCatalogue, OpenedCircuit, PgPool, RevisionSummary,
+    CircuitSummary, ImportReport, LoadedCatalogue, OpenedCircuit, PgPool, ProposalRecord,
+    RevisionSummary,
 };
 use hydra_mesh::Mesh;
 
@@ -41,6 +42,18 @@ pub enum Request {
     },
     /// Fetch a 3D model (glb) into the local cache and load it.
     LoadModel(String),
+    ListProposals {
+        pending_only: bool,
+    },
+    /// Approve a proposal as the reviewer edited it; the catalogue reloads after.
+    ApproveProposal {
+        id: String,
+        proposal: Proposal,
+    },
+    RejectProposal {
+        id: String,
+        note: String,
+    },
 }
 
 /// Each request answers with its own outcome first; a catalogue reload follows any write.
@@ -69,6 +82,11 @@ pub enum Reply {
     RevisionPreview(i32, Circuit),
     /// A [`Request::LoadModel`] answer, by hash.
     Model(String, Result<Arc<Mesh>, String>),
+    Proposals(Vec<ProposalRecord>),
+    ProposalApproved(CatalogueRef),
+    ProposalRejected,
+    /// Listing, approving or rejecting proposals failed, so the review tab can stop waiting.
+    ProposalFailed(String),
     Error(String),
 }
 
@@ -145,6 +163,9 @@ fn failed(request: &Request, e: String) -> Reply {
         Request::SaveValveType(_) => Reply::SaveFailed(e),
         Request::SaveCircuit { .. } => Reply::CircuitSaveFailed(e),
         Request::LoadModel(sha) => Reply::Model(sha.clone(), Err(e)),
+        Request::ListProposals { .. }
+        | Request::ApproveProposal { .. }
+        | Request::RejectProposal { .. } => Reply::ProposalFailed(e),
         Request::RestoreRevision { .. }
         | Request::OpenCircuit(_)
         | Request::ListCircuits
@@ -168,6 +189,24 @@ async fn handle(pool: &PgPool, request: Request) -> Vec<Reply> {
         Request::LoadModel(sha) => {
             return vec![Reply::Model(sha.clone(), load_model(pool, sha).await)];
         }
+        Request::ListProposals { pending_only } => (
+            db::list_proposals(pool, *pending_only)
+                .await
+                .map(Reply::Proposals),
+            false,
+        ),
+        Request::ApproveProposal { id, proposal } => (
+            db::approve_proposal(pool, id, proposal)
+                .await
+                .map(Reply::ProposalApproved),
+            true,
+        ),
+        Request::RejectProposal { id, note } => (
+            db::reject_proposal(pool, id, note)
+                .await
+                .map(|()| Reply::ProposalRejected),
+            false,
+        ),
         Request::SaveValveType(v) => (db::save_valve_type(pool, v).await.map(Reply::Saved), true),
         Request::AttachDatasheet(r, pdf) => (
             db::attach_datasheet(pool, r, pdf)
@@ -343,6 +382,69 @@ mod tests {
         }
         assert_eq!(replies.len(), n, "unexpected extra replies");
         replies
+    }
+
+    #[test]
+    #[ignore = "needs DATABASE_URL (Postgres with the fixture catalogue imported)"]
+    fn worker_lists_approves_and_rejects_proposals() {
+        let url = std::env::var("DATABASE_URL").unwrap();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let proposal = |key: String| -> Proposal {
+            serde_json::from_value(serde_json::json!({
+                "valve_type": {
+                    "key": key, "version": 0, "manufacturer": "demo", "series": "WORKER-TEST",
+                    "code": "1", "symbol": "sym-check@1"
+                }
+            }))
+            .unwrap()
+        };
+        let (good, bad) = (
+            proposal(format!("vt-proposal-test-{nanos}")),
+            proposal(format!("vt-proposal-test-{nanos}-b")),
+        );
+        let ids = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let pool = hydra_db::connect(&url).await.unwrap();
+            [
+                hydra_db::submit_proposal(&pool, &good).await.unwrap(),
+                hydra_db::submit_proposal(&pool, &bad).await.unwrap(),
+            ]
+        });
+
+        let db = Db::connect(url, egui::Context::default());
+        take(&db, 1); // the catalogue
+        db.send(Request::ListProposals { pending_only: true });
+        let [Reply::Proposals(list)] = &take(&db, 1)[..] else {
+            panic!("expected the proposals")
+        };
+        assert!(ids.iter().all(|id| list.iter().any(|p| &p.id == id)));
+
+        db.send(Request::ApproveProposal {
+            id: ids[0].clone(),
+            proposal: good.clone(),
+        });
+        let [Reply::ProposalApproved(r), Reply::Catalogue(after)] = &take(&db, 2)[..] else {
+            panic!("expected the approval, then a reload")
+        };
+        assert_eq!(*r, good.target());
+        assert!(after.catalogue.valve_type(r).is_some());
+
+        db.send(Request::RejectProposal {
+            id: ids[1].clone(),
+            note: "wrong spool".into(),
+        });
+        assert!(matches!(&take(&db, 1)[..], [Reply::ProposalRejected]));
+        // A second review of the same proposal fails into the review tab.
+        db.send(Request::RejectProposal {
+            id: ids[1].clone(),
+            note: "again".into(),
+        });
+        let [Reply::ProposalFailed(e)] = &take(&db, 1)[..] else {
+            panic!("expected a failure")
+        };
+        assert!(e.contains("already rejected"), "{e}");
     }
 
     #[test]

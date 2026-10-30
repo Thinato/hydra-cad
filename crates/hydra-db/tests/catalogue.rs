@@ -345,3 +345,19 @@ async fn asset_bytes_round_trip(pool: PgPool) {
     );
     assert_eq!(asset_bytes(&pool, "0000").await.unwrap(), None);
 }
+
+/// A stored row a stricter build would refuse doesn't block importing others.
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn old_problems_dont_block_new_imports(pool: PgPool) {
+    sqlx::query(
+        "INSERT INTO symbol_defs (key, version, kind, definition) VALUES ('sym-old', 1, \
+         'directional_valve', '{\"kind\":\"directional_valve\",\"ports\":[{\"name\":\"A\",\
+         \"side\":\"top\"}],\"positions\":[{\"flows\":[[\"A\",\"A\"]]}],\"normal_position\":0}')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let r = import_catalogue(&pool, &fixture()).await.unwrap();
+    assert!(r.symbol_defs_added > 0);
+}

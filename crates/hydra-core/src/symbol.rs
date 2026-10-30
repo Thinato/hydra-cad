@@ -95,9 +95,26 @@ impl SymbolDef {
         if v.ports.is_empty() {
             problems.push("a directional valve needs at least one port".to_string());
         }
+        // Real valves stay well inside these; beyond them the drawing is unreadable.
+        for (what, n, max) in [
+            ("ports", v.ports.len(), 8),
+            ("positions", v.positions.len(), 6),
+            ("actuators on the left", v.left.len(), 4),
+            ("actuators on the right", v.right.len(), 4),
+        ] {
+            if n > max {
+                problems.push(format!("{n} {what} is more than a symbol can show ({max})"));
+            }
+        }
         for (i, port) in v.ports.iter().enumerate() {
             if v.ports[..i].iter().any(|p| p.name == port.name) {
                 problems.push(format!("port {} is defined twice", port.name));
+            }
+            let name = &port.name;
+            if name.trim().is_empty() || name.trim() != name || name.chars().count() > 8 {
+                problems.push(format!(
+                    "port name {name:?} must be 1 to 8 characters without spaces at the ends"
+                ));
             }
         }
         if v.positions.is_empty() {
@@ -111,6 +128,25 @@ impl SymbolDef {
         }
         let names = self.ports();
         for (i, pos) in v.positions.iter().enumerate() {
+            for [a, b] in pos.flows.iter().chain(&pos.links) {
+                if a == b {
+                    problems.push(format!("position {} connects port {a} to itself", i + 1));
+                }
+            }
+            for name in &pos.blocked {
+                if pos
+                    .flows
+                    .iter()
+                    .chain(&pos.links)
+                    .flatten()
+                    .any(|p| p == name)
+                {
+                    problems.push(format!(
+                        "position {} both blocks and connects port {name}",
+                        i + 1
+                    ));
+                }
+            }
             let used = pos
                 .flows
                 .iter()
