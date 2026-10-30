@@ -26,6 +26,18 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace
+      # The backup scripts for Windows Server can't run here; at least make sure they parse.
+      - name: Parse the PowerShell scripts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($f in Get-ChildItem ops/backup/*.ps1) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors)
+            if ($errors) { $failed = $true; $errors | ForEach-Object { "$($f.Name): $_" } }
+          }
+          if ($failed) { exit 1 }
 
   # Service containers only run on Linux runners, so database tests live here.
   database:
@@ -55,6 +67,35 @@ jobs:
       - run: cargo run -p hydra-db --bin hydra-admin -- model valve vt-rpe3-06-z11@1 fixtures/models/demo-valve-cetop3.glb
       - run: cargo run -p hydra-db --bin hydra-admin -- model valve vt-demo-4-2@1 fixtures/models/demo-valve-cetop3.glb
       - run: cargo run -p hydra-db --bin hydra-admin -- models
+      # Backup, then prove the restore. The runner's own pg_dump is newer than the postgres:15
+      # service (a newer dump can hold settings 15 rejects), and apt has no client 15 here, so the
+      # tools run from the postgres:15 image on the host network via small wrappers.
+      - name: PostgreSQL 15 client tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/pgbin" "$RUNNER_TEMP/backups"
+          for tool in pg_dump pg_dumpall pg_restore psql; do
+            cat >"$RUNNER_TEMP/pgbin/$tool" <<EOF
+          #!/bin/sh
+          exec docker run --rm -i --network host --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP:$RUNNER_TEMP" \\
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE postgres:15 $tool "\$@"
+          EOF
+            chmod +x "$RUNNER_TEMP/pgbin/$tool"
+          done
+          echo "$RUNNER_TEMP/pgbin" >> "$GITHUB_PATH"
+      - name: Back up the database
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: hydra
+          PGDATABASE: hydra
+        run: ops/backup/hydra-backup.sh "$RUNNER_TEMP/backups"
+      - name: Restore the backup into a scratch database and verify it
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: hydra
+          HYDRA_ADMIN: target/debug/hydra-admin
+        run: ops/backup/hydra-restore-test.sh --dir "$RUNNER_TEMP/backups"
 
   # The STEP-to-glTF converter needs OpenCASCADE, which Ubuntu packages; Debian's OCCT CMake
   # targets also link TBB and fontconfig, whose -dev packages are not pulled in automatically.

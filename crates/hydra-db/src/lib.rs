@@ -17,6 +17,7 @@ pub use proposals::{
     list_proposals, reject_proposal, submit_proposal,
 };
 pub use sqlx::PgPool;
+pub use sqlx::postgres::PgConnectOptions;
 use sqlx::postgres::PgPoolOptions;
 
 /// Embedded migrations from `./migrations`.
@@ -48,6 +49,15 @@ pub enum Error {
     Sqlx(#[from] sqlx::Error),
 }
 
+impl Error {
+    /// Postgres refused the user name or password (SQLSTATE 28P01, which password
+    /// authentication also gives for an unknown user). Not 28000: that is the server's
+    /// pg_hba.conf or a role that may not log in, which the user can't fix by retyping.
+    pub fn is_wrong_login(&self) -> bool {
+        matches!(self, Error::Sqlx(sqlx::Error::Database(e)) if e.code().as_deref() == Some("28P01"))
+    }
+}
+
 /// Lowercase sha256 hex of `bytes`: how assets are named.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
@@ -56,11 +66,16 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// Open a small connection pool.
 pub async fn connect(url: &str) -> Result<PgPool, Error> {
+    connect_with(url.parse()?).await
+}
+
+/// [`connect`] with options built in code, e.g. a user name and password added to a URL.
+pub async fn connect_with(options: PgConnectOptions) -> Result<PgPool, Error> {
     Ok(PgPoolOptions::new()
         .max_connections(4)
         // Fail fast: a desktop user is waiting to hear the database is unreachable.
         .acquire_timeout(std::time::Duration::from_secs(5))
-        .connect(url)
+        .connect_with(options)
         .await?)
 }
 

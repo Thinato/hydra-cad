@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Hydra database backup nightly
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

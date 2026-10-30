@@ -1,13 +1,14 @@
 //! Catalogue tab: search and browse valve types, edit them as new versions, attach datasheets.
 
 use std::collections::HashMap;
+use std::sync::mpsc::Receiver;
 
 use eframe::egui::{self, Sense, Vec2};
 use egui_extras::{Column, TableBuilder};
 use hydra_core::{Catalogue, CatalogueRef, SymbolDef, ValveType};
 use hydra_symbols::render_symbol;
 
-use crate::db::{Db, Request};
+use crate::db::{Db, Reply, Request};
 use crate::schematic::draw_fitted;
 
 /// Catalogue data shared by every tab, and where it comes from.
@@ -20,6 +21,8 @@ pub struct Shared {
     pub block_models: HashMap<CatalogueRef, String>,
     /// `None` when running offline from a fixture file: browsing works, editing does not.
     pub db: Option<Db>,
+    /// Replies still due from workers of earlier sign-ins, until each worker exits.
+    pub retired: Vec<Receiver<Reply>>,
     pub error: Option<String>,
     pub notice: Option<String>,
     /// A valve type the user asked to place in the schematic.
@@ -35,6 +38,7 @@ impl Shared {
             valve_models: HashMap::new(),
             block_models: HashMap::new(),
             db: None,
+            retired: Vec::new(),
             error: None,
             notice: None,
             place: None,

@@ -2,7 +2,7 @@
 
 Hydra is a desktop app for hydraulic circuits. You draw a circuit as an ISO 1219 schematic from a shared valve catalogue, view the valves in 3D, and keep everything in one Postgres database. It is written in Rust with egui and targets Windows 10/11 and macOS 15+.
 
-Status: early development. The circuit model, symbol rendering, the schematic editor with revision history, the Postgres-backed catalogue (browse, search, edit, datasheets, JSON import), STEP to glTF conversion, a 3D view of manifold blocks with their valves mounted, and AI datasheet import through an MCP server with a review queue exist. Export and packaging are still to come.
+Status: early development. The circuit model, symbol rendering, the schematic editor with revision history, the Postgres-backed catalogue (browse, search, edit, datasheets, JSON import), STEP to glTF conversion, a 3D view of manifold blocks with their valves mounted, and AI datasheet import through an MCP server with a review queue, SVG/PDF/BOM export, sign-in with per-user roles, an update check, installers and backups exist. The pilot comes next: see [docs/pilot.md](docs/pilot.md).
 
 ## Workspace
 
@@ -59,6 +59,32 @@ Claude Desktop: add to `claude_desktop_config.json` (macOS `~/Library/Applicatio
 
 Any other MCP client works the same way. Its tools are `list_valve_types`, `get_valve_type`, `read_datasheet`, `symbol_format`, `submit_proposal` and `proposal_status`.
 
+## Installing and configuring
+
+The app reads one `hydra.ini` per machine, which only an administrator can change:
+
+| | |
+| --- | --- |
+| Windows | `%ProgramData%\Hydra\hydra.ini` |
+| macOS | `/Library/Application Support/Hydra/hydra.ini` |
+| Linux | `/etc/hydra/hydra.ini` |
+
+```ini
+[hydra]
+# The shared database, without user name or password.
+database_url = postgres://hydra-db.office.local:5433/hydra?sslmode=require
+# Where the app checks for a newer release on startup (optional).
+update_url = https://example/hydra/latest.json
+```
+
+Lines are `key = value`; `#` and `;` start comments, section headers are ignored, and an empty value turns a key off. Use `sslmode=require` (or `verify-full`) so the connection is encrypted.
+
+Each user signs in with their own Postgres role, so revisions and proposals record who made them. The sign-in window shows which database it is for; "Remember me on this computer" (on by default) keeps the password in the system keychain (macOS Keychain, Windows Credential Manager), one entry per database. "Sign out" in the status line forgets it; after a connection failure, "Retry" tries again with the same sign-in. An administrator runs [ops/roles.sql](ops/roles.sql) once after migrating (it creates the group role `hydra_engineer` with what the app needs, and nothing more), then adds each engineer: `CREATE ROLE alice LOGIN PASSWORD '...' IN ROLE hydra_engineer;`.
+
+`HYDRA_DATABASE_URL`, a full URL with user name and password, overrides `hydra.ini` and skips the sign-in. Use it for development and CI.
+
+Installed (release) builds log to `%LOCALAPPDATA%\Hydra\hydra.log` on Windows, `~/Library/Logs/Hydra/hydra.log` on macOS and `$XDG_STATE_HOME/hydra/hydra.log` (default `~/.local/state/hydra/`) on Linux, emptied on each start.
+
 ## Run
 
 Against the shared database:
@@ -72,7 +98,7 @@ HYDRA_DATABASE_URL=$DATABASE_URL cargo run -p hydra
 
 `hydra-admin` also has `check` (does the database match this build?), `attach <key@version> <file.pdf>`, and the model commands above.
 
-Without `HYDRA_DATABASE_URL` the app runs offline and read-only, on `fixtures/catalogue.json`:
+With neither `HYDRA_DATABASE_URL` nor a `database_url`, a dev checkout runs offline and read-only, on `fixtures/catalogue.json`:
 
 ```sh
 cargo run -p hydra                          # demo manifold
@@ -90,6 +116,7 @@ In the Schematic tab:
 - Undo and redo with Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z (or the buttons). Validation problems are listed above the sheet.
 - Drag the empty sheet to pan, scroll to zoom, double-click to fit.
 - Save writes a new revision; nothing is overwritten. If someone else saved first, you're offered a reload or a save as copy. History lists every revision with a preview, and Restore makes an old revision the newest one, so a restore can itself be undone.
+- Export writes the circuit as it is on screen, unsaved changes included, as SVG, PDF, or a bill of materials in CSV (one line per valve type version plus the block, with designators and the part number when the valve type has exactly one).
 
 In the 3D tab, choose the circuit's block and which valve sits on each face; only valves whose mounting pattern fits a face are offered. The view shows the block with its valves mounted, the valve selected in the schematic highlighted. Without a block it shows the selected valve alone. Drag to orbit, scroll to zoom, double-click to see everything. Models download once and are cached locally by hash; offline there are none.
 
@@ -118,6 +145,66 @@ Each of those tests gets a fresh database with all migrations applied. The app's
 DATABASE_URL=postgres://postgres:hydra@localhost:5433/hydra cargo test -p hydra -- --ignored
 ```
 
+## Backups
+
+The shared database is a single point of failure, so `ops/backup/` has a nightly `pg_dump` (plus roles) to another machine for Linux (systemd) and Windows Server (Task Scheduler), and a restore test that CI runs on every push. Setup, the monthly restore drill and the real restore procedure are in [ops/backup/README.md](ops/backup/README.md).
+
 ## CI
 
 `.github/workflows/ci.yml` checks formatting, runs clippy, builds and tests on Windows and macOS. It runs the database tests on Linux against a `postgres:15` service container, because GitHub only offers service containers on Linux runners.
+
+## Releasing and installing
+
+### Cutting a release
+
+1. Bump `version` under `[workspace.package]` in the root `Cargo.toml` and merge it.
+2. Tag that commit and push the tag: `git tag v1.2.3 && git push origin v1.2.3`. The tag must equal the workspace version or the release workflow stops.
+3. `.github/workflows/release.yml` builds the Windows MSI and the macOS DMG, a tools archive per platform (`hydra-mcp`, `hydra-admin`), signs what it can, and opens a **draft** GitHub release with all of them plus `latest.json`.
+4. Review the draft, then publish it. Asset URLs, and so `latest.json`, only resolve once it's published.
+
+Running the workflow by hand (Actions, Release, Run workflow) is an unsigned dry run: the files are uploaded as workflow artifacts and nothing is released. To build the macOS files locally run `packaging/macos/build-dmg.sh` (outputs in `target/package/dist`). The app icons are generated from `packaging/icon/hydra.svg` by `packaging/icon/build.sh`.
+
+Repository secrets. Without them the builds still succeed, unsigned, with a warning:
+
+| Secret | What it is |
+| --- | --- |
+| `WINDOWS_CERT_PFX_BASE64` | Code-signing certificate with its private key, as a base64-encoded `.pfx` |
+| `WINDOWS_CERT_PASSWORD` | Password of that `.pfx` |
+| `MACOS_CERT_P12_BASE64` | "Developer ID Application" certificate with its private key, as a base64-encoded `.p12` (export it from Keychain Access) |
+| `MACOS_CERT_PASSWORD` | Password of that `.p12` |
+| `APPLE_ID` | Apple ID email of a member of the Apple Developer team, for notarization |
+| `APPLE_TEAM_ID` | The 10-character Apple Developer team ID |
+| `APPLE_APP_PASSWORD` | An app-specific password for that Apple ID (appleid.apple.com) |
+
+Base64-encode a certificate with `base64 -i cert.p12 | pbcopy` (macOS) or `[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))` (PowerShell).
+
+### Installing on Windows 10/11
+
+The MSI installs per machine to `C:\Program Files\Hydra` and adds a Start menu shortcut. An administrator sets the database and update addresses at install time; they are written to `C:\ProgramData\Hydra\hydra.ini` and kept across upgrades and uninstalls (installing again without them leaves the file alone):
+
+```bat
+msiexec /i Hydra-1.2.3-x64.msi DATABASE_URL="postgres://db.example:5433/hydra?sslmode=require" UPDATE_URL="https://example/hydra/latest.json"
+```
+
+Add `/qn` for a silent install from Group Policy, Intune or another deployment tool. `DATABASE_URL` holds no user name or password. To change the addresses later, edit `hydra.ini` or push a new one. The tools zip holds `hydra-mcp.exe` and `hydra-admin.exe`, to unpack wherever suits.
+
+### Installing on macOS 15+
+
+Open the DMG and drag Hydra to Applications. The machine configuration lives in `/Library/Application Support/Hydra/hydra.ini`; deploy it with your MDM or by hand:
+
+```sh
+sudo mkdir -p "/Library/Application Support/Hydra"
+sudo tee "/Library/Application Support/Hydra/hydra.ini" <<'INI'
+[hydra]
+database_url = postgres://db.example:5433/hydra?sslmode=require
+update_url = https://example/hydra/latest.json
+INI
+```
+
+The tools zip holds universal `hydra-mcp` and `hydra-admin` binaries.
+
+### Updates
+
+On startup the app fetches `update_url`, a `latest.json` such as `{"version": "1.2.3", "windows": "<msi url>", "macos": "<dmg url>", "notes": "…"}`, and offers the newer installer. Each release carries its own `latest.json`, so `https://github.com/thinato/hydra-cad/releases/latest/download/latest.json` always points at the newest published release, but only if users can reach the repository without signing in. For a private repository, host `latest.json` and the installers somewhere they can reach (an internal https server) and set `update_url` to that.
+
+The STEP-to-glTF converter (`tools/step2gltf`) is not packaged yet; build it with CMake as in CI.

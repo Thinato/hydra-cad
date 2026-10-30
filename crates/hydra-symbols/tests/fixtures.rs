@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use hydra_core::{Catalogue, Circuit, Severity};
-use hydra_symbols::{Primitive, bounds, render_circuit, render_symbol, to_svg};
+use hydra_symbols::{Align, Primitive, bounds, render_circuit, render_symbol, to_pdf, to_svg};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
@@ -64,7 +64,23 @@ fn golden_circuits_load_validate_round_trip_and_render() {
             bounds(&drawing.primitives).is_some(),
             "{name} draws something"
         );
-        insta::assert_snapshot!(format!("circuit-{name}"), to_svg(&drawing.primitives));
+        let svg = to_svg(&drawing.primitives);
+        insta::assert_snapshot!(format!("circuit-{name}"), svg);
+        insta::assert_snapshot!(
+            format!("circuit-{name}-bom"),
+            hydra_core::bom_csv(&circuit.bom(&catalogue))
+        );
+
+        let pdf = to_pdf(&drawing.primitives).unwrap();
+        assert!(pdf.starts_with(b"%PDF-"), "{name}: not a PDF");
+        assert!(pdf.len() < 200_000, "{name}: PDF is {} bytes", pdf.len());
+        let (w, h) = media_box(&pdf);
+        let (sw, sh) = (svg_mm(&svg, "width"), svg_mm(&svg, "height"));
+        let pt = 72.0 / 25.4;
+        assert!(
+            (w - sw * pt).abs() < 0.5 && (h - sh * pt).abs() < 0.5,
+            "{name}: page {w}x{h}pt, drawing {sw}x{sh}mm"
+        );
     }
     assert!(count > 0, "no golden circuits found");
 }
@@ -120,4 +136,38 @@ fn nets_are_drawn_between_port_anchors() {
         filled: false,
     };
     assert!(drawing.primitives.contains(&wire));
+}
+
+/// Page size in points from the first `/MediaBox [0 0 w h]`.
+fn media_box(pdf: &[u8]) -> (f32, f32) {
+    let text = String::from_utf8_lossy(pdf);
+    let rest = &text[text.find("/MediaBox").expect("a MediaBox") + 9..];
+    let inner = &rest[rest.find('[').unwrap() + 1..rest.find(']').unwrap()];
+    let n: Vec<f32> = inner
+        .split_whitespace()
+        .map(|v| v.parse().unwrap())
+        .collect();
+    (n[2] - n[0], n[3] - n[1])
+}
+
+/// A millimetre attribute of the root `<svg>` element.
+fn svg_mm(svg: &str, attr: &str) -> f32 {
+    let rest = &svg[svg.find(&format!(" {attr}=\"")).unwrap() + attr.len() + 3..];
+    rest[..rest.find("mm").unwrap()].parse().unwrap()
+}
+
+#[test]
+fn pdf_keeps_text_as_a_font() {
+    let pdf = to_pdf(&[Primitive::Text {
+        at: [5.0, 5.0],
+        text: "RV1".into(),
+        size: 3.0,
+        align: Align::Start,
+    }])
+    .unwrap();
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/FontFile") || text.contains("/Type0"),
+        "no embedded font"
+    );
 }

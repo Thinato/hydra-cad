@@ -7,10 +7,13 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use eframe::egui;
 use hydra_core::{Catalogue, CatalogueRef, Circuit, Proposal, ValveType};
 use hydra_db::{
-    CircuitSummary, ImportReport, LoadedCatalogue, OpenedCircuit, PgPool, ProposalRecord,
-    RevisionSummary,
+    CircuitSummary, ImportReport, LoadedCatalogue, OpenedCircuit, PgConnectOptions, PgPool,
+    ProposalRecord, RevisionSummary,
 };
 use hydra_mesh::Mesh;
+
+/// What Postgres refusing the user name or password reads as.
+pub const WRONG_LOGIN: &str = "Wrong user name or password.";
 
 pub enum Request {
     LoadCatalogue,
@@ -87,6 +90,10 @@ pub enum Reply {
     ProposalRejected,
     /// Listing, approving or rejecting proposals failed, so the review tab can stop waiting.
     ProposalFailed(String),
+    /// Postgres refused the user name or password; the answer to the initial catalogue load.
+    WrongLogin,
+    /// Connecting failed for another reason; the answer to the initial catalogue load.
+    ConnectFailed(String),
     Error(String),
 }
 
@@ -96,8 +103,9 @@ pub struct Db {
 }
 
 impl Db {
-    /// Start the worker and ask it for the catalogue. Connection errors arrive as [`Reply::Error`].
-    pub fn connect(url: String, ctx: egui::Context) -> Db {
+    /// Start the worker and ask it for the catalogue. Connection errors arrive as
+    /// [`Reply::WrongLogin`] or [`Reply::ConnectFailed`].
+    pub fn connect(options: PgConnectOptions, ctx: egui::Context) -> Db {
         let (requests, inbox) = channel();
         let (outbox, replies) = channel();
         std::thread::spawn(move || {
@@ -105,36 +113,62 @@ impl Db {
                 .enable_all()
                 .build()
                 .expect("tokio runtime");
-            runtime.block_on(worker(url, inbox, outbox, ctx));
+            runtime.block_on(worker(options, inbox, outbox, ctx));
         });
         let db = Db { requests, replies };
         db.send(Request::LoadCatalogue);
         db
     }
 
+    #[cfg(test)]
+    pub fn new(requests: Sender<Request>, replies: Receiver<Reply>) -> Db {
+        Db { requests, replies }
+    }
+
     pub fn send(&self, request: Request) {
-        // The worker only stops when the app does.
+        // The worker only stops once its Db is retired.
         let _ = self.requests.send(request);
     }
 
     pub fn poll(&self) -> Vec<Reply> {
         self.replies.try_iter().collect()
     }
+
+    /// Stop sending. The worker answers what it already has, then exits and disconnects the
+    /// returned receiver.
+    pub fn retire(self) -> Receiver<Reply> {
+        self.replies
+    }
 }
 
-async fn worker(url: String, inbox: Receiver<Request>, outbox: Sender<Reply>, ctx: egui::Context) {
+async fn worker(
+    options: PgConnectOptions,
+    inbox: Receiver<Request>,
+    outbox: Sender<Reply>,
+    ctx: egui::Context,
+) {
     let reply = |r: Reply| {
         let _ = outbox.send(r);
         ctx.request_repaint();
     };
-    let pool = match connect(&url).await {
+    let pool = match connect(options).await {
         Ok(pool) => pool,
         Err(e) => {
             tracing::error!("database: {e}");
+            let wrong_login = e.is_wrong_login();
+            let e = match e {
+                _ if wrong_login => WRONG_LOGIN.to_string(),
+                hydra_db::Error::Sqlx(_) => format!("Can't reach the database: {e}"),
+                _ => e.to_string(),
+            };
             // Answer every request, starting with the initial catalogue load, so nothing in
             // the UI waits forever on a dead worker.
             while let Ok(request) = inbox.recv() {
-                reply(failed(&request, e.clone()));
+                reply(match request {
+                    Request::LoadCatalogue if wrong_login => Reply::WrongLogin,
+                    Request::LoadCatalogue => Reply::ConnectFailed(e.clone()),
+                    _ => failed(&request, e.clone()),
+                });
             }
             return;
         }
@@ -148,13 +182,9 @@ async fn worker(url: String, inbox: Receiver<Request>, outbox: Sender<Reply>, ct
     }
 }
 
-async fn connect(url: &str) -> Result<PgPool, String> {
-    let pool = hydra_db::connect(url)
-        .await
-        .map_err(|e| format!("Can't reach the database: {e}"))?;
-    hydra_db::check_schema(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
+async fn connect(options: PgConnectOptions) -> Result<PgPool, hydra_db::Error> {
+    let pool = hydra_db::connect_with(options).await?;
+    hydra_db::check_schema(&pool).await?;
     Ok(pool)
 }
 
@@ -413,7 +443,7 @@ mod tests {
             ]
         });
 
-        let db = Db::connect(url, egui::Context::default());
+        let db = Db::connect(url.parse().unwrap(), egui::Context::default());
         take(&db, 1); // the catalogue
         db.send(Request::ListProposals { pending_only: true });
         let [Reply::Proposals(list)] = &take(&db, 1)[..] else {
@@ -464,7 +494,7 @@ mod tests {
                 .unwrap()
         });
 
-        let db = Db::connect(url, egui::Context::default());
+        let db = Db::connect(url.parse().unwrap(), egui::Context::default());
         let [Reply::Catalogue(loaded)] = &take(&db, 1)[..] else {
             panic!("expected the catalogue")
         };
@@ -501,7 +531,7 @@ mod tests {
     #[ignore = "needs DATABASE_URL (Postgres with the fixture catalogue imported)"]
     fn worker_loads_saves_and_attaches() {
         let url = std::env::var("DATABASE_URL").unwrap();
-        let db = Db::connect(url, egui::Context::default());
+        let db = Db::connect(url.parse().unwrap(), egui::Context::default());
         let [Reply::Catalogue(loaded)] = &take(&db, 1)[..] else {
             panic!("expected the catalogue")
         };
@@ -553,7 +583,7 @@ mod tests {
     #[ignore = "needs DATABASE_URL (Postgres with the fixture catalogue imported)"]
     fn worker_saves_conflicts_and_restores_circuits() {
         let url = std::env::var("DATABASE_URL").unwrap();
-        let db = Db::connect(url, egui::Context::default());
+        let db = Db::connect(url.parse().unwrap(), egui::Context::default());
         take(&db, 1); // initial catalogue
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -627,6 +657,20 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "needs DATABASE_URL (Postgres with password authentication)"]
+    fn worker_reports_a_wrong_login() {
+        let url = std::env::var("DATABASE_URL").unwrap();
+        let options: PgConnectOptions = url.parse().unwrap();
+        let db = Db::connect(
+            options.password("not-the-password"),
+            egui::Context::default(),
+        );
+        assert!(matches!(&take(&db, 1)[..], [Reply::WrongLogin]));
+        db.send(Request::ListCircuits);
+        assert!(matches!(&take(&db, 1)[..], [Reply::CircuitFailed(e)] if e == WRONG_LOGIN));
+    }
+
+    #[test]
     fn only_real_hashes_name_cache_files() {
         assert!(is_sha256_hex(&"ab12".repeat(16)));
         for bad in [
@@ -643,11 +687,11 @@ mod tests {
     #[test]
     fn unreachable_database_reports_an_error() {
         let db = Db::connect(
-            "postgres://nobody@127.0.0.1:1/none".into(),
+            "postgres://nobody@127.0.0.1:1/none".parse().unwrap(),
             egui::Context::default(),
         );
-        let [Reply::Error(e)] = &take(&db, 1)[..] else {
-            panic!("expected an error")
+        let [Reply::ConnectFailed(e)] = &take(&db, 1)[..] else {
+            panic!("expected a connection failure")
         };
         assert!(e.starts_with("Can't reach the database"), "{e}");
         // Later requests still get an answer, and a save reports to the editor.

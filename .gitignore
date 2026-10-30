@@ -9,4 +9,4 @@ PLAN.md
 
 target/
 .mcp.json
-
+.DS_Store

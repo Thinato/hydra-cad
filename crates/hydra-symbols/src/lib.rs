@@ -10,7 +10,7 @@ use hydra_core::{
 };
 
 mod svg;
-pub use svg::to_svg;
+pub use svg::{to_pdf, to_svg};
 
 pub type Point = [f32; 2];
 

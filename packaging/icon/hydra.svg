@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Hydra app icon: a gate valve on a pipe, white on a blue rounded square. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f80ed"/>
+      <stop offset="1" stop-color="#0b3d91"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <g fill="#ffffff">
+    <!-- pipe -->
+    <rect x="210" y="482" width="604" height="60" rx="12"/>
+    <!-- valve body: two triangles meeting at the centre -->
+    <path d="M352 372 L352 652 L512 512 Z M672 372 L672 652 L512 512 Z"/>
+    <!-- stem and handwheel -->
+    <rect x="494" y="300" width="36" height="212"/>
+    <rect x="412" y="270" width="200" height="48" rx="24"/>
+  </g>
+</svg>

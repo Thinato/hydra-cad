@@ -2,12 +2,14 @@
 //!
 //! No UI or database code lives here, so it can be tested alone and reused.
 
+mod bom;
 mod catalogue;
 mod circuit;
 mod edit;
 mod proposal;
 mod symbol;
 
+pub use bom::{BomLine, bom_csv};
 pub use catalogue::{
     Block, Catalogue, CatalogueRef, Manufacturer, MountFace, Part, SymbolDefRecord, ValveType,
     key_problem,

@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hydra MSI (WiX Toolset 3.14, built by cargo-wix 0.3.9; see .github/workflows/release.yml).
+
+  cargo-wix passes these preprocessor variables to candle:
+    Version            the package version (workspace version, Major.Minor.Patch)
+    CargoTargetBinDir  folder holding hydra.exe (target\x86_64-pc-windows-msvc\release in CI)
+  x64 only: cargo-wix runs candle with -arch x64, which marks every component 64-bit.
+
+  Public properties an administrator can pass to msiexec:
+    DATABASE_URL  Postgres URL without credentials, written to hydra.ini as database_url
+    UPDATE_URL    URL of latest.json, written to hydra.ini as update_url
+  e.g. msiexec /i Hydra-1.0.0-x64.msi /qn DATABASE_URL="postgres://db:5433/hydra?sslmode=require"
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+      Id="*"
+      Name="Hydra"
+      Version="$(var.Version)"
+      Manufacturer="Thinato"
+      Language="1033"
+      Codepage="1252"
+      UpgradeCode="0EC2DDAC-87DE-4C71-9CC4-5909A07D961F">
+
+    <Package
+        InstallerVersion="500"
+        Compressed="yes"
+        InstallScope="perMachine"
+        Description="Hydra hydraulic CAD"
+        Manufacturer="Thinato"/>
+
+    <!--
+      Upgrades. The UpgradeCode above must never change: it is how a newer MSI finds and
+      replaces an older one. MajorUpgrade keeps its default schedule, afterInstallValidate:
+      the old version is uninstalled completely, then the new one is installed.
+      AllowSameVersionUpgrades makes reinstalling the same version (a rebuilt MSI) replace
+      it instead of adding a second entry to Apps; the ICE61 warning it causes is expected.
+    -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of [ProductName] is already installed. Uninstall it first to install this version."/>
+    <MediaTemplate EmbedCab="yes"/>
+
+    <!--
+      Secure: passed from the UI process to the elevated install process even when the
+      install runs managed (GPO, Intune) or elevates through UAC.
+    -->
+    <Property Id="DATABASE_URL" Secure="yes"/>
+    <Property Id="UPDATE_URL" Secure="yes"/>
+
+    <Icon Id="hydra.ico" SourceFile="$(sys.SOURCEFILEDIR)..\..\..\packaging\windows\hydra.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="hydra.ico"/>
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/thinato/hydra-cad"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="APPLICATIONFOLDER" Name="Hydra">
+          <Component Id="HydraExe" Guid="*">
+            <File Id="HydraExe" Name="hydra.exe" Source="$(var.CargoTargetBinDir)\hydra.exe" KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+
+      <!--
+        Start menu shortcut, straight in the Programs folder (no one-item subfolder). The HKCU
+        key path is the standard pattern WiX documents for shortcut components (ICE38/ICE43).
+      -->
+      <Directory Id="ProgramMenuFolder">
+        <Component Id="StartMenuShortcut" Guid="0090E2D0-E54B-4CD6-95D6-9BD7D13B74F0">
+          <Shortcut
+              Id="HydraStartMenu"
+              Name="Hydra"
+              Description="Hydraulic CAD"
+              Target="[APPLICATIONFOLDER]hydra.exe"
+              WorkingDirectory="APPLICATIONFOLDER"
+              Icon="hydra.ico"/>
+          <RegistryValue Root="HKCU" Key="Software\Thinato\Hydra" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes"/>
+        </Component>
+      </Directory>
+
+      <!--
+        Machine configuration: [CommonAppDataFolder]Hydra\hydra.ini (C:\ProgramData\Hydra),
+        section [hydra]. The app reads it; administrators may also edit it by hand.
+
+        Each line has its own component, installed only when its property is given, so
+        `msiexec /i` without DATABASE_URL never touches an existing database_url line.
+        How the lines survive:
+        - Permanent="yes": Windows Installer never removes the component, so neither an
+          uninstall nor the old version's removal during a major upgrade deletes the line
+          (RemoveIniValues is not run for it).
+        - Upgrade without the property: the old version is removed first (lines stay, they
+          are permanent), and the new version does not install the component (condition
+          false), so the line keeps the value from the earlier install.
+        - Upgrade with the property: the new version installs the component and
+          WriteIniValues (addLine) replaces the line with the new value.
+        - Transitive="yes": the condition is evaluated again on a repair. Without it, a repair
+          (which runs without the property) would reinstall the component and overwrite
+          the line with an empty value; with it, the component is dropped from this product
+          instead, which leaves the line alone because the component is permanent.
+        CreateFolder makes sure C:\ProgramData\Hydra exists and is the components' key path
+        (ICE18). The GUIDs are fixed so every version refers to the same components.
+        Windows writes the lines as `key=value`, without spaces around the `=`.
+      -->
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="HydraConfigFolder" Name="Hydra">
+          <Component Id="DatabaseUrlIni" Guid="2EE28986-79E6-4366-9CDA-204A3BFF40F4" Permanent="yes" Transitive="yes">
+            <Condition>DATABASE_URL</Condition>
+            <CreateFolder/>
+            <IniFile Id="DatabaseUrlIni" Action="addLine" Directory="HydraConfigFolder" Name="hydra.ini" Section="hydra" Key="database_url" Value="[DATABASE_URL]"/>
+          </Component>
+          <Component Id="UpdateUrlIni" Guid="C244CEB5-6890-42F8-897C-7025D0BDCD36" Permanent="yes" Transitive="yes">
+            <Condition>UPDATE_URL</Condition>
+            <CreateFolder/>
+            <IniFile Id="UpdateUrlIni" Action="addLine" Directory="HydraConfigFolder" Name="hydra.ini" Section="hydra" Key="update_url" Value="[UPDATE_URL]"/>
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Main" Title="Hydra" Level="1" Absent="disallow" AllowAdvertise="no">
+      <ComponentRef Id="HydraExe"/>
+      <ComponentRef Id="StartMenuShortcut"/>
+      <ComponentRef Id="DatabaseUrlIni"/>
+      <ComponentRef Id="UpdateUrlIni"/>
+    </Feature>
+
+    <!--
+      UI: welcome, install folder, progress. The licence page of WixUI_InstallDir is skipped
+      (Hydra ships no EULA), so cargo-wix's licence/EULA settings do not apply.
+    -->
+    <Property Id="WIXUI_INSTALLDIR" Value="APPLICATIONFOLDER"/>
+    <UI>
+      <UIRef Id="WixUI_InstallDir"/>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+    </UI>
+  </Product>
+</Wix>

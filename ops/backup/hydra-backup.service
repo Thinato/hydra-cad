@@ -1,0 +1,15 @@
+[Unit]
+Description=Hydra nightly database backup
+Wants=network-online.target
+After=network-online.target
+# Must match HYDRA_BACKUP_DIR below: never write a backup to the local disk under an unmounted share.
+RequiresMountsFor=/mnt/hydra-backups
+
+[Service]
+Type=oneshot
+# A dedicated user whose ~/.pgpass holds the superuser entry (chmod 600); PG* variables below.
+User=hydra-backup
+UMask=0077
+Environment=PGHOST=localhost PGDATABASE=hydra PGUSER=postgres
+Environment=HYDRA_BACKUP_DIR=/mnt/hydra-backups HYDRA_BACKUP_KEEP_DAYS=30
+ExecStart=/opt/hydra/ops/backup/hydra-backup.sh

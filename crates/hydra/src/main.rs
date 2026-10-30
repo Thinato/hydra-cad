@@ -1,25 +1,36 @@
+// No console window behind the installed Windows app.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod catalogue;
+mod config;
 mod db;
 mod editor;
 mod models;
 mod proposals;
 mod schematic;
+mod signin;
+mod update;
 mod viewer3d;
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 use eframe::egui;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use hydra_core::{Catalogue, Circuit};
 
 use catalogue::{CataloguePanel, Shared};
-use db::{Db, Reply};
+use db::{Db, Reply, Request};
+use signin::SignIn;
+use update::Update;
 
-// ponytail: dev paths baked in at compile time; installers set real defaults in phase 6.
+// ponytail: dev fixture paths baked in at compile time, used only where they exist, so an
+// installed app starts on an empty circuit.
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 const DEMO_CIRCUIT: &str = "fixtures/circuits/demo-manifold.json";
 const CATALOGUE: &str = "fixtures/catalogue.json";
-/// Postgres URL of the shared database; without it the app runs read-only on a fixture catalogue.
+/// Full Postgres URL with credentials, for dev and CI: overrides hydra.ini and skips sign-in.
 const DATABASE_URL_VAR: &str = "HYDRA_DATABASE_URL";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,6 +47,8 @@ struct Panels {
     catalogue: CataloguePanel,
     models: models::ModelPanel,
     proposals: proposals::ProposalsPanel,
+    /// Set when the database comes from hydra.ini, so each user signs in.
+    signin: Option<SignIn>,
 }
 
 impl TabViewer for Panels {
@@ -69,11 +82,35 @@ impl TabViewer for Panels {
 }
 
 impl Panels {
-    /// Apply what the database worker sent since the last frame.
+    /// Apply what the database worker sent since the last frame, and what retired workers of
+    /// earlier sign-ins still answer, so no panel waits forever on a request.
     fn poll_db(&mut self) {
-        let replies = self.shared.db.as_ref().map(Db::poll).unwrap_or_default();
-        for reply in replies {
+        let mut replies: Vec<_> = self
+            .shared
+            .db
+            .iter()
+            .flat_map(Db::poll)
+            .map(|r| (r, false))
+            .collect();
+        self.shared.retired.retain(|r| {
+            loop {
+                match r.try_recv() {
+                    Ok(reply) => replies.push((reply, true)),
+                    Err(TryRecvError::Empty) => break true,
+                    Err(TryRecvError::Disconnected) => break false,
+                }
+            }
+        });
+        for (reply, retired) in replies {
             match reply {
+                // Only the current sign-in's connection outcome counts. An old worker's
+                // catalogue follows a write it finished: reload through the current one.
+                Reply::WrongLogin | Reply::ConnectFailed(_) if retired => {}
+                Reply::Catalogue(_) if retired => {
+                    if let Some(db) = &self.shared.db {
+                        db.send(Request::LoadCatalogue);
+                    }
+                }
                 Reply::Catalogue(loaded) => {
                     self.shared.catalogue = loaded.catalogue;
                     self.shared.datasheets = loaded.datasheets;
@@ -81,6 +118,9 @@ impl Panels {
                     self.shared.block_models = loaded.block_models;
                     self.models.retry_failed();
                     self.shared.error = None;
+                    if let Some(s) = &mut self.signin {
+                        s.connected();
+                    }
                 }
                 Reply::Saved(r) => {
                     self.shared.notice = Some(format!("Saved {r}."));
@@ -127,6 +167,16 @@ impl Panels {
                     self.proposals.reviewed(&self.shared);
                 }
                 Reply::ProposalFailed(e) => self.proposals.failed(e),
+                Reply::WrongLogin => match &mut self.signin {
+                    Some(s) => s.refused(&mut self.shared),
+                    None => self.shared.error = Some(db::WRONG_LOGIN.into()),
+                },
+                Reply::ConnectFailed(e) => {
+                    self.shared.error = Some(e);
+                    if let Some(s) = &mut self.signin {
+                        s.connect_failed();
+                    }
+                }
                 Reply::Error(e) => self.shared.error = Some(e),
             }
         }
@@ -136,11 +186,16 @@ impl Panels {
 struct HydraApp {
     dock: DockState<Tab>,
     panels: Panels,
+    updates: Option<Receiver<Update>>,
+    update: Option<Update>,
 }
 
 impl eframe::App for HydraApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.panels.poll_db();
+        if let Some(u) = self.updates.as_ref().and_then(|r| r.try_recv().ok()) {
+            self.update = Some(u);
+        }
         if ui.ctx().input(|i| i.viewport().close_requested()) && !self.panels.schematic.may_close()
         {
             ui.ctx()
@@ -151,14 +206,27 @@ impl eframe::App for HydraApp {
             .catalogue
             .handle_dropped_files(ui.ctx(), &mut panels.shared);
         // Status line above the tabs, so database errors show whichever tab is open.
-        let (error, notice) = (&panels.shared.error, &panels.shared.notice);
-        if error.is_some() || notice.is_some() {
-            ui.horizontal(|ui| {
-                if let Some(e) = error {
+        let shared = &panels.shared;
+        if shared.error.is_some()
+            || shared.notice.is_some()
+            || panels.signin.is_some()
+            || self.update.is_some()
+        {
+            ui.horizontal_wrapped(|ui| {
+                if let Some(s) = &mut panels.signin {
+                    s.status(ui, &mut panels.shared);
+                }
+                if let Some(e) = &panels.shared.error {
                     ui.colored_label(ui.visuals().error_fg_color, e);
                 }
-                if let Some(n) = notice {
+                if let Some(n) = &panels.shared.notice {
                     ui.weak(n);
+                }
+                if let Some(u) = &self.update {
+                    let link = ui.hyperlink_to(format!("Download Hydra {}", u.version), &u.url);
+                    if let Some(notes) = &u.notes {
+                        link.on_hover_text(notes);
+                    }
                 }
             });
         }
@@ -167,6 +235,9 @@ impl eframe::App for HydraApp {
             .show_leaf_close_all_buttons(false)
             .show_leaf_collapse_buttons(false)
             .show_inside(ui, &mut self.panels);
+        if let Some(s) = &mut self.panels.signin {
+            s.ui(ui.ctx(), &mut self.panels.shared);
+        }
     }
 }
 
@@ -174,19 +245,49 @@ fn read(path: &Path) -> anyhow::Result<String> {
     std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))
 }
 
-/// `hydra [CIRCUIT.json] [CATALOGUE.json]`, defaulting to the demo fixtures.
+/// Where release builds write their log.
+fn log_path() -> Option<PathBuf> {
+    let dir = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Hydra"))
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Logs/Hydra"))
+    } else {
+        std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
+            .map(|d| d.join("hydra"))
+    };
+    dir.map(|d| d.join("hydra.log"))
+}
+
+/// `hydra [CIRCUIT.json] [CATALOGUE.json]`; in a dev checkout they default to the demo fixtures.
 ///
-/// With `HYDRA_DATABASE_URL` set, the catalogue comes from Postgres and CATALOGUE is ignored.
+/// The database is `HYDRA_DATABASE_URL`, else `database_url` from hydra.ini with a sign-in.
+/// Without either the app runs offline and read-only on the catalogue file.
 fn main() -> eframe::Result {
-    tracing_subscriber::fmt::init();
+    // A release build has no console on Windows, so it logs to a file, emptied on each start.
+    let log = (!cfg!(debug_assertions))
+        .then(log_path)
+        .flatten()
+        .and_then(|path| {
+            std::fs::create_dir_all(path.parent()?).ok()?;
+            std::fs::File::create(path).ok()
+        });
+    match log {
+        Some(file) => tracing_subscriber::fmt()
+            .with_writer(Mutex::new(file))
+            .with_ansi(false)
+            .init(),
+        None => tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .init(),
+    }
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);
-    let circuit_path = args
-        .next()
-        .unwrap_or_else(|| PathBuf::from(ROOT).join(DEMO_CIRCUIT));
-    let catalogue_path = args
-        .next()
-        .unwrap_or_else(|| PathBuf::from(ROOT).join(CATALOGUE));
-    let database_url = std::env::var(DATABASE_URL_VAR).ok();
+    let dev = |file: &str| Some(PathBuf::from(ROOT).join(file)).filter(|p| p.exists());
+    let circuit_path = args.next().or_else(|| dev(DEMO_CIRCUIT));
+    let catalogue_path = args.next().or_else(|| dev(CATALOGUE));
+    let env_url = std::env::var(DATABASE_URL_VAR).ok();
+    let (config, problems) = config::load();
 
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
@@ -199,30 +300,57 @@ fn main() -> eframe::Result {
         "Hydra",
         options,
         Box::new(move |cc| {
+            let ctx = &cc.egui_ctx;
             let mut shared = Shared::new(Catalogue::default());
-            match database_url {
-                Some(url) => shared.db = Some(Db::connect(url, cc.egui_ctx.clone())),
-                None => match read(&catalogue_path)
-                    .and_then(|t| Ok(serde_json::from_str::<Catalogue>(&t)?))
-                {
+            let mut errors = problems;
+            let mut signin = None;
+            if let Some(url) = env_url {
+                match url.parse() {
+                    Ok(options) => shared.db = Some(Db::connect(options, ctx.clone())),
+                    Err(e) => errors.push(format!("{DATABASE_URL_VAR} is not a Postgres URL: {e}")),
+                }
+            } else if let Some(url) = config.database_url {
+                match SignIn::new(url) {
+                    Ok(mut s) => {
+                        s.start(&mut shared, ctx);
+                        signin = Some(s);
+                    }
+                    Err(e) => errors.push(e),
+                }
+            } else if let Some(path) = catalogue_path {
+                match read(&path).and_then(|t| Ok(serde_json::from_str::<Catalogue>(&t)?)) {
                     Ok(c) => {
                         shared.catalogue = c;
                         shared.notice = Some(format!(
-                            "Offline: read-only catalogue from {}. Set {DATABASE_URL_VAR} to use the shared database.",
-                            catalogue_path.display()
+                            "Offline: read-only catalogue from {}. Set database_url in {} or {DATABASE_URL_VAR} to use the shared database.",
+                            path.display(),
+                            config::FILE
                         ));
                     }
-                    Err(e) => shared.error = Some(format!("Could not load the catalogue: {e:#}")),
-                },
+                    Err(e) => errors.push(format!("Could not load the catalogue: {e:#}")),
+                }
+            } else {
+                let file = config::machine_path().unwrap_or_else(|| config::FILE.into());
+                errors.push(format!(
+                    "No database is set up. An administrator must set database_url in {}.",
+                    file.display()
+                ));
             }
+            let updates = config.update_url.map(|url| update::check(url, ctx.clone()));
             // The file opens as a new, unsaved circuit; Save puts it in the database.
-            let circuit = read(&circuit_path)
-                .and_then(|t| Ok(Circuit::from_json(&t)?))
-                .unwrap_or_else(|e| {
-                    tracing::error!("could not load circuit: {e:#}");
-                    shared.error = Some(format!("Could not load the circuit: {e:#}"));
-                    editor::empty_circuit()
-                });
+            let circuit = match &circuit_path {
+                Some(path) => read(path)
+                    .and_then(|t| Ok(Circuit::from_json(&t)?))
+                    .unwrap_or_else(|e| {
+                        tracing::error!("could not load circuit: {e:#}");
+                        errors.push(format!("Could not load the circuit: {e:#}"));
+                        editor::empty_circuit()
+                    }),
+                None => editor::empty_circuit(),
+            };
+            if !errors.is_empty() {
+                shared.error = Some(errors.join(" "));
+            }
             let schematic = editor::SchematicEditor::new(circuit, None);
 
             let mut dock = DockState::new(vec![Tab::Schematic, Tab::Catalogue, Tab::Proposals]);
@@ -240,8 +368,70 @@ fn main() -> eframe::Result {
                             .inspect_err(|e| tracing::error!("3D view: {e:#}"))
                             .ok(),
                     ),
+                    signin,
                 },
+                updates,
+                update: None,
             }))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::channel;
+
+    use hydra_core::CatalogueRef;
+
+    use super::*;
+
+    #[test]
+    fn replies_from_a_retired_worker_still_arrive() {
+        let (requests, inbox) = channel();
+        let (outbox, replies) = channel();
+        let mut shared = Shared::new(Catalogue::default());
+        shared.db = Some(Db::new(requests, replies));
+        let mut panels = Panels {
+            shared,
+            schematic: editor::SchematicEditor::new(editor::empty_circuit(), None),
+            catalogue: CataloguePanel::default(),
+            models: models::ModelPanel::new(None),
+            proposals: proposals::ProposalsPanel::default(),
+            signin: None,
+        };
+        // Signing out retires the worker: it gets no more requests, so it exits once done.
+        let db = panels.shared.db.take().unwrap();
+        panels.shared.retired.push(db.retire());
+        assert_eq!(inbox.try_recv().err(), Some(TryRecvError::Disconnected));
+
+        // It finishes a save, then its failed initial load reports a wrong login.
+        outbox
+            .send(Reply::Saved(CatalogueRef::new("vt-a", 2)))
+            .unwrap();
+        panels.poll_db();
+        assert_eq!(panels.shared.notice.as_deref(), Some("Saved vt-a@2."));
+        assert_eq!(panels.shared.retired.len(), 1);
+
+        // Signed in again: the old worker's reload after its save goes through the new one.
+        let (requests, new_inbox) = channel();
+        let (_new_outbox, replies) = channel();
+        panels.shared.db = Some(Db::new(requests, replies));
+        let mut stale = hydra_db::LoadedCatalogue::default();
+        stale
+            .catalogue
+            .manufacturers
+            .push(hydra_core::Manufacturer {
+                key: "stale".into(),
+                name: "Stale".into(),
+            });
+        outbox.send(Reply::Catalogue(stale)).unwrap();
+        panels.poll_db();
+        assert!(panels.shared.catalogue.manufacturers.is_empty());
+        assert!(matches!(new_inbox.try_recv(), Ok(Request::LoadCatalogue)));
+        outbox.send(Reply::WrongLogin).unwrap();
+        drop(outbox);
+        panels.poll_db();
+        assert_eq!(panels.shared.error, None);
+        assert!(panels.shared.retired.is_empty());
+    }
 }

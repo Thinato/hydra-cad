@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 hydra-core.workspace = true
+epaint_default_fonts.workspace = true
+svg2pdf.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

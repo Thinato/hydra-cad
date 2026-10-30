@@ -477,6 +477,14 @@ impl SchematicEditor {
                 });
                 db.send(Request::ListRevisions(saved.id.clone()));
             }
+            ui.menu_button("Export", |ui| {
+                for kind in [Export::Svg, Export::Pdf, Export::Bom] {
+                    if ui.button(kind.label()).clicked() {
+                        ui.close();
+                        self.export(kind, &shared.catalogue);
+                    }
+                }
+            });
             ui.separator();
             let name = ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(200.0));
             if name.lost_focus() && self.name.trim() != self.doc.circuit.name {
@@ -544,6 +552,24 @@ impl SchematicEditor {
             if let Some(s) = &self.status {
                 ui.weak(s);
             }
+        });
+    }
+
+    /// Ask where to save, then write the circuit as it is now, unsaved edits included.
+    fn export(&mut self, kind: Export, catalogue: &Catalogue) {
+        let ext = kind.extension();
+        let Some(path) = rfd::FileDialog::new()
+            .set_file_name(format!("{}.{ext}", file_stem(&self.doc.circuit.name)))
+            .add_filter(ext.to_uppercase(), &[ext])
+            .save_file()
+        else {
+            return;
+        };
+        let written = export_bytes(kind, &self.doc.circuit, catalogue)
+            .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()));
+        self.status = Some(match written {
+            Ok(()) => format!("Exported {}.", path.display()),
+            Err(e) => format!("Could not export {}: {e}", path.display()),
         });
     }
 
@@ -973,6 +999,52 @@ fn snap(v: f32) -> f32 {
     (v / GRID).round() * GRID
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Export {
+    Svg,
+    Pdf,
+    Bom,
+}
+
+impl Export {
+    fn label(self) -> &'static str {
+        match self {
+            Export::Svg => "SVG…",
+            Export::Pdf => "PDF…",
+            Export::Bom => "Bill of materials (CSV)…",
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Export::Svg => "svg",
+            Export::Pdf => "pdf",
+            Export::Bom => "csv",
+        }
+    }
+}
+
+/// The exported file's contents.
+fn export_bytes(kind: Export, circuit: &Circuit, catalogue: &Catalogue) -> Result<Vec<u8>, String> {
+    let drawing = || render_circuit(circuit, catalogue).primitives;
+    match kind {
+        Export::Svg => Ok(hydra_symbols::to_svg(&drawing()).into_bytes()),
+        Export::Pdf => hydra_symbols::to_pdf(&drawing()),
+        Export::Bom => Ok(hydra_core::bom_csv(&circuit.bom(catalogue)).into_bytes()),
+    }
+}
+
+/// The circuit name as a file name: without characters Windows or macOS refuse.
+fn file_stem(name: &str) -> String {
+    let stem: String = name
+        .chars()
+        .filter(|c| !c.is_control() && !r#"<>:"/\|?*"#.contains(*c))
+        .collect();
+    // Windows drops trailing dots and spaces.
+    let stem = stem.trim().trim_end_matches(['.', ' ']);
+    if stem.is_empty() { "circuit" } else { stem }.to_string()
+}
+
 pub fn empty_circuit() -> Circuit {
     Circuit {
         schema: SCHEMA_VERSION,
@@ -1276,6 +1348,36 @@ mod tests {
         assert!(h.state().0.doc.circuit.components.is_empty());
     }
 
+    #[test]
+    fn exports_svg_pdf_and_bill_of_materials() {
+        let catalogue = shared().catalogue;
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/circuits/demo-manifold.json"
+        );
+        let circuit = Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let export = |kind| export_bytes(kind, &circuit, &catalogue).unwrap();
+
+        let svg = String::from_utf8(export(Export::Svg)).unwrap();
+        assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"));
+        assert!(svg.contains(">V1<"), "designators are drawn");
+        assert!(export(Export::Pdf).starts_with(b"%PDF-"));
+        let csv = String::from_utf8(export(Export::Bom)).unwrap();
+        assert!(
+            csv.starts_with("\u{feff}Item,Quantity,Designators"),
+            "{csv}"
+        );
+        assert_eq!(csv.lines().count(), circuit.bom(&catalogue).len() + 1);
+        assert!(csv.lines().any(|l| l.contains("V1")), "{csv}");
+    }
+
+    #[test]
+    fn file_names_drop_characters_windows_refuses() {
+        assert_eq!(file_stem("Press 3: A/B <v2>?"), "Press 3 AB v2");
+        assert_eq!(file_stem("manifold.  "), "manifold");
+        assert_eq!(file_stem(" ?* "), "circuit");
+    }
+
     /// An editor on a saved circuit at revision 2, with a worker that goes nowhere.
     /// Its tests step a fixed number of frames: spinners repaint forever, so `run` never settles.
     fn saved_harness() -> Harness<'static, State> {
@@ -1283,7 +1385,7 @@ mod tests {
         let ctx = egui::Context::default();
         let (e, s) = h.state_mut();
         s.db = Some(crate::db::Db::connect(
-            "postgres://nobody@127.0.0.1:1/none".into(),
+            "postgres://nobody@127.0.0.1:1/none".parse().unwrap(),
             ctx,
         ));
         e.saved = Some(Saved {

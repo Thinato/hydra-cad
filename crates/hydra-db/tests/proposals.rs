@@ -456,8 +456,16 @@ async fn reviewed_proposals_are_history(pool: PgPool) {
                    SET status = 'approved', reviewed_by = 'x', proposal = '{}' \
                    WHERE id = $1::uuid";
     refused(&pool, rewrite, &pending).await;
-    let unsigned = "UPDATE catalogue_proposals SET status = 'approved' WHERE id = $1::uuid";
-    refused(&pool, unsigned, &pending).await;
+    // The reviewer is whoever reviews, whatever the statement says.
+    let unsigned = "UPDATE catalogue_proposals SET status = 'approved', reviewed_by = 'boss' \
+                    WHERE id = $1::uuid";
+    sqlx::query(unsigned)
+        .bind(&pending)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let by = get_proposal(&pool, &pending).await.unwrap().reviewed_by;
+    assert_eq!(by, Some(me(&pool).await));
     assert_eq!(proposal_count(&pool).await, 2);
     let r = get_proposal(&pool, &reviewed).await.unwrap();
     assert_eq!(r.review_note.as_deref(), Some("no"));
