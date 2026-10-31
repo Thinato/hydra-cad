@@ -7,13 +7,15 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use eframe::egui;
 use hydra_core::{Catalogue, CatalogueRef, Circuit, Proposal, ValveType};
 use hydra_db::{
-    CircuitSummary, ImportReport, LoadedCatalogue, OpenedCircuit, PgConnectOptions, PgPool,
-    ProposalRecord, RevisionSummary,
+    Account, CircuitSummary, ImportReport, LoadedCatalogue, OpenedCircuit, PgConnectOptions,
+    PgPool, ProposalRecord, RevisionSummary, User,
 };
 use hydra_mesh::Mesh;
 
 /// What Postgres refusing the user name or password reads as.
 pub const WRONG_LOGIN: &str = "Wrong user name or password.";
+/// What Postgres refusing a role that may not log in reads as.
+const CANT_SIGN_IN: &str = "Your account can't sign in (disabled by an administrator?).";
 
 pub enum Request {
     LoadCatalogue,
@@ -57,6 +59,26 @@ pub enum Request {
         id: String,
         note: String,
     },
+    /// Who is signed in; sent after every connect.
+    Account,
+    ListUsers,
+    /// Change the signed-in user's own password.
+    ChangePassword(String),
+    /// An administrator's change to a user; the user list reloads after.
+    ChangeUser(UserChange),
+}
+
+pub enum UserChange {
+    Create {
+        name: String,
+        password: String,
+        admin: bool,
+    },
+    SetPassword(String, String),
+    SetAdmin(String, bool),
+    SetCanLogin(String, bool),
+    EndSessions(String),
+    Delete(String),
 }
 
 /// Each request answers with its own outcome first; a catalogue reload follows any write.
@@ -90,6 +112,14 @@ pub enum Reply {
     ProposalRejected,
     /// Listing, approving or rejecting proposals failed, so the review tab can stop waiting.
     ProposalFailed(String),
+    Account(Account),
+    Users(Vec<User>),
+    /// The own password changed; the app reconnects with the new one.
+    PasswordChanged,
+    /// What an administrator's change did, in plain words.
+    UserChanged(String),
+    /// An account or user request failed, so the Account tab can stop waiting.
+    UserFailed(String),
     /// Postgres refused the user name or password; the answer to the initial catalogue load.
     WrongLogin,
     /// Connecting failed for another reason; the answer to the initial catalogue load.
@@ -100,14 +130,19 @@ pub enum Reply {
 pub struct Db {
     requests: Sender<Request>,
     replies: Receiver<Reply>,
+    /// What the worker connected with, to reconnect after a password change.
+    options: Option<PgConnectOptions>,
 }
 
 impl Db {
-    /// Start the worker and ask it for the catalogue. Connection errors arrive as
-    /// [`Reply::WrongLogin`] or [`Reply::ConnectFailed`].
+    /// Start the worker and ask it for the catalogue and the account. Connection errors arrive
+    /// as [`Reply::WrongLogin`] or [`Reply::ConnectFailed`].
     pub fn connect(options: PgConnectOptions, ctx: egui::Context) -> Db {
         let (requests, inbox) = channel();
         let (outbox, replies) = channel();
+        // Names the app's sessions in the Account tab's user list.
+        let options = options.application_name("Hydra");
+        let kept = options.clone();
         std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -115,14 +150,35 @@ impl Db {
                 .expect("tokio runtime");
             runtime.block_on(worker(options, inbox, outbox, ctx));
         });
-        let db = Db { requests, replies };
+        let db = Db {
+            requests,
+            replies,
+            options: Some(kept),
+        };
         db.send(Request::LoadCatalogue);
+        db.send(Request::Account);
         db
+    }
+
+    /// A worker for the same database and user with a new password, for the app to swap in.
+    pub fn with_password(&self, password: &str, ctx: egui::Context) -> Option<Db> {
+        let options = self.options.clone()?.password(password);
+        Some(Db::connect(options, ctx))
     }
 
     #[cfg(test)]
     pub fn new(requests: Sender<Request>, replies: Receiver<Reply>) -> Db {
-        Db { requests, replies }
+        Db {
+            requests,
+            replies,
+            options: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_options(mut self, options: PgConnectOptions) -> Db {
+        self.options = Some(options);
+        self
     }
 
     pub fn send(&self, request: Request) {
@@ -196,12 +252,28 @@ fn failed(request: &Request, e: String) -> Reply {
         Request::ListProposals { .. }
         | Request::ApproveProposal { .. }
         | Request::RejectProposal { .. } => Reply::ProposalFailed(e),
+        Request::Account
+        | Request::ListUsers
+        | Request::ChangePassword(_)
+        | Request::ChangeUser(_) => Reply::UserFailed(e),
         Request::RestoreRevision { .. }
         | Request::OpenCircuit(_)
         | Request::ListCircuits
         | Request::ListRevisions(_)
         | Request::OpenRevision(..) => Reply::CircuitFailed(e),
         _ => Reply::Error(e),
+    }
+}
+
+/// The answer to a request that failed: a refused login starts the sign-in flow, a disabled
+/// account gets one clear message, anything else goes to whoever asked.
+fn failure(request: &Request, e: &hydra_db::Error) -> Reply {
+    if e.is_wrong_login() {
+        Reply::WrongLogin
+    } else if e.is_login_refused() {
+        failed(request, CANT_SIGN_IN.into())
+    } else {
+        failed(request, e.to_string())
     }
 }
 
@@ -237,6 +309,20 @@ async fn handle(pool: &PgPool, request: Request) -> Vec<Reply> {
                 .map(|()| Reply::ProposalRejected),
             false,
         ),
+        Request::Account => (db::account(pool).await.map(Reply::Account), false),
+        Request::ListUsers => return vec![list_users(pool).await],
+        Request::ChangePassword(password) => (
+            db::set_password(pool, None, password)
+                .await
+                .map(|()| Reply::PasswordChanged),
+            false,
+        ),
+        Request::ChangeUser(change) => {
+            return match change_user(pool, change).await {
+                Ok(done) => vec![Reply::UserChanged(done), list_users(pool).await],
+                Err(e) => vec![failure(&request, &e)],
+            };
+        }
         Request::SaveValveType(v) => (db::save_valve_type(pool, v).await.map(Reply::Saved), true),
         Request::AttachDatasheet(r, pdf) => (
             db::attach_datasheet(pool, r, pdf)
@@ -295,15 +381,65 @@ async fn handle(pool: &PgPool, request: Request) -> Vec<Reply> {
         Ok(done) if reload_after => vec![done, reload(pool).await],
         Ok(done) => vec![done],
         Err(db::Error::Conflict { current }) => vec![Reply::Conflict { current }],
-        Err(e) => vec![failed(&request, e.to_string())],
+        Err(e) => vec![failure(&request, &e)],
     }
 }
 
 async fn reload(pool: &PgPool) -> Reply {
     match hydra_db::load_catalogue(pool).await {
         Ok(loaded) => Reply::Catalogue(loaded),
+        Err(e) if e.is_wrong_login() => Reply::WrongLogin,
+        Err(e) if e.is_login_refused() => Reply::Error(CANT_SIGN_IN.into()),
         Err(e) => Reply::Error(format!("Could not reload the catalogue: {e}")),
     }
+}
+
+async fn list_users(pool: &PgPool) -> Reply {
+    match hydra_db::list_users(pool).await {
+        Ok(users) => Reply::Users(users),
+        Err(e) => failure(&Request::ListUsers, &e),
+    }
+}
+
+/// Apply an administrator's change; returns what it did.
+async fn change_user(pool: &PgPool, change: &UserChange) -> Result<String, hydra_db::Error> {
+    use hydra_db as db;
+    Ok(match change {
+        UserChange::Create {
+            name,
+            password,
+            admin,
+        } => {
+            db::create_user(pool, name, password, *admin).await?;
+            format!("Added user {name}.")
+        }
+        UserChange::SetPassword(name, password) => {
+            db::set_password(pool, Some(name), password).await?;
+            format!("Changed the password of {name}.")
+        }
+        UserChange::SetAdmin(name, admin) => {
+            db::set_admin(pool, name, *admin).await?;
+            match admin {
+                true => format!("{name} is now an administrator."),
+                false => format!("{name} is no longer an administrator."),
+            }
+        }
+        UserChange::SetCanLogin(name, can_login) => {
+            db::set_can_login(pool, name, *can_login).await?;
+            match can_login {
+                true => format!("{name} can sign in again."),
+                false => format!("Disabled {name} and ended their sessions."),
+            }
+        }
+        UserChange::EndSessions(name) => {
+            let n = db::end_sessions(pool, name).await?;
+            format!("Ended {n} session(s) of {name}.")
+        }
+        UserChange::Delete(name) => {
+            db::delete_user(pool, name).await?;
+            format!("Deleted user {name}.")
+        }
+    })
 }
 
 /// Fetch an asset into the local cache if needed, then open it with the system viewer.
@@ -444,7 +580,7 @@ mod tests {
         });
 
         let db = Db::connect(url.parse().unwrap(), egui::Context::default());
-        take(&db, 1); // the catalogue
+        take(&db, 2); // the catalogue and the account
         db.send(Request::ListProposals { pending_only: true });
         let [Reply::Proposals(list)] = &take(&db, 1)[..] else {
             panic!("expected the proposals")
@@ -495,7 +631,7 @@ mod tests {
         });
 
         let db = Db::connect(url.parse().unwrap(), egui::Context::default());
-        let [Reply::Catalogue(loaded)] = &take(&db, 1)[..] else {
+        let [Reply::Catalogue(loaded), Reply::Account(_)] = &take(&db, 2)[..] else {
             panic!("expected the catalogue")
         };
         assert_eq!(
@@ -532,7 +668,7 @@ mod tests {
     fn worker_loads_saves_and_attaches() {
         let url = std::env::var("DATABASE_URL").unwrap();
         let db = Db::connect(url.parse().unwrap(), egui::Context::default());
-        let [Reply::Catalogue(loaded)] = &take(&db, 1)[..] else {
+        let [Reply::Catalogue(loaded), Reply::Account(_)] = &take(&db, 2)[..] else {
             panic!("expected the catalogue")
         };
         let template = loaded.catalogue.valve_types[0].clone();
@@ -584,7 +720,7 @@ mod tests {
     fn worker_saves_conflicts_and_restores_circuits() {
         let url = std::env::var("DATABASE_URL").unwrap();
         let db = Db::connect(url.parse().unwrap(), egui::Context::default());
-        take(&db, 1); // initial catalogue
+        take(&db, 2); // the catalogue and the account
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/circuits/demo-manifold.json"
@@ -665,9 +801,66 @@ mod tests {
             options.password("not-the-password"),
             egui::Context::default(),
         );
-        assert!(matches!(&take(&db, 1)[..], [Reply::WrongLogin]));
+        assert!(matches!(
+            &take(&db, 2)[..],
+            [Reply::WrongLogin, Reply::UserFailed(_)]
+        ));
         db.send(Request::ListCircuits);
         assert!(matches!(&take(&db, 1)[..], [Reply::CircuitFailed(e)] if e == WRONG_LOGIN));
+    }
+
+    #[test]
+    #[ignore = "needs DATABASE_URL (Postgres with the fixture catalogue imported)"]
+    fn worker_reports_the_account_and_refuses_non_admins() {
+        let url = std::env::var("DATABASE_URL").unwrap();
+        let options: PgConnectOptions = url.parse().unwrap();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let engineer = format!("hydra_t_{nanos}");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let pool = rt.block_on(hydra_db::connect(&url)).unwrap();
+        // A superuser is an administrator.
+        let user = options.get_username().to_string();
+        let db = Db::connect(options.clone(), egui::Context::default());
+        let [Reply::Catalogue(_), Reply::Account(account)] = &take(&db, 2)[..] else {
+            panic!("expected the catalogue and the account")
+        };
+        assert_eq!((account.user.as_str(), account.admin), (&user[..], true));
+
+        // A plain engineer is not, and Postgres refuses what only administrators may do.
+        rt.block_on(hydra_db::create_user(
+            &pool,
+            &engineer,
+            "engineer-password-1",
+            false,
+        ))
+        .unwrap();
+        let db = Db::connect(
+            options.username(&engineer).password("engineer-password-1"),
+            egui::Context::default(),
+        );
+        let replies = take(&db, 2);
+        let [Reply::Catalogue(_), Reply::Account(account)] = &replies[..] else {
+            panic!("expected the catalogue and the account")
+        };
+        assert_eq!(
+            (account.user.as_str(), account.admin),
+            (&engineer[..], false)
+        );
+        db.send(Request::ListUsers);
+        let [Reply::UserFailed(e)] = &take(&db, 1)[..] else {
+            panic!("expected a refusal")
+        };
+        assert!(e.contains("only an administrator"), "{e}");
+        db.send(Request::ChangeUser(UserChange::Delete("nobody".into())));
+        let [Reply::UserFailed(e)] = &take(&db, 1)[..] else {
+            panic!("expected a refusal")
+        };
+        assert!(e.contains("only an administrator"), "{e}");
+        rt.block_on(hydra_db::delete_user(&pool, &engineer))
+            .unwrap();
     }
 
     #[test]
@@ -690,7 +883,7 @@ mod tests {
             "postgres://nobody@127.0.0.1:1/none".parse().unwrap(),
             egui::Context::default(),
         );
-        let [Reply::ConnectFailed(e)] = &take(&db, 1)[..] else {
+        let [Reply::ConnectFailed(e), Reply::UserFailed(_)] = &take(&db, 2)[..] else {
             panic!("expected a connection failure")
         };
         assert!(e.starts_with("Can't reach the database"), "{e}");

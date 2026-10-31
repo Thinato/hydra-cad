@@ -1,6 +1,7 @@
 // No console window behind the installed Windows app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod account;
 mod catalogue;
 mod config;
 mod db;
@@ -38,6 +39,7 @@ enum Tab {
     Schematic,
     Catalogue,
     Proposals,
+    Account,
     View3d,
 }
 
@@ -47,6 +49,7 @@ struct Panels {
     catalogue: CataloguePanel,
     models: models::ModelPanel,
     proposals: proposals::ProposalsPanel,
+    account: account::AccountPanel,
     /// Set when the database comes from hydra.ini, so each user signs in.
     signin: Option<SignIn>,
 }
@@ -63,6 +66,7 @@ impl TabViewer for Panels {
             Tab::Schematic => "Schematic".into(),
             Tab::Catalogue => "Catalogue".into(),
             Tab::Proposals => "Proposals".into(),
+            Tab::Account => "Account".into(),
             Tab::View3d => "3D".into(),
         }
     }
@@ -72,6 +76,7 @@ impl TabViewer for Panels {
             Tab::Schematic => self.schematic.ui(ui, &mut self.shared),
             Tab::Catalogue => self.catalogue.ui(ui, &mut self.shared),
             Tab::Proposals => self.proposals.ui(ui, &mut self.shared),
+            Tab::Account => self.account.ui(ui, &mut self.shared, self.signin.as_mut()),
             Tab::View3d => self.models.ui(ui, &self.shared, &mut self.schematic),
         }
     }
@@ -84,7 +89,7 @@ impl TabViewer for Panels {
 impl Panels {
     /// Apply what the database worker sent since the last frame, and what retired workers of
     /// earlier sign-ins still answer, so no panel waits forever on a request.
-    fn poll_db(&mut self) {
+    fn poll_db(&mut self, ctx: &egui::Context) {
         let mut replies: Vec<_> = self
             .shared
             .db
@@ -106,6 +111,11 @@ impl Panels {
                 // Only the current sign-in's connection outcome counts. An old worker's
                 // catalogue follows a write it finished: reload through the current one.
                 Reply::WrongLogin | Reply::ConnectFailed(_) if retired => {}
+                // An old sign-in's account and users must not show under the current one.
+                Reply::Account(_) | Reply::Users(_) | Reply::UserFailed(_) if retired => {}
+                Reply::PasswordChanged if retired => {
+                    self.shared.notice = Some("Your password was changed.".into())
+                }
                 Reply::Catalogue(_) if retired => {
                     if let Some(db) = &self.shared.db {
                         db.send(Request::LoadCatalogue);
@@ -167,9 +177,45 @@ impl Panels {
                     self.proposals.reviewed(&self.shared);
                 }
                 Reply::ProposalFailed(e) => self.proposals.failed(e),
+                Reply::Account(a) => self.account.signed_in(a, &self.shared),
+                Reply::Users(list) => self.account.users(list),
+                Reply::UserChanged(done) => self.shared.notice = Some(done),
+                Reply::UserFailed(e) => self.account.failed(e),
+                Reply::PasswordChanged => {
+                    let password = self.account.password_changed();
+                    let notice = match &mut self.signin {
+                        Some(s) => {
+                            let lost = password
+                                .is_some_and(|p| s.password_changed(p, &mut self.shared, ctx));
+                            match lost {
+                                true => "Password changed. Couldn't remember the new password on this computer."
+                                    .into(),
+                                false => "Password changed.".into(),
+                            }
+                        }
+                        None => {
+                            // New connections need the new password, so swap in a new worker.
+                            let new = password.and_then(|p| {
+                                self.shared.db.as_ref()?.with_password(&p, ctx.clone())
+                            });
+                            if let Some(new) = new
+                                && let Some(old) = self.shared.db.replace(new)
+                            {
+                                self.shared.retired.push(old.retire());
+                            }
+                            format!(
+                                "Password changed. {DATABASE_URL_VAR} still holds the old one; update it before you start Hydra again."
+                            )
+                        }
+                    };
+                    self.shared.notice = Some(notice);
+                }
                 Reply::WrongLogin => match &mut self.signin {
                     Some(s) => s.refused(&mut self.shared),
-                    None => self.shared.error = Some(db::WRONG_LOGIN.into()),
+                    None => {
+                        self.shared.error = Some(db::WRONG_LOGIN.into());
+                        self.account.failed(db::WRONG_LOGIN.into());
+                    }
                 },
                 Reply::ConnectFailed(e) => {
                     self.shared.error = Some(e);
@@ -179,6 +225,9 @@ impl Panels {
                 }
                 Reply::Error(e) => self.shared.error = Some(e),
             }
+        }
+        if self.shared.db.is_none() {
+            self.account.forget();
         }
     }
 }
@@ -192,7 +241,7 @@ struct HydraApp {
 
 impl eframe::App for HydraApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.panels.poll_db();
+        self.panels.poll_db(ui.ctx());
         if let Some(u) = self.updates.as_ref().and_then(|r| r.try_recv().ok()) {
             self.update = Some(u);
         }
@@ -353,7 +402,12 @@ fn main() -> eframe::Result {
             }
             let schematic = editor::SchematicEditor::new(circuit, None);
 
-            let mut dock = DockState::new(vec![Tab::Schematic, Tab::Catalogue, Tab::Proposals]);
+            let mut dock = DockState::new(vec![
+                Tab::Schematic,
+                Tab::Catalogue,
+                Tab::Proposals,
+                Tab::Account,
+            ]);
             dock.main_surface_mut()
                 .split_right(NodeIndex::root(), 0.6, vec![Tab::View3d]);
             Ok(Box::new(HydraApp {
@@ -363,6 +417,7 @@ fn main() -> eframe::Result {
                     schematic,
                     catalogue: CataloguePanel::default(),
                     proposals: proposals::ProposalsPanel::default(),
+                    account: account::AccountPanel::default(),
                     models: models::ModelPanel::new(
                         viewer3d::Viewer3d::new(cc)
                             .inspect_err(|e| tracing::error!("3D view: {e:#}"))
@@ -379,7 +434,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc::channel;
+    use std::sync::mpsc::{Sender, channel};
 
     use hydra_core::CatalogueRef;
 
@@ -397,6 +452,7 @@ mod tests {
             catalogue: CataloguePanel::default(),
             models: models::ModelPanel::new(None),
             proposals: proposals::ProposalsPanel::default(),
+            account: account::AccountPanel::default(),
             signin: None,
         };
         // Signing out retires the worker: it gets no more requests, so it exits once done.
@@ -408,7 +464,7 @@ mod tests {
         outbox
             .send(Reply::Saved(CatalogueRef::new("vt-a", 2)))
             .unwrap();
-        panels.poll_db();
+        panels.poll_db(&egui::Context::default());
         assert_eq!(panels.shared.notice.as_deref(), Some("Saved vt-a@2."));
         assert_eq!(panels.shared.retired.len(), 1);
 
@@ -425,13 +481,130 @@ mod tests {
                 name: "Stale".into(),
             });
         outbox.send(Reply::Catalogue(stale)).unwrap();
-        panels.poll_db();
+        panels.poll_db(&egui::Context::default());
         assert!(panels.shared.catalogue.manufacturers.is_empty());
         assert!(matches!(new_inbox.try_recv(), Ok(Request::LoadCatalogue)));
         outbox.send(Reply::WrongLogin).unwrap();
         drop(outbox);
-        panels.poll_db();
+        panels.poll_db(&egui::Context::default());
         assert_eq!(panels.shared.error, None);
         assert!(panels.shared.retired.is_empty());
+    }
+
+    #[test]
+    fn a_retired_workers_account_and_users_are_ignored() {
+        let ctx = egui::Context::default();
+        let (requests, inbox) = channel();
+        let (outbox, replies) = channel();
+        let mut shared = Shared::new(Catalogue::default());
+        shared.db = Some(Db::new(requests, replies));
+        let mut panels = Panels {
+            shared,
+            schematic: editor::SchematicEditor::new(editor::empty_circuit(), None),
+            catalogue: CataloguePanel::default(),
+            models: models::ModelPanel::new(None),
+            proposals: proposals::ProposalsPanel::default(),
+            account: account::AccountPanel::default(),
+            signin: None,
+        };
+        let boss = hydra_db::Account {
+            user: "boss".into(),
+            admin: true,
+        };
+        let users = || {
+            vec![hydra_db::User {
+                name: "boss".into(),
+                admin: true,
+                can_login: true,
+                sessions: Vec::new(),
+            }]
+        };
+        // The current worker's admin account loads the users.
+        outbox.send(Reply::Account(boss.clone())).unwrap();
+        panels.poll_db(&ctx);
+        assert!(matches!(inbox.try_recv(), Ok(Request::ListUsers)));
+        outbox.send(Reply::Users(users())).unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(panels.account.shown().1.map(Vec::len), Some(1));
+
+        // Signed out: nothing of that sign-in stays, and its late replies change nothing.
+        let db = panels.shared.db.take().unwrap();
+        panels.shared.retired.push(db.retire());
+        panels.poll_db(&ctx);
+        assert_eq!(panels.account.shown(), (None, None));
+        outbox.send(Reply::Account(boss)).unwrap();
+        outbox.send(Reply::Users(users())).unwrap();
+        outbox.send(Reply::UserFailed("late".into())).unwrap();
+        outbox
+            .send(Reply::UserChanged("Deleted user x.".into()))
+            .unwrap();
+        // Someone else signs in before the old worker's replies are polled.
+        let (requests, new_inbox) = channel();
+        panels.shared.db = Some(Db::new(requests, channel().1));
+        panels.poll_db(&ctx);
+        assert_eq!(panels.account.shown(), (None, None));
+        assert!(
+            new_inbox.try_recv().is_err(),
+            "no user list for the new sign-in"
+        );
+        assert_eq!(panels.shared.notice.as_deref(), Some("Deleted user x."));
+    }
+
+    fn panels_with_db(signin: Option<SignIn>) -> (Panels, Receiver<Request>, Sender<Reply>) {
+        let (requests, inbox) = channel();
+        let (outbox, replies) = channel();
+        let mut shared = Shared::new(Catalogue::default());
+        shared.db = Some(Db::new(requests, replies));
+        let panels = Panels {
+            shared,
+            schematic: editor::SchematicEditor::new(editor::empty_circuit(), None),
+            catalogue: CataloguePanel::default(),
+            models: models::ModelPanel::new(None),
+            proposals: proposals::ProposalsPanel::default(),
+            account: account::AccountPanel::default(),
+            signin,
+        };
+        (panels, inbox, outbox)
+    }
+
+    #[test]
+    fn a_login_refused_mid_session_signs_out_or_shows_the_error() {
+        let ctx = egui::Context::default();
+        // Through hydra.ini: the sign-in window comes back and the old worker is retired.
+        let (mut panels, _inbox, outbox) = panels_with_db(Some(SignIn::test("anna", "pw")));
+        outbox.send(Reply::WrongLogin).unwrap();
+        panels.poll_db(&ctx);
+        assert!(panels.shared.db.is_none());
+        assert_eq!(panels.shared.retired.len(), 1);
+        assert_eq!(panels.signin.as_ref().unwrap().user(), None);
+
+        // Through HYDRA_DATABASE_URL: the error shows and the Account tab stops waiting.
+        let (mut panels, _inbox, outbox) = panels_with_db(None);
+        panels.account.failed(String::new());
+        outbox.send(Reply::WrongLogin).unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(panels.shared.error.as_deref(), Some(db::WRONG_LOGIN));
+        assert!(panels.shared.db.is_some());
+    }
+
+    #[test]
+    fn a_new_password_through_the_environment_reconnects() {
+        let ctx = egui::Context::default();
+        let (mut panels, old_inbox, outbox) = panels_with_db(None);
+        let options = "postgres://anna:old@127.0.0.1:1/none".parse().unwrap();
+        panels.shared.db = panels.shared.db.take().map(|d| d.with_options(options));
+        panels.account.set_changing("new-password-1");
+        outbox.send(Reply::PasswordChanged).unwrap();
+        panels.poll_db(&ctx);
+        assert!(panels.shared.db.is_some(), "a new worker took over");
+        assert_eq!(panels.shared.retired.len(), 1, "the old worker is retired");
+        assert_eq!(old_inbox.try_recv().err(), Some(TryRecvError::Disconnected));
+        assert!(
+            panels
+                .shared
+                .notice
+                .unwrap()
+                .contains("still holds the old one")
+        );
     }
 }

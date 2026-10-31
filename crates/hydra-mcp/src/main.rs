@@ -26,9 +26,14 @@ async fn run() -> Result<(), String> {
          e.g. postgres://user:password@server:5433/hydra"
             .to_string()
     })?;
-    let pool = hydra_db::connect(&url)
+    let cannot = |e: hydra_db::Error| format!("cannot connect to the Hydra database: {e}");
+    let options = url
+        .parse::<hydra_db::PgConnectOptions>()
+        .map_err(|e| cannot(e.into()))?;
+    // Shows in the Account tab's session list.
+    let pool = hydra_db::connect_with(options.application_name("hydra-mcp"))
         .await
-        .map_err(|e| format!("cannot connect to the Hydra database: {e}"))?;
+        .map_err(cannot)?;
     hydra_db::check_schema(&pool)
         .await
         .map_err(|e| format!("the Hydra database can't be used: {e}"))?;

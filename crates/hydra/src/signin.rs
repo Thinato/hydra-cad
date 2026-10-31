@@ -27,6 +27,8 @@ pub struct SignIn {
     signed_in: Option<Credentials>,
     /// Put the credentials in the keychain once the database answers.
     to_remember: bool,
+    /// The keychain holds the signed-in credentials.
+    remembered: bool,
     /// The database could not be reached; offer to try again.
     connect_failed: bool,
 }
@@ -47,6 +49,7 @@ impl SignIn {
             wrong_login: false,
             signed_in: None,
             to_remember: false,
+            remembered: false,
             connect_failed: false,
         })
     }
@@ -55,6 +58,7 @@ impl SignIn {
     pub fn start(&mut self, shared: &mut Shared, ctx: &egui::Context) {
         if let Some(c) = load(&self.url) {
             self.connect(c, false, shared, ctx);
+            self.remembered = true;
         }
     }
 
@@ -82,7 +86,7 @@ impl SignIn {
         if std::mem::take(&mut self.to_remember)
             && let Some(c) = &self.signed_in
         {
-            store(&self.url, c);
+            self.remembered = store(&self.url, c);
         }
     }
 
@@ -97,13 +101,76 @@ impl SignIn {
         self.wrong_login = true;
     }
 
-    fn sign_out(&mut self, shared: &mut Shared) {
+    pub fn sign_out(&mut self, shared: &mut Shared) {
         forget(&self.url);
         retire(shared);
         self.signed_in = None;
         self.to_remember = false;
+        self.remembered = false;
         self.password.clear();
         self.open = true;
+    }
+
+    /// The signed-in user's own password changed: keep the keychain in step and reconnect, since
+    /// new connections with the old password would fail. Returns whether the keychain lost it.
+    pub fn password_changed(
+        &mut self,
+        password: String,
+        shared: &mut Shared,
+        ctx: &egui::Context,
+    ) -> bool {
+        let Some(old) = self.signed_in.take() else {
+            return false;
+        };
+        let c = Credentials {
+            user: old.user,
+            password,
+        };
+        let lost = self.remembered && !replace_stored(&self.url, &c, store, forget);
+        if lost {
+            self.remembered = false;
+        }
+        self.connect(c, false, shared, ctx);
+        lost
+    }
+
+    /// Signed in as `user` with `password`, without a worker or the keychain.
+    #[cfg(test)]
+    pub fn test(user: &str, password: &str) -> SignIn {
+        let mut s = SignIn::new("postgres://hydra-db.office.local:5433/hydra".into()).unwrap();
+        s.open = false;
+        s.signed_in = Some(Credentials {
+            user: user.into(),
+            password: password.into(),
+        });
+        s
+    }
+
+    /// Who is signed in, or signing in.
+    pub fn user(&self) -> Option<&str> {
+        self.signed_in.as_ref().map(|c| c.user.as_str())
+    }
+
+    pub fn remembered(&self) -> bool {
+        self.remembered
+    }
+
+    /// Whether `password` is the one the user signed in with.
+    pub fn is_password(&self, password: &str) -> bool {
+        self.signed_in
+            .as_ref()
+            .is_some_and(|c| c.password == password)
+    }
+
+    /// "Database hydra on host:port".
+    pub fn server(&self) -> String {
+        let o = &self.options;
+        format!(
+            "Database {} on {}:{}",
+            o.get_database().unwrap_or("hydra"),
+            o.get_host(),
+            o.get_port()
+        )
     }
 
     /// "Signed in as …" and a Sign out button, for the status line, plus Retry after a
@@ -138,13 +205,7 @@ impl SignIn {
         let mut submit = false;
         egui::Modal::new(egui::Id::new("sign-in")).show(ctx, |ui| {
             ui.heading("Sign in to Hydra");
-            let o = &self.options;
-            ui.weak(format!(
-                "Database {} on {}:{}",
-                o.get_database().unwrap_or("hydra"),
-                o.get_host(),
-                o.get_port()
-            ));
+            ui.weak(self.server());
             ui.add_space(4.0);
             egui::Grid::new("sign-in-fields")
                 .num_columns(2)
@@ -180,6 +241,21 @@ impl SignIn {
     }
 }
 
+/// Store the new credentials; if the keychain refuses, drop the old ones so the next start asks
+/// rather than failing with a stale password. Returns whether they are stored.
+fn replace_stored(
+    url: &str,
+    c: &Credentials,
+    store: impl FnOnce(&str, &Credentials) -> bool,
+    forget: impl FnOnce(&str),
+) -> bool {
+    let stored = store(url, c);
+    if !stored {
+        forget(url);
+    }
+    stored
+}
+
 /// Stop using the current worker; its replies still arrive (see `Panels::poll_db`).
 fn retire(shared: &mut Shared) {
     if let Some(db) = shared.db.take() {
@@ -208,10 +284,15 @@ fn load(url: &str) -> Option<Credentials> {
     })
 }
 
-fn store(url: &str, c: &Credentials) {
+/// Returns whether the keychain took them.
+fn store(url: &str, c: &Credentials) -> bool {
     let secret = serde_json::json!({"user": c.user, "password": c.password}).to_string();
-    if let Err(e) = keyring::Entry::new(SERVICE, url).and_then(|e| e.set_password(&secret)) {
-        tracing::warn!("keychain: {e}");
+    match keyring::Entry::new(SERVICE, url).and_then(|e| e.set_password(&secret)) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!("keychain: {e}");
+            false
+        }
     }
 }
 
@@ -317,5 +398,48 @@ mod tests {
             "the failed worker's replies still arrive"
         );
         assert_eq!(s.signed_in.as_ref().map(|c| &c.password[..]), Some("pw"));
+    }
+
+    #[test]
+    fn a_new_password_reconnects() {
+        let mut s = SignIn::test("anna", "old-password-1");
+        s.options = "postgres://127.0.0.1:1/none".parse().unwrap();
+        let mut shared = Shared::new(hydra_core::Catalogue::default());
+        let (requests, _inbox) = std::sync::mpsc::channel();
+        shared.db = Some(Db::new(requests, std::sync::mpsc::channel().1));
+        assert!(s.is_password("old-password-1"));
+        s.password_changed(
+            "new-password-1".into(),
+            &mut shared,
+            &egui::Context::default(),
+        );
+        assert!(s.is_password("new-password-1"));
+        assert_eq!(s.user(), Some("anna"));
+        assert!(shared.db.is_some());
+        assert_eq!(shared.retired.len(), 1, "the old worker is retired");
+    }
+
+    #[test]
+    fn a_keychain_that_refuses_the_new_password_forgets_the_old_one() {
+        let c = Credentials {
+            user: "anna".into(),
+            password: "new-password-1".into(),
+        };
+        let forgotten = std::cell::Cell::new(false);
+        assert!(!replace_stored(
+            "u",
+            &c,
+            |_, _| false,
+            |_| forgotten.set(true)
+        ));
+        assert!(forgotten.get());
+        forgotten.set(false);
+        assert!(replace_stored(
+            "u",
+            &c,
+            |_, _| true,
+            |_| forgotten.set(true)
+        ));
+        assert!(!forgotten.get());
     }
 }

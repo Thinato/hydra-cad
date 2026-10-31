@@ -177,6 +177,8 @@ async fn only_a_wrong_password_is_a_wrong_login(admin: PgPool) {
     // Retyping the password can't fix a role that may not log in (SQLSTATE 28000).
     let refused = attempt(name, "pilot").await.unwrap_err();
     assert!(!refused.is_wrong_login(), "{refused}");
+    assert!(refused.is_login_refused(), "{refused}");
+    assert!(!wrong.is_login_refused(), "{wrong}");
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP ROLE {name}")))
         .execute(&admin)
         .await

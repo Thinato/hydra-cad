@@ -7,11 +7,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+base64.workspace = true
+hmac.workspace = true
 hydra-core.workspace = true
 hydra-mesh.workspace = true
+rand.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sha2-hmac.workspace = true
 sqlx.workspace = true
+stringprep.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

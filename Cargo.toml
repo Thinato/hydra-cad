@@ -15,6 +15,7 @@ hydra-db = { path = "crates/hydra-db" }
 hydra-mesh = { path = "crates/hydra-mesh" }
 
 anyhow = "1"
+base64 = "0.22"
 bytemuck = { version = "1", features = ["derive"] }
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "links", "wgpu", "wayland", "x11"] }
 egui_dock = "0.21"
@@ -23,10 +24,12 @@ egui_kittest = "0.36"
 epaint_default_fonts = "0.36"
 glam = { version = "0.34", features = ["bytemuck"] }
 gltf = "1.4"
+hmac = "0.13"
 insta = "1"
 # Keychain: the platform stores on Windows and macOS; elsewhere a mock store, so it builds anywhere.
 keyring = { version = "3.6", features = ["apple-native", "windows-native"] }
 pdf-extract = "0.12"
+rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
 # xdg-portal only: no GTK headers needed to build on Linux.
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 rmcp = { version = "3.8", features = ["server", "macros", "transport-io"] }
@@ -35,7 +38,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
 sha2 = "0.10"
+# hmac 0.13 needs sha2 0.11; `sha2` stays on 0.10, whose digests format as hex.
+sha2-hmac = { package = "sha2", version = "0.11", default-features = false }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
+stringprep = "0.1"
 svg2pdf = { version = "0.13", default-features = false, features = ["text"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

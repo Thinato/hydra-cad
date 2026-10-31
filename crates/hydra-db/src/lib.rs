@@ -3,6 +3,7 @@
 mod catalogue;
 mod circuits;
 mod proposals;
+mod users;
 
 pub use catalogue::{
     ImportReport, LoadedCatalogue, ModelOwner, asset_bytes, attach_datasheet, attach_model,
@@ -19,6 +20,10 @@ pub use proposals::{
 pub use sqlx::PgPool;
 pub use sqlx::postgres::PgConnectOptions;
 use sqlx::postgres::PgPoolOptions;
+pub use users::{
+    Account, MIN_PASSWORD_CHARS, Session, User, account, create_user, delete_user, end_sessions,
+    list_users, set_admin, set_can_login, set_password,
+};
 
 /// Embedded migrations from `./migrations`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
@@ -55,6 +60,12 @@ impl Error {
     /// pg_hba.conf or a role that may not log in, which the user can't fix by retyping.
     pub fn is_wrong_login(&self) -> bool {
         matches!(self, Error::Sqlx(sqlx::Error::Database(e)) if e.code().as_deref() == Some("28P01"))
+    }
+
+    /// Postgres won't let this role in at all (SQLSTATE 28000): it was disabled, or the
+    /// server's pg_hba.conf doesn't allow it.
+    pub fn is_login_refused(&self) -> bool {
+        matches!(self, Error::Sqlx(sqlx::Error::Database(e)) if e.code().as_deref() == Some("28000"))
     }
 }
 
