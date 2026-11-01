@@ -1627,24 +1627,48 @@ fn extent(
             let place = placement(circuit, &c.id);
             Some(([place.x, place.y], [place.x, place.y]))
         }
-        _ => body(c, &parts.iter().find(|(id, _)| *id == c.id)?.1, catalogue),
+        _ => outline_box(
+            circuit,
+            c,
+            &parts.iter().find(|(id, _)| *id == c.id)?.1,
+            catalogue,
+        ),
     }
 }
 
-/// The box round a part's drawing without its item label and status words. Those move to keep
-/// clear of wires, so the block's outline, and whether a part is over it, never follow them.
+/// The box the block's outline goes round for the part `c`, drawn as `d` by [`render_parts`]:
+/// all of it when the part is in the block, so the outline wraps its labels too; otherwise
+/// without its item label and status words. Those move to keep clear of wires, so a label
+/// pushed toward the block never gets an outside part refused as over the outline.
+pub fn outline_box(
+    circuit: &Circuit,
+    c: &Component,
+    d: &Drawing,
+    catalogue: &Catalogue,
+) -> Option<(Point, Point)> {
+    if circuit.in_block.contains(&c.id) {
+        bounds(&d.primitives)
+    } else {
+        body(c, d, catalogue)
+    }
+}
+
+/// The box round a part's drawing without its item label and status words.
 fn body(c: &Component, d: &Drawing, catalogue: &Catalogue) -> Option<Rect> {
     let label = match &c.kind {
-        ComponentKind::Item(item) => item.label.clone(),
+        ComponentKind::Item(item) => item.label.clone().filter(|l| !l.is_empty()),
         _ => None,
     };
-    let words = [label, status_words(c, catalogue)];
-    let kept: Vec<Primitive> = (d.primitives.iter())
-        .filter(
-            |p| !matches!(p, Primitive::Text { text, .. } if words.contains(&Some(text.clone()))),
-        )
-        .cloned()
-        .collect();
+    // [`draw_component`] adds them after the rest, so each is the last text saying so; a port
+    // name or designator reading the same comes earlier.
+    let mut kept = d.primitives.clone();
+    for words in [status_words(c, catalogue), label].into_iter().flatten() {
+        let at = (kept.iter())
+            .rposition(|p| matches!(p, Primitive::Text { text, .. } if *text == words));
+        if let Some(i) = at {
+            kept.remove(i);
+        }
+    }
     bounds(&kept)
 }
 

@@ -887,20 +887,10 @@ fn u_cuts_go_in_from_the_bottom_and_right_edges() {
         }
     }
     let parts = render_parts(&circuit, &catalogue);
-    // As the outline measures parts: without their item labels and status words, which move.
+    // As the outline measures parts: V1, outside, without its status words, which move.
     let at = |id: &str| {
-        let c = circuit.component(id).unwrap();
-        let label = match &c.kind {
-            hydra_core::ComponentKind::Item(item) => item.label.clone(),
-            _ => None,
-        };
-        let skip = [label, hydra_symbols::status_words(c, &catalogue)];
         let (_, d) = parts.iter().find(|(p, _)| p == id).unwrap();
-        let kept: Vec<Primitive> = (d.primitives.iter())
-            .filter(|p| !matches!(p, Primitive::Text { text, .. } if skip.contains(&Some(text.clone()))))
-            .cloned()
-            .collect();
-        bounds(&kept).unwrap()
+        hydra_symbols::outline_box(&circuit, circuit.component(id).unwrap(), d, &catalogue).unwrap()
     };
     let (v, m1) = (at("V1"), at("M1"));
     let corners = block_outline(&circuit, &catalogue).unwrap();
@@ -1889,4 +1879,67 @@ fn moved_names_and_port_labels_keep_off_neighbours() {
     );
     let (_, hi) = text("P", "P");
     assert!(hi[0] < 40.0, "P's label ends at {hi:?}, on N");
+}
+
+#[test]
+fn the_outline_wraps_block_parts_labels_but_not_outside_ones() {
+    let catalogue = catalogue();
+    // X's long label is in the block, so the outline goes round it.
+    let json = r#"{"schema": 5, "name": "l", "components": [
+        {"id": "X", "kind": "item", "symbol": {"kind": "orifice"}, "label": "A LONG LABEL ON A BLOCK PART"}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}}}, "in_block": ["X"]}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let parts = render_parts(&circuit, &catalogue);
+    let label = (parts[0].1.primitives.iter())
+        .find(|p| matches!(p, Primitive::Text { text, .. } if text.starts_with("A LONG")))
+        .unwrap();
+    let (lo, hi) = bounds(std::slice::from_ref(label)).unwrap();
+    let (min, max) = bounds_of(&block_outline(&circuit, &catalogue).unwrap());
+    assert!(
+        min[0] < lo[0] && min[1] < lo[1] && hi[0] < max[0] && hi[1] < max[1],
+        "label {lo:?}-{hi:?} outside the outline {min:?}-{max:?}"
+    );
+    // A part placed above the block whose label, under it, reaches into the block, but not the
+    // part itself, isn't drawn over the outline.
+    let z: hydra_core::Component = serde_json::from_str(
+        r#"{"id": "Z", "kind": "item", "symbol": {"kind": "orifice"}, "label": "X 1.0 mm"}"#,
+    )
+    .unwrap();
+    let place = |y: f32| serde_json::from_value(serde_json::json!({"x": 0, "y": y})).unwrap();
+    let top = min[1];
+    let alone = hydra_symbols::render_component(&z, place(top - 10.0), &catalogue).unwrap();
+    let (zlo, zhi) = bounds(&alone.primitives).unwrap();
+    assert!(
+        zhi[1] > top && zlo[1] < top,
+        "the label reaches in: {zlo:?}-{zhi:?}, top {top}"
+    );
+    assert!(!hydra_symbols::drawn_inside_outline(
+        &circuit,
+        &z,
+        place(top - 10.0),
+        &catalogue
+    ));
+    assert!(hydra_symbols::drawn_inside_outline(
+        &circuit,
+        &z,
+        place(top - 5.0),
+        &catalogue
+    ));
+}
+
+#[test]
+fn an_outline_box_keeps_a_port_name_reading_like_the_label() {
+    let catalogue = catalogue();
+    // G's label is "M", like its port's name, which reaches furthest right of its symbol.
+    let json = r#"{"schema": 5, "name": "g", "components": [
+        {"id": "G", "kind": "item", "symbol": {"kind": "test_point"}, "label": "M"}],
+        "layout": {"components": {"G": {"x": 0, "y": 0}}}}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let parts = render_parts(&circuit, &catalogue);
+    let g = circuit.component("G").unwrap();
+    let (_, hi) = hydra_symbols::outline_box(&circuit, g, &parts[0].1, &catalogue).unwrap();
+    assert_eq!(
+        hi[0], 2.5,
+        "the port name M counts, the label M under it doesn't"
+    );
 }
