@@ -57,12 +57,29 @@ pub(crate) struct End {
     pub any_side: bool,
 }
 
-/// One net's wires as polylines, and whether they are routed clear; `false` when they are the
-/// plain elbows, which ignore the other nets and parts.
+/// One net's wires as polylines, and how they fit among the rest.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Routed {
     pub wires: Vec<Vec<Point>>,
-    pub clear: bool,
+    pub fit: Fit,
+}
+
+/// Whether a net's wires are routed clear, or are the plain elbows, which ignore the other nets
+/// and parts, and why.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Fit {
+    Clear,
+    /// A port has no clean route.
+    Blocked,
+    /// The sheet has too many grid points to route on.
+    TooBig,
+}
+
+#[cfg(test)]
+impl Routed {
+    fn clear(&self) -> bool {
+        self.fit == Fit::Clear
+    }
 }
 
 type Wires = Vec<Routed>;
@@ -103,16 +120,16 @@ pub(crate) fn route(
 
 /// [`route`], worked out afresh.
 fn plan(boxes: &[Rect], texts: &[Rect], traced: &[&[Point]], nets: &[Vec<End>]) -> Wires {
-    let plain = || -> Wires {
+    let plain = |fit: Fit| -> Wires {
         (nets.iter())
             .map(|ends| Routed {
                 wires: elbows(ends),
-                clear: ends.len() < 2,
+                fit: if ends.len() < 2 { Fit::Clear } else { fit },
             })
             .collect()
     };
     if nets.iter().all(|ends| ends.len() < 2) {
-        return plain();
+        return plain(Fit::Clear);
     }
     let exits: Vec<Vec<Vec<Exit>>> = (nets.iter())
         .map(|ends| ends.iter().map(exits).collect())
@@ -165,7 +182,7 @@ fn plan(boxes: &[Rect], texts: &[Rect], traced: &[&[Point]], nets: &[Vec<End>]) 
     };
     let n = g.xs.len() * g.ys.len();
     if n > MAX_NODES {
-        return plain();
+        return plain(Fit::TooBig);
     }
     // Per point, the edge to its right (H) and below it (V) when inside a symbol's clearance,
     // and when over a part's text.
@@ -211,7 +228,7 @@ fn plan(boxes: &[Rect], texts: &[Rect], traced: &[&[Point]], nets: &[Vec<End>]) 
         let Some((first, _)) = ends.split_first() else {
             out.push(Routed {
                 wires: Vec::new(),
-                clear: true,
+                fit: Fit::Clear,
             });
             continue;
         };
@@ -271,7 +288,8 @@ fn plan(boxes: &[Rect], texts: &[Rect], traced: &[&[Point]], nets: &[Vec<End>]) 
             // rules anyway, so later nets needn't keep off them.
             wires = elbows(ends);
         }
-        out.push(Routed { wires, clear });
+        let fit = if clear { Fit::Clear } else { Fit::Blocked };
+        out.push(Routed { wires, fit });
     }
     out
 }
@@ -633,7 +651,7 @@ mod tests {
     /// The routed wires of each net, all of them clear.
     fn clear_wires(boxes: &[Rect], traced: &[&[Point]], nets: &[Vec<End>]) -> Vec<Vec<Vec<Point>>> {
         let routed = route(boxes, &[], traced, nets);
-        assert!(routed.iter().all(|r| r.clear), "{routed:?}");
+        assert!(routed.iter().all(|r| r.clear()), "{routed:?}");
         routed.into_iter().map(|r| r.wires).collect()
     }
 
@@ -797,7 +815,7 @@ mod tests {
                 vec![[0.0, 0.0], [30.0, 0.0]],
                 vec![[30.0, 0.0], [30.0, 20.0]],
             ],
-            clear: false,
+            fit: Fit::Blocked,
         };
         assert_eq!(route(&walled, &[], &[], &nets), [plain]);
         // Those elbows break the rules anyway, so a later net may run where they go.
@@ -808,7 +826,7 @@ mod tests {
         let mut boxes = walled.to_vec();
         boxes.extend(nets[1].iter().map(|e| e.part));
         let got = route(&boxes, &[], &[], &nets);
-        assert!(!got[0].clear && got[1].clear);
+        assert!(!got[0].clear() && got[1].clear());
         assert_eq!(got[1].wires, [vec![[8.0, 0.0], [22.0, 0.0]]]);
     }
 
@@ -843,11 +861,11 @@ mod tests {
         let boxes: Vec<Rect> = nets[0].iter().map(|e| e.part).collect();
         let got = route(&boxes, &[], &[&stairs[..]], &nets);
         assert_eq!(got[0].wires, elbows(&nets[0]));
-        assert!(!got[0].clear);
+        assert_eq!(got[0].fit, Fit::TooBig);
         // A first port nothing can reach: the other port's search runs out, bounded.
         let walled = [([25.0, 15.0], [35.0, 25.0])];
         let nets = vec![vec![marker([30.0, 20.0]), marker([0.0, 0.0])]];
-        assert!(!route(&walled, &[], &[], &nets)[0].clear);
+        assert!(!route(&walled, &[], &[], &nets)[0].clear());
     }
 
     #[test]
@@ -909,7 +927,7 @@ mod tests {
                     let what = format!("{} turned {turns}, mirrored {mirror}", path.display());
                     // Each net routed clear, traced as the router drew it.
                     for (net, r) in crate::automatic_wires(&c, &catalogue) {
-                        if r.clear {
+                        if r.clear() {
                             let wires = r.wires.into_iter().map(Wire::from).collect();
                             c.layout.wires.insert(net, wires);
                             checked += 1;
@@ -948,7 +966,7 @@ mod tests {
                                       "Z": {"x": 30, "y": 20}}}}"#;
         let circuit = Circuit::from_json(json).unwrap();
         let catalogue = Catalogue::default();
-        assert!(!crate::automatic_wires(&circuit, &catalogue)["n"].clear);
+        assert!(!crate::automatic_wires(&circuit, &catalogue)["n"].clear());
         let warnings = crate::wire_warnings(&circuit, &catalogue);
         assert!(
             warnings
@@ -963,5 +981,29 @@ mod tests {
             crate::wire_warnings(&moved, &catalogue),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn the_last_routing_is_reused_only_for_the_same_parts_text_and_wires() {
+        let nets = vec![vec![marker([0.0, 0.0]), marker([50.0, 0.0])]];
+        let boxes: Vec<Rect> = nets[0].iter().map(|e| e.part).collect();
+        let straight = route(&boxes, &[], &[], &nets);
+        assert_eq!(straight[0].wires, [vec![[0.0, 0.0], [50.0, 0.0]]]);
+        // Long text on that line, asked for straight after: routed afresh, round it.
+        let text = [([10.0, -1.0], [40.0, 1.0])];
+        let round = route(&boxes, &text, &[], &nets);
+        assert_ne!(round, straight);
+        assert_eq!(round, plan(&boxes, &text, &[], &nets));
+    }
+
+    #[test]
+    fn a_wire_never_joins_its_net_where_another_nets_wire_crosses() {
+        // Another net's hand-drawn wire runs through the right-hand exit of the first port, so
+        // the straight line into it would end on that wire.
+        let other: &[Point] = &[[3.2, -10.0], [3.2, 10.0]];
+        let nets = vec![vec![marker([0.0, 0.0]), marker([40.0, 0.0])]];
+        let boxes: Vec<Rect> = nets[0].iter().map(|e| e.part).collect();
+        let w = &clear_wires(&boxes, &[other], &nets)[0][0];
+        assert!(!on([3.2, 0.0], w), "{w:?}");
     }
 }

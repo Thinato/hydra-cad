@@ -1213,7 +1213,7 @@ fn automatic_wires(
     // Each part's symbol box, without its text or status frame, and per port its part's box
     // and whether its line may leave to any side, for the automatic wires. They keep clear of
     // each designator where it goes without wires, on a side no port leaves from, so it can
-    // stay there, and off the rest of a part's text where they can. They may cross a status
+    // stay there, and off the rest of a part's text and the room beside it where they can. They may cross a status
     // frame, as they may another net's wire, but not run along it.
     let mut boxes = Vec::new();
     let mut sides = Vec::new();
@@ -1229,11 +1229,12 @@ fn automatic_wires(
                     (p, bounds(std::slice::from_ref(p)))
                 {
                     if *text == c.id {
-                        &mut boxes
+                        boxes.push(b);
                     } else {
-                        &mut texts
+                        // As wide again each side: where the label slides to dodge a wire.
+                        let w = b.1[0] - b.0[0];
+                        texts.push(([b.0[0] - w, b.0[1]], [b.1[0] + w, b.1[1]]));
                     }
-                    .push(b);
                 }
                 if let Primitive::Polyline {
                     points,
@@ -2000,13 +2001,18 @@ pub fn wire_problems(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
 /// of the other lines and parts.
 pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
     let automatic = automatic_wires(circuit, catalogue);
-    let plain: Vec<String> = (automatic.iter())
-        .filter(|(_, r)| !r.clear)
-        .map(|(net, _)| {
-            format!(
+    let mut plain: Vec<String> = (automatic.iter())
+        .filter_map(|(net, r)| match r.fit {
+            route::Fit::Clear => None,
+            route::Fit::Blocked => Some(format!(
                 "net {net} couldn't be routed clear of the other lines and parts, so it is drawn \
-                 with plain elbows that may cross them; trace its wires"
-            )
+                 with plain elbows that may run along or cross other nets' lines; trace its wires"
+            )),
+            route::Fit::TooBig => Some(format!(
+                "net {net} is drawn with plain elbows that may run along or cross other nets' \
+                 lines, as the sheet is too big or holds too many traced points to route on; \
+                 trace its wires"
+            )),
         })
         .collect();
     let Some(Drawn {
@@ -2016,6 +2022,11 @@ pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
         outline,
     }) = drawn_nets(circuit, catalogue)
     else {
+        if plain.len() > MAX_LISTED {
+            let more = plain.len() - (MAX_LISTED - 1);
+            plain.truncate(MAX_LISTED - 1);
+            plain.push(format!("and {more} more wire warnings like these"));
+        }
         return plain;
     };
     // Each part's symbol box: no designator, status words or status frame. Without its text,

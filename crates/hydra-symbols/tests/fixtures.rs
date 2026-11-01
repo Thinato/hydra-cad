@@ -1523,27 +1523,76 @@ fn a_wire_along_an_untraced_nets_elbow_is_a_warning() {
     assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
     assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
     // A net drawn with the plain elbows, which ignore the other lines: R sits under Z's
-    // symbol. A traced wire along those elbows is warned about, and so is the net.
-    let json = r#"{"schema": 5, "name": "w", "components": [
-        {"id": "Q", "kind": "port", "label": "Q"}, {"id": "R", "kind": "port", "label": "R"},
-        {"id": "S", "kind": "port", "label": "S"}, {"id": "U", "kind": "port", "label": "U"},
-        {"id": "Z", "kind": "item", "symbol": {"kind": "orifice"}}],
-        "nets": [{"id": "n", "ports": [{"component": "Q", "port": "port"}, {"component": "R", "port": "port"}]},
-                 {"id": "m", "ports": [{"component": "S", "port": "port"}, {"component": "U", "port": "port"}]}],
-        "layout": {"components": {"Q": {"x": 0, "y": 0}, "R": {"x": 30, "y": 20},
-                                  "S": {"x": 5, "y": -10}, "U": {"x": 25, "y": -10},
-                                  "Z": {"x": 30, "y": 20}},
-                   "wires": {"m": [[[5, -10], [5, 0], [25, 0], [25, -10]]]}}}"#;
-    let c = Circuit::from_json(json).unwrap();
-    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
+    // symbol, so n is drawn as a trunk from Q at 0, 0 to 30, 0 and down to R at 30, 20. Net m
+    // runs from S to U along `wire`.
+    let plain = |s: [f32; 2], u: [f32; 2], wire: &str| {
+        let json = format!(
+            r#"{{"schema": 5, "name": "w", "components": [
+            {{"id": "Q", "kind": "port", "label": "Q"}}, {{"id": "R", "kind": "port", "label": "R"}},
+            {{"id": "S", "kind": "port", "label": "S"}}, {{"id": "U", "kind": "port", "label": "U"}},
+            {{"id": "Z", "kind": "item", "symbol": {{"kind": "orifice"}}}}],
+            "nets": [{{"id": "n", "ports": [{{"component": "Q", "port": "port"}}, {{"component": "R", "port": "port"}}]}},
+                     {{"id": "m", "ports": [{{"component": "S", "port": "port"}}, {{"component": "U", "port": "port"}}]}}],
+            "layout": {{"components": {{"Q": {{"x": 0, "y": 0}}, "R": {{"x": 30, "y": 20}},
+                                      "S": {{"x": {}, "y": {}}}, "U": {{"x": {}, "y": {}}},
+                                      "Z": {{"x": 30, "y": 20}}}},
+                       "wires": {{"m": [{wire}]}}}}}}"#,
+            s[0], s[1], u[0], u[1]
+        );
+        let c = Circuit::from_json(&json).unwrap();
+        (wire_problems(&c, &catalogue), wire_warnings(&c, &catalogue))
+    };
+    let elbows = "net n couldn't be routed clear of the other lines and parts, so it is drawn \
+                  with plain elbows that may run along or cross other nets' lines; trace its wires";
+    // Along the trunk: warned about, and so is the net.
     assert_eq!(
-        wire_warnings(&c, &catalogue),
-        [
-            "wire 1 of net m and the automatic line of net n, which has no wires, touch at 5, 0; \
-             trace net n as the drawing routes it, or move the wire",
-            "net n couldn't be routed clear of the other lines and parts, so it is drawn with \
-             plain elbows that may cross them; trace its wires"
-        ]
+        plain(
+            [5.0, -10.0],
+            [25.0, -10.0],
+            "[[5, -10], [5, 0], [25, 0], [25, -10]]"
+        ),
+        (
+            vec![],
+            vec![
+                "wire 1 of net m and the automatic line of net n, which has no wires, touch at \
+                 5, 0; trace net n as the drawing routes it, or move the wire"
+                    .to_string(),
+                elbows.to_string()
+            ]
+        )
+    );
+    // Across the trunk: fine, as between traced nets.
+    assert_eq!(
+        plain([15.0, -10.0], [15.0, 10.0], "[[15, -10], [15, 10]]"),
+        (vec![], vec![elbows.to_string()])
+    );
+    // Over the untraced net's own port Q, where its line starts: a problem, and through Q's
+    // circle, but not along the line too.
+    assert_eq!(
+        plain([0.0, -10.0], [0.0, 10.0], "[[0, -10], [0, 10]]"),
+        (
+            vec![
+                "wire 1 of net m passes over port Q.port, which is on net n; route it around"
+                    .to_string()
+            ],
+            vec![
+                "a wire of net m runs through Q; check its route against the drawing".to_string(),
+                elbows.to_string()
+            ]
+        )
+    );
+    // The line's corner at 30, 0 on a traced wire that runs on past it both ways.
+    assert_eq!(
+        plain([25.0, -5.0], [35.0, 5.0], "[[25, -5], [35, 5]]"),
+        (
+            vec![],
+            vec![
+                "wire 1 of net m and the automatic line of net n, which has no wires, touch at \
+                 30, 0; trace net n as the drawing routes it, or move the wire"
+                    .to_string(),
+                elbows.to_string()
+            ]
+        )
     );
 }
 
@@ -1675,14 +1724,11 @@ fn golden(name: &str) -> Circuit {
 #[test]
 fn labels_keep_clear_of_wires() {
     let catalogue = catalogue();
-    // Status words, item labels, port names and port labels. In the imported manifold, M1's
-    // wire leaves its port downwards and X1 stands upright on its wires. 4.1 has ports top and
-    // bottom whose lines cross both rows its status words can take, and the lines routed
-    // beside it leave no gap to slide them into; X2's label likewise sits between its own
-    // line and the line wrapped round it into its A port from below.
+    // Status words, item labels, port names and port labels. In the imported manifold the
+    // automatic wires keep off each label and the room it slides into, so every one is clear.
     assert_eq!(
         texts_on_wires(&golden("demo-import-manifold"), &catalogue),
-        ["MISSING DEMO-PS10-2N-24DC", "X 1.0 mm"]
+        Vec::<String>::new()
     );
     assert_eq!(
         texts_on_wires(&golden("demo-manifold"), &catalogue),
