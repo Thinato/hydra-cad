@@ -1520,9 +1520,13 @@ pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
             let drawing = render_component(c, place.unwrap_or_default(), catalogue)?;
             let outward = (drawing.ports.iter())
                 .filter_map(|&(_, p)| {
+                    // The line ending at the port, and the point before its end.
                     let q = drawing.primitives.iter().find_map(|w| match w {
-                        Primitive::Polyline { points, .. } => leaving(points.iter().copied(), p)
-                            .or_else(|| leaving(points.iter().rev().copied(), p)),
+                        Primitive::Polyline { points: l, .. } if l.len() >= 2 => {
+                            let n = l.len();
+                            (near(l[0], p).then_some(l[1]))
+                                .or_else(|| near(l[n - 1], p).then_some(l[n - 2]))
+                        }
                         _ => None,
                     })?;
                     Some((p, [p[0] - q[0], p[1] - q[1]]))

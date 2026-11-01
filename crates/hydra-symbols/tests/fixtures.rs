@@ -1238,16 +1238,18 @@ fn a_wire_along_the_outline_or_across_a_label_is_a_warning() {
              outline"
         ]
     );
-    // T inside the block, so its label is above it, where its own wire leaves.
+    // A wire past FC2's left, with its ports on the other sides: its designator has no clear
+    // side, so it stays on the left, over the wire.
     let mut c = motors();
-    c.layout.components.get_mut("T").unwrap().y = 110.0;
-    c.layout.wires.get_mut("n-t").unwrap()[0] =
-        vec![[20.0, 110.0], [20.0, 2.0], [230.0, 2.0], [230.0, 72.0]].into();
-    assert_eq!(
-        wire_warnings(&c, &catalogue),
-        [
-            "wire 1 of net n-t crosses the label \"T\" of T; move the wire or T so the label is \
-             clear"
-        ]
-    );
+    c.layout
+        .wires
+        .get_mut("n-1")
+        .unwrap()
+        .push(vec![[30.0, 60.0], [100.0, 60.0]].into());
+    let label = "wire 2 of net n-1 crosses the label \"FC2\" of FC2; move the wire or FC2 so the \
+                 label is clear";
+    let w = wire_warnings(&c, &catalogue);
+    assert!(w.contains(&label.to_string()), "{w:?}");
+    // Only the designator: the wire also crosses FC1's status words, which aren't checked.
+    assert_eq!(w.iter().filter(|w| w.contains("label")).count(), 1, "{w:?}");
 }
