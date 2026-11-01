@@ -1102,14 +1102,16 @@ fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
         )
     })?;
     // An outside part with block parts on all four sides is more likely left out of the block
-    // by mistake than standing in a notch, so it is flagged instead.
+    // by mistake than standing in a notch, so it is flagged instead. A side counts when a block
+    // part's centre is beyond the outside part's edge, so a part a little off the grid still
+    // fits a notch.
     let centre = |r: Rect| [(r.0[0] + r.1[0]) / 2.0, (r.0[1] + r.1[1]) / 2.0];
     let surrounded = |o: Rect| {
-        let o = centre(o);
         let side = |axis: usize, sign: f32| {
+            let edge = if sign > 0.0 { o.1[axis] } else { o.0[axis] };
             members
                 .iter()
-                .any(|&m| (centre(m)[axis] - o[axis]) * sign > 0.0)
+                .any(|&m| (centre(m)[axis] - edge) * sign > 0.0)
         };
         side(0, 1.0) && side(0, -1.0) && side(1, 1.0) && side(1, -1.0)
     };

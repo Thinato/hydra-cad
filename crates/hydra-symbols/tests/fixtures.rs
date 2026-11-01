@@ -683,6 +683,32 @@ fn notches_never_meet_and_surrounded_parts_stay_flagged() {
 }
 
 #[test]
+fn an_outside_part_off_the_grid_still_gets_its_notch() {
+    let catalogue = catalogue();
+    // Block valves in an L, and a motor in its notch a few millimetres off their grid: the
+    // block parts' centres lie past its middle on every side, but not past its edges.
+    let mut circuit = motors();
+    circuit
+        .components
+        .retain(|c| ["FC1", "RV1", "V1", "HM1"].contains(&c.id.as_str()));
+    circuit.nets.clear();
+    circuit.layout.wires.clear();
+    circuit.in_block = ["FC1", "RV1", "V1"].map(String::from).into();
+    for (id, x, y) in [
+        ("FC1", 40.0, 60.0),
+        ("RV1", 40.0, 110.0),
+        ("V1", 100.0, 110.0),
+        ("HM1", 90.0, 64.0),
+    ] {
+        let p = circuit.layout.components.get_mut(id).unwrap();
+        (p.x, p.y) = (x, y);
+    }
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+    assert_eq!(hydra_symbols::notched_parts(&circuit, &catalogue), ["HM1"]);
+    assert_eq!(block_outline(&circuit, &catalogue).unwrap().len(), 6);
+}
+
+#[test]
 fn block_port_labels_sit_outside_and_the_outline_breaks_round_ports() {
     let catalogue = catalogue();
     let json = r#"{"schema": 4, "name": "p", "components": [
