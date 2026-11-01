@@ -582,3 +582,83 @@ async fn the_queue_is_oldest_first_and_oversized_proposals_are_refused(pool: PgP
     let problems = invalid(submit_proposal(&pool, &big).await);
     assert!(problems[0].contains("at most 256 KiB"), "{problems:?}");
 }
+
+/// The id of the pending proposal that refused `r`, after checking the refusal's message.
+fn already_pending<T: std::fmt::Debug>(r: Result<T, Error>) -> String {
+    let e = r.expect_err("expected AlreadyPending");
+    let Error::AlreadyPending { id } = &e else {
+        panic!("expected AlreadyPending, got {e:?}");
+    };
+    assert_eq!(
+        e.to_string(),
+        format!("proposal {id} for the same valve type version is still waiting for review")
+    );
+    id.clone()
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn one_pending_proposal_per_valve_type_version(pool: PgPool) {
+    imported(&pool).await;
+    let first = submit_proposal(&pool, &update()).await.unwrap();
+    let mut other = update();
+    other.notes = "a second try".into();
+    assert_eq!(already_pending(submit_proposal(&pool, &other).await), first);
+    assert_eq!(proposal_count(&pool).await, 1);
+
+    // Another valve type is unaffected.
+    submit_proposal(&pool, &new_key()).await.unwrap();
+
+    // Once rejected, a new one is queued.
+    reject_proposal(&pool, &first, "wrong seals").await.unwrap();
+    let second = submit_proposal(&pool, &other).await.unwrap();
+
+    // A newer base version is a different proposal; the stale one stays reviewable.
+    let mut v = update().valve_type;
+    v.code = "4-2-S-X".into();
+    save_valve_type(&pool, &v).await.unwrap();
+    let mut newer = update();
+    newer.valve_type = v;
+    newer.valve_type.version = 2;
+    submit_proposal(&pool, &newer).await.unwrap();
+    assert_eq!(
+        get_proposal(&pool, &second).await.unwrap().status,
+        ProposalStatus::Pending
+    );
+    assert_eq!(proposal_count(&pool).await, 4);
+}
+
+/// Two submissions racing for the same valve type version: one is queued, one refused.
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn concurrent_duplicates_queue_only_one(pool: PgPool) {
+    imported(&pool).await;
+    // Hold both submitters at the start line, then release them together.
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('hydra proposal: vt-demo-4-2'))")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let submit = || {
+        let pool = pool.clone();
+        tokio::spawn(async move { submit_proposal(&pool, &update()).await })
+    };
+    let (a, b) = (submit(), submit());
+    let waiting = "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+                   AND database = (SELECT oid FROM pg_database WHERE datname = current_database())";
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while sqlx::query_scalar::<_, i64>(waiting)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        < 2
+        && std::time::Instant::now() < deadline
+    {
+        tokio::task::yield_now().await;
+    }
+    tx.commit().await.unwrap();
+    let (a, b) = (a.await.unwrap(), b.await.unwrap());
+    let (queued, refused) = if a.is_ok() { (a, b) } else { (b, a) };
+    assert_eq!(already_pending(refused), queued.unwrap());
+    assert_eq!(proposal_count(&pool).await, 1);
+}

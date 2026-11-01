@@ -11,7 +11,7 @@ use hydra_core::{
     ValveStatus, next_id, stand_ins,
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
-use hydra_symbols::{Drawing, bounds, outline_issues, render_circuit, render_component};
+use hydra_symbols::{Drawing, bounds, outline_issues, render_circuit, render_parts};
 
 use crate::catalogue::Shared;
 use crate::db::Request;
@@ -785,7 +785,8 @@ impl SchematicEditor {
             if ui
                 .checkbox(&mut inside, "In block")
                 .on_hover_text(
-                    "Inside the manifold block: the schematic draws the block's outline around it",
+                    "Inside the manifold block: the schematic draws the block's outline around it, \
+                     and a valve in the block is expected on a face of the 3D block",
                 )
                 .changed()
             {
@@ -1401,23 +1402,6 @@ fn latest_drawable(catalogue: &Catalogue) -> Vec<&hydra_core::ValveType> {
     }
     latest.sort_by_key(|v| (&v.series, &v.code));
     latest
-}
-
-/// Each component's own drawing, for hit testing.
-fn render_parts(circuit: &Circuit, catalogue: &Catalogue) -> Vec<(String, Drawing)> {
-    circuit
-        .components
-        .iter()
-        .filter_map(|c| {
-            let place = circuit
-                .layout
-                .components
-                .get(&c.id)
-                .copied()
-                .unwrap_or_default();
-            render_component(c, place, catalogue).map(|d| (c.id.clone(), d))
-        })
-        .collect()
 }
 
 /// The topmost part whose drawing covers `p`, with a millimetre of slack.
