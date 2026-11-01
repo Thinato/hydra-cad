@@ -1,3 +1,5 @@
 [toolchain]
-channel = "stable"
+# Pinned so local builds and CI run the same clippy and rustfmt; a newer stable can add
+# lints that fail `-D warnings`. Bump it in its own PR, after fixing what the new clippy finds.
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]

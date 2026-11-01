@@ -83,7 +83,9 @@ fn load(bytes: &[u8]) -> Result<Mesh, String> {
             }
             idx.truncate(idx.len() / 3 * 3);
             if flip {
-                idx.chunks_exact_mut(3).for_each(|t| t.swap(1, 2));
+                for t in idx.as_chunks_mut::<3>().0 {
+                    t.swap(1, 2);
+                }
             }
             if mesh.indices.len() + idx.len() > 3 * MAX_TRIANGLES {
                 return Err(too_detailed());
@@ -105,7 +107,7 @@ fn load(bytes: &[u8]) -> Result<Mesh, String> {
                 }
                 None => {
                     // Flat shading: one vertex per triangle corner.
-                    for t in idx.chunks_exact(3) {
+                    for t in idx.as_chunks::<3>().0 {
                         let [a, b, c] = [0, 1, 2].map(|k| pos[t[k] as usize]);
                         let n = (b - a).cross(c - a).normalize_or_zero().to_array();
                         let i = mesh.positions.len() as u32;
@@ -221,7 +223,7 @@ impl Profile {
         let index = |z: f64| (((z - lo.z) / slice) as usize).min(Self::SLICES - 1);
         // A triangle covers the slices between its lowest and highest corner, out to its
         // farthest corner: right for the cylinders and flat steps turned parts are made of.
-        for t in indices.chunks_exact(3) {
+        for t in indices.as_chunks::<3>().0 {
             let [a, b, c] = [0, 1, 2].map(|k| profile.pts[t[k] as usize]);
             let r = profile.r(&a).max(profile.r(&b)).max(profile.r(&c));
             let (bottom, top) = (a.z.min(b.z).min(c.z), a.z.max(b.z).max(c.z));
