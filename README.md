@@ -148,6 +148,7 @@ In the Schematic tab:
 - Place a valve type from the toolbar (or "Place in schematic" in the Catalogue tab), or add an external port such as P or A1.
 - Drag a part to move it; it snaps to a 2.5 mm grid. R rotates the selected part, M mirrors it (e.g. a relief valve with its spring on the other side), Delete removes it.
 - Drag from a valve port to another port to connect them; Shift-drag starts a connection from an external port. Right-click a port to disconnect it.
+- Nets are drawn with automatic elbows until you draw their wires. Press **Draw wires** (or W), click a port or a drawn wire to start, click each corner (segments run level or upright on the grid) and finish on a port or wire; a wire ending on another net, or on a loose port, joins it to the wire's net. Esc or right-click cancels the wire. Once a net has a drawn wire its elbows are gone, so the validation list warns about every port still to reach until the net is complete. Click a drawn wire to select it: Delete removes it, **Draw net automatically** drops all of its net's wires. Moving or rotating a part drops the drawn wires of its nets.
 - Undo and redo with Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z (or the buttons). Validation problems are listed above the sheet.
 - Drag the empty sheet to pan, scroll to zoom, double-click to fit.
 - Save writes a new revision; nothing is overwritten. If someone else saved first, you're offered a reload or a save as copy. History lists every revision with a preview, and Restore makes an old revision the newest one, so a restore can itself be undone.

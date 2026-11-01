@@ -2,8 +2,8 @@
 //! undo/redo and a readable log of what changed.
 
 use crate::{
-    Assembly, CatalogueRef, Circuit, Component, ComponentKind, ExtraBomLine, Net, Placement,
-    PortRef,
+    Assembly, CatalogueRef, Circuit, Component, ComponentKind, ExtraBomLine,
+    MAX_IMPORT_WIRE_POINTS, MAX_WIRE_POINTS, MAX_WIRES_PER_NET, Net, Placement, PortRef,
 };
 
 // Commands are few and short-lived; boxing `Add` would only add noise at every call site.
@@ -66,6 +66,34 @@ pub enum Command {
     RemoveExtraLine { index: usize },
     /// Replace an imported circuit's notes. Blank notes are dropped.
     SetNotes { notes: Vec<String> },
+    /// Draw a wire through `points` (sheet mm, the first on `from`, the last on `to`), joining
+    /// the ends' nets if they differ. The nets' drawn wires are kept.
+    DrawWire {
+        from: WireEnd,
+        to: WireEnd,
+        points: Vec<[f32; 2]>,
+    },
+    /// Delete drawn wire `index` of a net, counting from 0. A net left with no drawn wire is
+    /// drawn automatically again.
+    RemoveWire { net: String, index: usize },
+    /// Drop a net's drawn wires, so it is drawn with automatic elbows again.
+    AutoWires { net: String },
+}
+
+/// Where a drawn wire starts or ends: on a port, or on a drawn wire of a net.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WireEnd {
+    Port(PortRef),
+    Net(String),
+}
+
+impl std::fmt::Display for WireEnd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WireEnd::Port(p) => write!(f, "{p}"),
+            WireEnd::Net(n) => write!(f, "net {n}"),
+        }
+    }
 }
 
 impl Command {
@@ -104,6 +132,9 @@ impl Command {
             Command::SetExtraLine { index, .. } => format!("Edit extra line {}", index + 1),
             Command::RemoveExtraLine { index } => format!("Delete extra line {}", index + 1),
             Command::SetNotes { .. } => "Edit the import notes".into(),
+            Command::DrawWire { from, to, .. } => format!("Draw a wire from {from} to {to}"),
+            Command::RemoveWire { net, index } => format!("Delete wire {} of net {net}", index + 1),
+            Command::AutoWires { net } => format!("Draw net {net} automatically"),
         }
     }
 
@@ -397,6 +428,58 @@ impl Command {
                     return Err("the import notes are unchanged".into());
                 }
                 import.notes = notes;
+            }
+            Command::DrawWire { from, to, points } => {
+                if points.len() < 2 {
+                    return Err("a wire runs between at least 2 points".into());
+                }
+                let port = |end: &WireEnd| match end {
+                    WireEnd::Port(p) => Ok(p.clone()),
+                    WireEnd::Net(id) => (circuit.nets.iter())
+                        .find(|n| &n.id == id)
+                        .and_then(|n| n.ports.first().cloned())
+                        .ok_or_else(|| format!("net {id} is not in the circuit")),
+                };
+                let (a, b) = (port(from)?, port(to)?);
+                let net_of = |c: &Circuit, p: &PortRef| {
+                    (c.nets.iter().find(|n| n.ports.contains(p))).map(|n| n.id.clone())
+                };
+                let (na, nb) = (net_of(circuit, &a), net_of(circuit, &b));
+                // Connecting drops the joined nets' drawn wires, so keep them to put back.
+                let mut ids = vec![na.clone(), nb.clone()];
+                ids.dedup();
+                let mut wires: Vec<Vec<[f32; 2]>> = (ids.iter().flatten())
+                    .flat_map(|id| circuit.layout.wires.get(id).cloned().unwrap_or_default())
+                    .collect();
+                wires.push(points.clone());
+                let mut c = circuit.clone();
+                if na.is_none() || na != nb {
+                    Command::Connect { a: a.clone(), b }.apply(&mut c)?;
+                }
+                let net = net_of(&c, &a).expect("connected");
+                c.layout.wires.insert(net, wires);
+                if !c.layout.wires_are_bounded() {
+                    return Err(format!(
+                        "that would be more wires than Hydra checks (at most \
+                         {MAX_WIRES_PER_NET} wires a net, {MAX_WIRE_POINTS} points a wire and \
+                         {MAX_IMPORT_WIRE_POINTS} points in all); delete or join some wires"
+                    ));
+                }
+                *circuit = c;
+            }
+            Command::RemoveWire { net, index } => {
+                let wires = (circuit.layout.wires.get_mut(net))
+                    .filter(|w| *index < w.len())
+                    .ok_or_else(|| format!("net {net} has no drawn wire {}", index + 1))?;
+                wires.remove(*index);
+                if wires.is_empty() {
+                    circuit.layout.wires.remove(net);
+                }
+            }
+            Command::AutoWires { net } => {
+                if circuit.layout.wires.remove(net).is_none() {
+                    return Err(format!("net {net} is already drawn automatically"));
+                }
             }
         }
         Ok(())

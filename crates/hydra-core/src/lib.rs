@@ -21,7 +21,7 @@ pub use circuit::{
     LoadError, Net, PORT_PIN, Placement, PortRef, Requested, Rotation, SCHEMA_VERSION, Severity,
     Valve,
 };
-pub use edit::{Command, Document, next_id};
+pub use edit::{Command, Document, WireEnd, next_id};
 pub use import::{
     MAX_CIRCUIT_NAME, MAX_IMPORT_COMPONENTS, MAX_IMPORT_EXTRA_LINES, MAX_IMPORT_TEXT,
     MAX_IMPORT_WIRE_POINTS, MAX_LISTED, MAX_SHEET_MM, MAX_WIRE_POINTS, MAX_WIRES_PER_NET,
