@@ -495,6 +495,22 @@ fn junction_dots_mark_where_three_lines_meet() {
     n_t.push(vec![[20.0, 50.0], [20.0, 2.0], [230.0, 2.0], [230.0, 72.0]]);
     assert!(!dot_at(&c, [20.0, 50.0]));
     assert_eq!(wire_problems(&c, &catalogue()), Vec::<String>::new());
+    // At a port, the port is one of the lines: M1.M, at the end of n-p's trunk.
+    let mut c = motors();
+    let m = [255.0, 104.8];
+    assert!(!dot_at(&c, m), "one wire ending at M1.M");
+    c.layout.wires.get_mut("n-p").unwrap()[0] = vec![
+        [0.0, 110.0],
+        [0.0, 106.0],
+        [255.0, 106.0],
+        [255.0, 100.0],
+        [265.0, 100.0],
+    ];
+    assert!(dot_at(&c, m), "a wire passing over M1.M");
+    let n_p = c.layout.wires.get_mut("n-p").unwrap();
+    n_p[0] = vec![[0.0, 110.0], [0.0, 106.0], [255.0, 106.0], [255.0, 104.8]];
+    n_p.push(vec![[255.0, 104.8], [255.0, 100.0], [265.0, 100.0]]);
+    assert!(dot_at(&c, m), "two wire ends meeting at M1.M");
 }
 
 #[test]
@@ -554,26 +570,23 @@ fn drawn_wires_must_keep_off_other_nets() {
         problems(&c),
         [
             "wire 9 of net n-t passes over port HM1.A, which is on net n-1; route it around",
-            "wire 1 of net n-1 touches wire 9 of net n-t at 40, 23; a wire may cross another \
-             net's wire, but never end, turn or run along it",
+            "wire 9 of net n-t and wire 1 of net n-1 touch at 40, 23; a wire may cross another \
+             net's wire, but never end, turn or run along it, so move whichever differs from the \
+             drawing",
         ]
     );
     // Through RV1, over RV1.P, on n-p, and along n-p's branch to it.
     let mut c = motors();
     c.layout.wires.get_mut("n-t").unwrap()[7] = vec![[20.0, 100.0], [185.0, 100.0], [185.0, 2.0]];
-    let p = problems(&c);
-    assert!(
-        p.contains(
-            &"wire 8 of net n-t passes over port RV1.P, which is on net n-p; route it \
-             around"
-                .to_string()
-        ),
-        "{p:?}"
-    );
-    assert!(
-        p.iter()
-            .any(|p| p.starts_with("wire 5 of net n-p touches wire 8 of net n-t at 185, 88")),
-        "{p:?}"
+    // The touch is reported once, not from both wires.
+    assert_eq!(
+        problems(&c),
+        [
+            "wire 5 of net n-p and wire 8 of net n-t touch at 185, 88; a wire may cross another \
+             net's wire, but never end, turn or run along it, so move whichever differs from the \
+             drawing",
+            "wire 8 of net n-t passes over port RV1.P, which is on net n-p; route it around",
+        ]
     );
     assert!(wire_warnings(&c, &catalogue).contains(
         &"a wire of net n-t runs through RV1; check its route against the drawing".to_string()

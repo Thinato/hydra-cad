@@ -801,14 +801,19 @@ pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
     for net in &circuit.nets {
         if let Some(drawn) = circuit.layout.wires.get(&net.id) {
             wires.extend(drawn.iter().map(|w| open(w.clone())));
-            // Junction dots where three or more lines meet.
+            // Junction dots where three or more lines meet: at wire ends, and at ports, which
+            // a wire may pass over (a test point on a straight line).
             let ports: Vec<Point> = (net.ports.iter())
                 .filter_map(|p| anchor(&p.component, &p.port))
                 .collect();
             let mut dots: Vec<Point> = Vec::new();
-            for end in drawn.iter().flat_map(|w| ends(w)) {
-                if !dots.iter().any(|d| near(*d, end)) && arms(end, drawn, &ports) >= 3 {
-                    dots.push(end);
+            for at in drawn
+                .iter()
+                .flat_map(|w| ends(w))
+                .chain(ports.iter().copied())
+            {
+                if !dots.iter().any(|d| near(*d, at)) && arms(at, drawn, &ports) >= 3 {
+                    dots.push(at);
                 }
             }
             wires.extend(dots.into_iter().map(|center| Primitive::Circle {
@@ -998,7 +1003,7 @@ pub fn wire_problems(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
         return Vec::new();
     };
     let mut problems = Vec::new();
-    for d in &nets {
+    for (a, d) in nets.iter().enumerate() {
         let (net, wires, ports) = (&d.net.id, d.wires, &d.ports);
         let at = |(k, [x, y]): &(String, Point)| format!("{k} at {x}, {y}");
         for (i, w) in wires.iter().enumerate() {
@@ -1083,12 +1088,16 @@ pub fn wire_problems(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
                     "{what} passes over port {key}, which is {on}; route it around"
                 ));
             }
-            for o in nets.iter().filter(|o| o.net.id != *net) {
+            // Each pair of nets once, from the first of the two.
+            for o in &nets[a + 1..] {
                 for (j, ow) in o.wires.iter().enumerate() {
-                    if let Some([x, y]) = w.iter().copied().find(|p| on_wire(*p, ow)) {
+                    let touch = (w.iter().copied().find(|p| on_wire(*p, ow)))
+                        .or_else(|| ow.iter().copied().find(|p| on_wire(*p, w)));
+                    if let Some([x, y]) = touch {
                         problems.push(format!(
-                            "{what} touches wire {} of net {} at {x}, {y}; a wire may cross \
-                             another net's wire, but never end, turn or run along it",
+                            "{what} and wire {} of net {} touch at {x}, {y}; a wire may cross \
+                             another net's wire, but never end, turn or run along it, so move \
+                             whichever differs from the drawing",
                             j + 1,
                             o.net.id
                         ));
@@ -1111,21 +1120,22 @@ pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
     let Some((nets, _)) = drawn_nets(circuit, catalogue) else {
         return Vec::new();
     };
-    let mut warnings = Vec::new();
-    for d in &nets {
-        for c in &circuit.components {
+    // Each part's symbol box: no designator, status words or status frame.
+    let parts: Vec<(&Component, Point, Point)> = (circuit.components.iter())
+        .filter_map(|c| {
             let place = circuit.layout.components.get(&c.id).copied();
-            let Some(drawing) = render_component(c, place.unwrap_or_default(), catalogue) else {
-                continue;
-            };
-            // The symbol itself: no designator, status words or status frame.
+            let drawing = render_component(c, place.unwrap_or_default(), catalogue)?;
             let symbol: Vec<Primitive> = (drawing.primitives.into_iter())
                 .filter(|p| !matches!(p, Primitive::Text { .. }))
                 .filter(|p| !matches!(p, Primitive::Polyline { dashed: true, .. }))
                 .collect();
-            let Some((lo, hi)) = bounds(&symbol) else {
-                continue;
-            };
+            let (lo, hi) = bounds(&symbol)?;
+            Some((c, lo, hi))
+        })
+        .collect();
+    let mut warnings = Vec::new();
+    for d in &nets {
+        for &(c, lo, hi) in &parts {
             // A segment into one of the part's ports on this net enters its symbol rightly.
             // (`ports` lines up with the net's ports, as nets with a port not drawn are skipped.)
             let own: Vec<Point> = (d.net.ports.iter().zip(&d.ports))
