@@ -588,18 +588,21 @@ mod tests {
         assert!(h.query_by_label("V2 is not mounted on the block").is_none());
 
         let outside = "V2 is mounted on the block but drawn outside it; tick In block in the schematic, or take it off its face in the 3D tab";
+        // Mounting V2 puts it in the block too.
         choose(&mut h, 1, "V2");
-        assert!(h.query_by_label(outside).is_some());
-        // Ticking "In block" in the schematic settles it.
+        assert!(h.state().2.circuit().in_block.contains("V2"));
+        assert!(h.query_by_label(outside).is_none());
+        // Unticking "In block" in the schematic keeps the mount and warns.
         h.state_mut()
             .2
             .edit(Command::SetInBlock {
                 id: "V2".into(),
-                inside: true,
+                inside: false,
             })
             .unwrap();
         h.run();
-        assert!(h.query_by_label(outside).is_none());
+        assert!(h.query_by_label(outside).is_some());
+        assert_eq!(mounts(&h), [("V2".into(), "F1".into())]);
 
         // With nothing in the block, the tab says why it can't check the mounts.
         let mut c = demo();
