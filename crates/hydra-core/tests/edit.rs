@@ -378,3 +378,202 @@ fn mounting_valves_on_a_block() {
     assert_eq!(d.circuit.assembly, None);
     assert_eq!(d.undo_label(), Some("Remove the block"));
 }
+
+fn item(id: &str) -> Command {
+    Command::Add {
+        component: Component {
+            id: id.into(),
+            kind: ComponentKind::Item(Item {
+                symbol: SymbolDef::TestPoint,
+                label: None,
+                code: None,
+                description: None,
+                position: None,
+            }),
+        },
+        placement: Placement::default(),
+    }
+}
+
+fn details(id: &str, code: &str, description: &str) -> Command {
+    Command::SetItemDetails {
+        id: id.into(),
+        code: code.into(),
+        description: description.into(),
+        position: " 14 ".into(),
+    }
+}
+
+#[test]
+fn item_details_are_set_trimmed_cleared_and_undone() {
+    let mut d = doc(&["P"]);
+    d.apply(item("M1")).unwrap();
+    d.apply(details("M1", " DEMO-MP-04 ", "Test point"))
+        .unwrap();
+    let get = |d: &Document| match &d.circuit.component("M1").unwrap().kind {
+        ComponentKind::Item(i) => (i.code.clone(), i.description.clone(), i.position.clone()),
+        _ => unreachable!(),
+    };
+    let set = (
+        Some("DEMO-MP-04".to_string()),
+        Some("Test point".to_string()),
+        Some("14".to_string()),
+    );
+    assert_eq!(get(&d), set);
+    assert_eq!(d.undo_label(), Some("Edit M1's parts list entry"));
+    // The item now shows in the bill of materials.
+    let bom = d.circuit.bom(&Catalogue::default());
+    assert_eq!(bom[0].part_number.as_deref(), Some("DEMO-MP-04"));
+    assert_eq!(bom[0].position.as_deref(), Some("14"));
+
+    // Blank text clears a field.
+    d.apply(details("M1", "DEMO-MP-04", "  ")).unwrap();
+    assert_eq!(get(&d).1, None);
+    d.undo();
+    assert_eq!(get(&d), set);
+
+    // Refused: no change, not an item, not there.
+    let before = d.circuit.clone();
+    let e = d
+        .apply(details("M1", "DEMO-MP-04 ", "Test point"))
+        .unwrap_err();
+    assert_eq!(e, "nothing changed on M1");
+    let e = d.apply(details("P", "X", "")).unwrap_err();
+    assert_eq!(e, "P is not an item in the circuit");
+    assert!(d.apply(details("Z", "X", "")).is_err());
+    assert_eq!(d.circuit, before);
+}
+
+fn line(position: &str, quantity: u32, code: &str, description: &str) -> ExtraBomLine {
+    let opt = |t: &str| Some(t.to_string());
+    ExtraBomLine {
+        position: opt(position),
+        quantity,
+        code: opt(code),
+        description: opt(description),
+    }
+}
+
+#[test]
+fn extra_lines_are_added_edited_removed_and_undone() {
+    let mut d = doc(&[]);
+    d.apply(Command::AddExtraLine {
+        line: line(" 1 ", 1, "DEMO-BLOCK-450", "Manifold block"),
+    })
+    .unwrap();
+    d.apply(Command::AddExtraLine {
+        line: line("20", 4, "DEMO-PLUG-G1/4", " "),
+    })
+    .unwrap();
+    assert_eq!(
+        d.circuit.bom_extra,
+        [line("1", 1, "DEMO-BLOCK-450", "Manifold block"), {
+            let mut l = line("20", 4, "DEMO-PLUG-G1/4", "");
+            l.description = None;
+            l
+        }]
+    );
+    assert_eq!(d.undo_label(), Some("Add an extra line"));
+
+    d.apply(Command::SetExtraLine {
+        index: 1,
+        line: line("20", 6, "DEMO-PLUG-G1/4", "Plug G1/4"),
+    })
+    .unwrap();
+    assert_eq!(d.circuit.bom_extra[1].quantity, 6);
+    assert_eq!(d.undo_label(), Some("Edit extra line 2"));
+    // The bill of materials shows the edit.
+    let bom = d.circuit.bom(&Catalogue::default());
+    assert_eq!(bom[1].quantity, 6);
+    assert_eq!(bom[1].description, "Plug G1/4");
+
+    d.apply(Command::RemoveExtraLine { index: 0 }).unwrap();
+    assert_eq!(d.circuit.bom_extra.len(), 1);
+    assert_eq!(d.undo_label(), Some("Delete extra line 1"));
+    d.undo();
+    assert_eq!(d.circuit.bom_extra[0].position.as_deref(), Some("1"));
+    d.undo();
+    assert_eq!(d.circuit.bom_extra[1].quantity, 4);
+
+    // Refused, leaving the lines as they are.
+    let before = d.circuit.clone();
+    let refusals = [
+        (
+            Command::AddExtraLine {
+                line: line("3", 0, "DEMO-SEAL", ""),
+            },
+            "extra line 3 needs a quantity of at least 1",
+        ),
+        (
+            Command::SetExtraLine {
+                index: 0,
+                line: ExtraBomLine {
+                    position: None,
+                    quantity: 1,
+                    code: Some(" ".into()),
+                    description: None,
+                },
+            },
+            "extra line 1 needs a code or a description",
+        ),
+        (
+            Command::SetExtraLine {
+                index: 0,
+                line: line("1 ", 1, "DEMO-BLOCK-450", "Manifold block"),
+            },
+            "nothing changed on extra line 1",
+        ),
+        (
+            Command::SetExtraLine {
+                index: 5,
+                line: line("1", 1, "X", "Y"),
+            },
+            "there is no extra line 6",
+        ),
+        (
+            Command::RemoveExtraLine { index: 2 },
+            "there is no extra line 3",
+        ),
+    ];
+    for (command, why) in refusals {
+        assert_eq!(d.apply(command).unwrap_err(), why);
+    }
+    assert_eq!(d.circuit, before);
+}
+
+#[test]
+fn import_notes_are_edited_only_on_imported_circuits() {
+    let mut d = doc(&[]);
+    let set = |notes: &[&str]| Command::SetNotes {
+        notes: notes.iter().map(|n| n.to_string()).collect(),
+    };
+    assert_eq!(
+        d.apply(set(&["a"])).unwrap_err(),
+        "the circuit was not imported, so it has no import notes"
+    );
+    assert_eq!(d.circuit.import, None, "no import marks appear");
+
+    d.circuit.import = Some(Import {
+        notes: vec!["Row 12 is illegible (demo).".into()],
+    });
+    d.apply(set(&[
+        "Row 12 is illegible (demo).",
+        "  ",
+        " Checked row 7. ",
+    ]))
+    .unwrap();
+    let notes = |d: &Document| d.circuit.import.as_ref().unwrap().notes.clone();
+    assert_eq!(notes(&d), ["Row 12 is illegible (demo).", "Checked row 7."]);
+    assert_eq!(d.undo_label(), Some("Edit the import notes"));
+    assert_eq!(
+        d.apply(set(&["Row 12 is illegible (demo).", "Checked row 7. "]))
+            .unwrap_err(),
+        "the import notes are unchanged"
+    );
+    // Clearing them keeps the circuit marked as imported.
+    d.apply(set(&[])).unwrap();
+    assert_eq!(d.circuit.import, Some(Import::default()));
+    d.undo();
+    d.undo();
+    assert_eq!(notes(&d), ["Row 12 is illegible (demo)."]);
+}

@@ -1,7 +1,10 @@
 //! Edits to a circuit. The editor changes a circuit only through [`Command`]s, which gives
 //! undo/redo and a readable log of what changed.
 
-use crate::{Assembly, CatalogueRef, Circuit, Component, ComponentKind, Net, Placement, PortRef};
+use crate::{
+    Assembly, CatalogueRef, Circuit, Component, ComponentKind, ExtraBomLine, Net, Placement,
+    PortRef,
+};
 
 // Commands are few and short-lived; boxing `Add` would only add noise at every call site.
 #[allow(clippy::large_enum_variant)]
@@ -46,6 +49,21 @@ pub enum Command {
     ClearImport,
     /// Put a component inside the manifold block, or take it out.
     SetInBlock { id: String, inside: bool },
+    /// Set an item's part number, description and parts-table position. Blank text clears one.
+    SetItemDetails {
+        id: String,
+        code: String,
+        description: String,
+        position: String,
+    },
+    /// Add a bill-of-materials line that isn't a component, after the others.
+    AddExtraLine { line: ExtraBomLine },
+    /// Replace extra bill-of-materials line `index`, counting from 0.
+    SetExtraLine { index: usize, line: ExtraBomLine },
+    /// Delete extra bill-of-materials line `index`, counting from 0.
+    RemoveExtraLine { index: usize },
+    /// Replace an imported circuit's notes. Blank notes are dropped.
+    SetNotes { notes: Vec<String> },
 }
 
 impl Command {
@@ -79,6 +97,11 @@ impl Command {
             Command::ClearImport => "Clear the import marks".into(),
             Command::SetInBlock { id, inside: true } => format!("Put {id} in the block"),
             Command::SetInBlock { id, inside: false } => format!("Take {id} out of the block"),
+            Command::SetItemDetails { id, .. } => format!("Edit {id}'s parts list entry"),
+            Command::AddExtraLine { .. } => "Add an extra line".into(),
+            Command::SetExtraLine { index, .. } => format!("Edit extra line {}", index + 1),
+            Command::RemoveExtraLine { index } => format!("Delete extra line {}", index + 1),
+            Command::SetNotes { .. } => "Edit the import notes".into(),
         }
     }
 
@@ -321,9 +344,86 @@ impl Command {
                     return Err(format!("{id} is already {where_} the block"));
                 }
             }
+            Command::SetItemDetails {
+                id,
+                code,
+                description,
+                position,
+            } => {
+                let Some(ComponentKind::Item(item)) = circuit
+                    .components
+                    .iter_mut()
+                    .find(|c| &c.id == id)
+                    .map(|c| &mut c.kind)
+                else {
+                    return Err(format!("{id} is not an item in the circuit"));
+                };
+                let new = [code, description, position].map(|t| text(t));
+                let old = [&item.code, &item.description, &item.position];
+                if new.iter().zip(old).all(|(n, o)| n == o) {
+                    return Err(format!("nothing changed on {id}"));
+                }
+                [item.code, item.description, item.position] = new;
+            }
+            Command::AddExtraLine { line } => {
+                let n = circuit.bom_extra.len() + 1;
+                circuit.bom_extra.push(extra_line(line, n)?);
+            }
+            Command::SetExtraLine { index, line } => {
+                let new = extra_line(line, index + 1)?;
+                let old = extra_at(circuit, *index)?;
+                if *old == new {
+                    return Err(format!("nothing changed on extra line {}", index + 1));
+                }
+                *old = new;
+            }
+            Command::RemoveExtraLine { index } => {
+                extra_at(circuit, *index)?;
+                circuit.bom_extra.remove(*index);
+            }
+            Command::SetNotes { notes } => {
+                let import = circuit
+                    .import
+                    .as_mut()
+                    .ok_or("the circuit was not imported, so it has no import notes")?;
+                let notes: Vec<String> = notes.iter().filter_map(|n| text(n)).collect();
+                if import.notes == notes {
+                    return Err("the import notes are unchanged".into());
+                }
+                import.notes = notes;
+            }
         }
         Ok(())
     }
+}
+
+/// Trimmed text, or `None` when blank.
+fn text(t: &str) -> Option<String> {
+    Some(t.trim()).filter(|t| !t.is_empty()).map(String::from)
+}
+
+/// `line` with its text trimmed, or why it can't be extra line `n`.
+fn extra_line(line: &ExtraBomLine, n: usize) -> Result<ExtraBomLine, String> {
+    let line = ExtraBomLine {
+        position: line.position.as_deref().and_then(text),
+        quantity: line.quantity,
+        code: line.code.as_deref().and_then(text),
+        description: line.description.as_deref().and_then(text),
+    };
+    if line.quantity < 1 {
+        return Err(format!("extra line {n} needs a quantity of at least 1"));
+    }
+    if line.code.is_none() && line.description.is_none() {
+        return Err(format!("extra line {n} needs a code or a description"));
+    }
+    Ok(line)
+}
+
+fn extra_at(circuit: &mut Circuit, index: usize) -> Result<&mut ExtraBomLine, String> {
+    circuit
+        .bom_extra
+        .get_mut(index)
+        .ok_or_else(|| format!("there is no extra line {}", index + 1))
 }
 
 fn exists(circuit: &Circuit, id: &str) -> Result<(), String> {
