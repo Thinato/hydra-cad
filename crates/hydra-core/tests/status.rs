@@ -358,6 +358,31 @@ fn reliefs_are_compared_by_setting_range() {
 }
 
 #[test]
+fn a_remote_piloted_relief_only_stands_in_for_one() {
+    let mut cat = relief_catalogue();
+    let mut t = (cat.valve_type(&r("vt-demo-cartridge-relief@1")))
+        .unwrap()
+        .clone();
+    t.key = "vt-cr-remote".into();
+    t.symbol = Some(r("sym-relief-remote@1"));
+    cat.valve_types.push(t);
+    // A plain relief valve is never offered the one piloted through X...
+    let list = keys(&stand_ins(&relief_need(None, None), "R", &cat).unwrap());
+    assert_eq!(list.len(), 4, "{list:?}");
+    assert!(!list.contains(&"vt-cr-remote@1".to_string()), "{list:?}");
+    // ...and one drawn with X is offered only that one.
+    let mut c = relief_need(None, None);
+    let ComponentKind::Valve(v) = &mut c.components[0].kind else {
+        panic!("R is a valve");
+    };
+    v.display = Some(SymbolDef::Relief {
+        adjustable: true,
+        pilot_port: true,
+    });
+    assert_eq!(keys(&stand_ins(&c, "R", &cat).unwrap()), ["vt-cr-remote@1"]);
+}
+
+#[test]
 fn parts_with_their_own_ratings_are_separate_candidates() {
     let cat = catalogue();
     let need = |setting| {

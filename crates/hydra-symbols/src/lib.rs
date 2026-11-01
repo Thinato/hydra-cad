@@ -6,7 +6,7 @@
 
 use hydra_core::{
     Actuator, Catalogue, Circuit, Component, ComponentKind, DirectionalValve, FlowActuator, Issue,
-    MAX_LISTED, Net, NetKind, PORT_PIN, Placement, Rotation, Side, SymbolDef, ValveStatus,
+    LineKind, MAX_LISTED, Net, PORT_PIN, Placement, Rotation, Side, SymbolDef, ValveStatus,
 };
 
 mod svg;
@@ -611,18 +611,62 @@ fn orifice(adj: bool) -> Drawing {
 
 const PORT_RADIUS: f32 = 1.2;
 
-/// External connection, e.g. manifold port P; a plugged one is a solid circle.
+/// External connection, e.g. manifold port P. A plugged one has no circle: [`draw_component`]
+/// closes its line with a bar.
 fn port_marker(label: &str, plugged: bool) -> Drawing {
+    let circle = Primitive::Circle {
+        center: [0.0, 0.0],
+        radius: PORT_RADIUS,
+        filled: false,
+    };
+    let label = text([0.0, -2.5], label, Align::Middle);
     Drawing {
-        primitives: vec![
-            Primitive::Circle {
-                center: [0.0, 0.0],
-                radius: PORT_RADIUS,
-                filled: plugged,
-            },
-            text([0.0, -2.5], label, Align::Middle),
-        ],
+        primitives: if plugged {
+            vec![label]
+        } else {
+            vec![circle, label]
+        },
         ports: vec![(PORT_PIN.to_string(), [0.0, 0.0])],
+    }
+}
+
+/// The first of `points` off `at`, when they start at `at`.
+fn leaving(mut points: impl Iterator<Item = Point>, at: Point) -> Option<Point> {
+    near(points.next()?, at).then_some(())?;
+    points.find(|q| !near(*q, at))
+}
+
+/// ISO 1219 closed connection: a short thick bar across the line that ends at `at`, square to
+/// it. Among `wires`, the line is the one with an end there; without one, an upright line.
+fn plug(at: Point, wires: &[Primitive]) -> Primitive {
+    let from = wires.iter().find_map(|w| {
+        let Primitive::Polyline { points, .. } = w else {
+            return None;
+        };
+        leaving(points.iter().copied(), at).or_else(|| leaving(points.iter().rev().copied(), at))
+    });
+    let [dx, dy] = from.map_or([0.0, 1.0], |q| [at[0] - q[0], at[1] - q[1]]);
+    let len = dx.hypot(dy);
+    let (along, across) = (
+        [dx / len * 0.35, dy / len * 0.35],
+        [-dy / len * 1.5, dx / len * 1.5],
+    );
+    let corner = |a: f32, b: f32| {
+        [
+            at[0] + a * along[0] + b * across[0],
+            at[1] + a * along[1] + b * across[1],
+        ]
+    };
+    Primitive::Polyline {
+        points: vec![
+            corner(-1.0, -1.0),
+            corner(1.0, -1.0),
+            corner(1.0, 1.0),
+            corner(-1.0, 1.0),
+        ],
+        closed: true,
+        dashed: false,
+        filled: true,
     }
 }
 
@@ -747,6 +791,9 @@ fn draw_component(
     }
     for (name, p) in symbol.ports {
         d.ports.push((name, at(p)));
+    }
+    if let ComponentKind::Port { plugged: true, .. } = c.kind {
+        d.primitives.push(plug([place.x, place.y], wires));
     }
     if !matches!(c.kind, ComponentKind::Port { .. })
         && let Some((min, max)) = bounds(&d.primitives)
@@ -884,13 +931,13 @@ fn parts_and_wires(
     // Finding dots compares points with wires, so only for wires an import could save.
     let dotted = circuit.layout.wires_are_bounded();
     for net in &circuit.nets {
-        // Pilot and drain lines are dashed.
-        let wire = |points| match net.kind {
-            NetKind::Working => open(points),
-            NetKind::Pilot | NetKind::Drain => dashed(points),
-        };
         if let Some(drawn) = circuit.layout.wires.get(&net.id) {
-            wires.extend(drawn.iter().map(|w| wire(w.clone())));
+            // Pilot and drain wires are dashed.
+            wires.extend(drawn.iter().map(|w| match w.kind {
+                LineKind::Working => open(w.points.clone()),
+                LineKind::Pilot | LineKind::Drain => dashed(w.points.clone()),
+            }));
+            let drawn: Vec<&[Point]> = drawn.iter().map(|w| &w.points[..]).collect();
             if !dotted {
                 continue;
             }
@@ -905,7 +952,7 @@ fn parts_and_wires(
                 .flat_map(|w| ends(w))
                 .chain(ports.iter().copied())
             {
-                if !dots.iter().any(|d| near(*d, at)) && arms(at, drawn, &ports) >= 3 {
+                if !dots.iter().any(|d| near(*d, at)) && arms(at, &drawn, &ports) >= 3 {
                     dots.push(at);
                 }
             }
@@ -927,7 +974,7 @@ fn parts_and_wires(
         // Star from the first port: across along a trunk, then straight into each port.
         for &p in rest {
             let elbow = [p[0], first[1]];
-            wires.push(wire(vec![first, elbow, p]));
+            wires.push(open(vec![first, elbow, p]));
             // Junction dot where the trunk carries on past this branch.
             let further = |q: &Point| {
                 (q[0] - first[0]).signum() == (p[0] - first[0]).signum()
@@ -1284,8 +1331,8 @@ fn ends(w: &[Point]) -> impl Iterator<Item = Point> + '_ {
 }
 
 /// Lines meeting at `p`: one per wire end or port there, two per wire passing through.
-fn arms(p: Point, wires: &[Vec<Point>], ports: &[Point]) -> usize {
-    let through = |w: &Vec<Point>| if ends(w).any(|e| near(e, p)) { 1 } else { 2 };
+fn arms(p: Point, wires: &[&[Point]], ports: &[Point]) -> usize {
+    let through = |w: &&[Point]| if ends(w).any(|e| near(e, p)) { 1 } else { 2 };
     let wires: usize = wires.iter().filter(|w| on_wire(p, w)).map(through).sum();
     wires + ports.iter().filter(|q| near(**q, p)).count()
 }
@@ -1296,7 +1343,7 @@ type Ports = Vec<(String, Point)>;
 /// A hand-drawn net, its wires, and its ports.
 struct DrawnNet<'a> {
     net: &'a Net,
-    wires: &'a [Vec<Point>],
+    wires: Vec<&'a [Point]>,
     ports: Ports,
 }
 
@@ -1313,7 +1360,9 @@ fn drawn_nets<'a>(
     let anchors = render_circuit(circuit, catalogue).ports;
     let nets = (circuit.nets.iter())
         .filter_map(|net| {
-            let wires = circuit.layout.wires.get(&net.id)?;
+            let wires = (circuit.layout.wires.get(&net.id)?.iter())
+                .map(|w| &w.points[..])
+                .collect();
             let ports: Ports = (net.ports.iter())
                 .filter_map(|p| {
                     let key = p.to_string();
@@ -1335,7 +1384,7 @@ pub fn wire_problems(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
     };
     let mut problems = Vec::new();
     for (a, d) in nets.iter().enumerate() {
-        let (net, wires, ports) = (&d.net.id, d.wires, &d.ports);
+        let (net, wires, ports) = (&d.net.id, &d.wires, &d.ports);
         let at = |(k, [x, y]): &(String, Point)| format!("{k} at {x}, {y}");
         for (i, w) in wires.iter().enumerate() {
             for [x, y] in ends(w) {

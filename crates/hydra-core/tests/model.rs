@@ -81,7 +81,6 @@ fn net(id: &str, ports: &[(&str, &str)]) -> Net {
     Net {
         id: id.into(),
         name: None,
-        kind: NetKind::Working,
         ports: ports.iter().map(|(c, p)| pr(c, p)).collect(),
     }
 }
@@ -151,7 +150,7 @@ fn json_round_trip_is_lossless() {
     );
     c.layout
         .wires
-        .insert("n-p".into(), vec![vec![[0.0, 0.0], [5.0, 0.0]]]);
+        .insert("n-p".into(), vec![vec![[0.0, 0.0], [5.0, 0.0]].into()]);
     c.nets[0].name = Some("pressure".into());
     let json = c.to_json();
     assert_eq!(Circuit::from_json(&json).unwrap(), c);
@@ -163,15 +162,19 @@ fn json_round_trip_is_lossless() {
     assert_eq!(value["layout"]["components"]["V1"]["mirror"], true);
     // Unmirrored parts don't write the flag, and older documents read as unmirrored.
     assert!(json.matches("\"mirror\"").count() == 1, "{json}");
-    // Likewise working lines and open ports write no kind or plug.
-    assert!(
-        !json.contains("\"plugged\"") && !json.contains("\"working\""),
-        "{json}"
+    // Likewise open ports write no plug, and a working wire is just its points, as before
+    // schema 5.
+    assert!(!json.contains("\"plugged\""), "{json}");
+    assert_eq!(
+        value["layout"]["wires"]["n-p"],
+        serde_json::json!([[[0.0, 0.0], [5.0, 0.0]]])
     );
-    let net_kinds = |c: &Circuit| c.nets.iter().map(|n| n.kind).collect::<Vec<_>>();
-    assert!(net_kinds(&c).iter().all(NetKind::is_working));
 
-    c.nets[0].kind = NetKind::Pilot;
+    let drain = Wire {
+        kind: LineKind::Drain,
+        points: vec![[5.0, 0.0], [5.0, 5.0]],
+    };
+    c.layout.wires.get_mut("n-p").unwrap().push(drain);
     let ComponentKind::Port { plugged, .. } = &mut c.components[2].kind else {
         panic!("components[2] is a port");
     };
@@ -179,7 +182,10 @@ fn json_round_trip_is_lossless() {
     let json = c.to_json();
     assert_eq!(Circuit::from_json(&json).unwrap(), c);
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["nets"][0]["kind"], "pilot");
+    assert_eq!(
+        value["layout"]["wires"]["n-p"][1],
+        serde_json::json!({"kind": "drain", "points": [[5.0, 0.0], [5.0, 5.0]]})
+    );
     assert_eq!(value["components"][2]["plugged"], true);
 }
 

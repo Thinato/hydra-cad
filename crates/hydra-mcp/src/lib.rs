@@ -53,21 +53,24 @@ A symbol definition says what an ISO 1219 valve symbol shows; Hydra draws it. It
 {"kind": "orifice", "adjustable": false}  restriction between A and B; a throttle if adjustable
 {"kind": "relief", "adjustable": true}    pressure relief valve from P to T, piloted from P
 {"kind": "relief", "adjustable": true, "pilot_port": true}
-                                          relief valve piloted from another line through port X
+                                          externally piloted relief valve: port X, on the left,
+                                          replaces the internal pilot from P
 {"kind": "pilot_check", "spring": true}   pilot-operated check A -> B, opened backwards by pilot X
 {"kind": "counterbalance"}                counterbalance / overcenter valve: V (valve side), C (load), pilot X
 {"kind": "flow_control", "actuator": "proportional", "compensated": true, "bypass": true}
                                           flow control In -> Out; actuator "manual" or "proportional";
                                           compensated = pressure compensated; bypass adds port Bypass;
-                                          "pilot_port": true adds port X, a second pilot on the
-                                          compensator (needs compensated)
+                                          "pilot_port": true adds port X on the right, a second
+                                          pilot on the compensator (needs compensated)
 {"kind": "directional_valve", ...}        spool or poppet valve, see below
 
 These are valve symbols: the only kinds a catalogue valve type may use. Their ports are fixed:
 check and orifice A, B; relief P, T (and X); pilot_check A, B, X; counterbalance V, C, X;
 flow_control In, Out (and Bypass, and X). A valve whose datasheet or drawing shows an extra pilot
-line from another line (a remote-piloted relief valve, a compensator with a second pilot) needs a
-symbol with "pilot_port": true; leave pilot_port out otherwise. Datasheets often number cartridge ports 1, 2, 3: write in the notes which
+line from another line (an externally piloted relief valve, a compensator with a second pilot)
+needs a symbol with "pilot_port": true; leave pilot_port out otherwise. A vented or
+remote-setting relief valve (a vent port to a separate pilot valve) isn't modelled: use the plain
+relief symbol and say so in the notes. Datasheets often number cartridge ports 1, 2, 3: write in the notes which
 number is which port (e.g. "port 1 = V, 2 = C, 3 = X, page 1").
 
 Circuits can also draw parts that are not catalogue valves:
@@ -133,7 +136,7 @@ Send a circuit read from a drawing with import_circuit:
   "name": "MH-450",
   "components": [
     {"id": "P", "kind": "port", "label": "P"},
-    {"id": "P2", "kind": "port", "label": "P2", "plugged": true},
+    {"id": "P3", "kind": "port", "label": "P3", "plugged": true},
     {"id": "7.1", "kind": "valve", "valve_type": "vt-demo-cartridge-relief@1", "part": "DEMO-CR10-210",
      "requested": {"code": "DEMO-CR10-210", "description": "Relief valve 210 bar", "function": "relief",
                    "mounting": "DEMO-C10-2", "setting_bar": 210}},
@@ -145,10 +148,11 @@ Send a circuit read from a drawing with import_circuit:
      "code": "...", "description": "Test point", "position": "14"}
   ],
   "nets": [{"id": "n1", "ports": [{"component": "P", "port": "port"}, {"component": "7.1", "port": "P"}]},
-           {"id": "n2", "kind": "pilot", "ports": [...]}],
+           {"id": "n4", "ports": [...]}],
   "layout": {"components": {"P": {"x": 0, "y": 100}, "7.1": {"x": 40, "y": 60, "rotation": 0}},
-             "wires": {"n1": [[[0, 100], [0, 84], [40, 84], [40, 68]]]}},
-  "in_block": ["P", "P2", "7.1", "5.2", "X1", "M1"],
+             "wires": {"n1": [[[0, 100], [0, 84], [40, 84], [40, 68]]],
+                       "n4": [[[60, 30], [90, 30]], {"kind": "pilot", "points": [[75, 30], [75, 50]]}]}},
+  "in_block": ["P", "P3", "7.1", "5.2", "X1", "M1"],
   "bom_extra": [{"position": "1", "quantity": 1, "code": "...", "description": "Manifold block"}],
   "import": {"notes": ["row 12 of the parts table is illegible"]}
 }
@@ -158,11 +162,11 @@ Rules:
 - Valves: "requested" holds the code exactly as printed, the description, the function and the mounting or cavity. If the catalogue has that valve type, set valve_type (key@version) and, when the exact part is listed, part. If not, leave valve_type out, set "display" to a look-alike symbol definition (copy an existing definition's JSON, or a box with the valve's ports), and fill requested.function and requested.mounting; add requested.key when you propose the valve type. setting_bar, max_pressure_bar and max_flow_l_min go in requested when the drawing states them.
 - Fixed orifices, test points, hydraulic motors and pumps are items, never valves; give them code, description and position when the parts table lists them. The block, plugs, coils and seals are bom_extra lines.
 - A part with no symbol of its own (e.g. a 3-port pressure compensator) is a valve missing from the catalogue whose display is a labelled box with its ports.
-- External connections (P, T, A1, MP...) are ports; their single port is "port". A rail that ends at the block's edge with a plug drawn on it is a port with "plugged": true, in in_block, connected to the rail; label it as the drawing does, or with the rail's name and the next free number (P2, T2) if it has none. A loose plug in the parts table is still a bom_extra line.
-- Every connection on the schematic is a net of component ports. Port names are the symbol's (see above). A dashed line on the drawing is a pilot or drain line: give its net "kind": "pilot" (a control line into a pilot port such as X) or "kind": "drain" (leakage back to tank, e.g. from port L or Y); solid lines are working lines, so leave kind out. A valve drawn with an extra dashed pilot line coming from another line connects that line to its symbol's port X (see pilot_port above); if its catalogue valve type's symbol has no X, that entry doesn't match the valve: leave valve_type out, set display to the symbol with pilot_port and requested.key to the valve type's key, propose a new version of it with that symbol, and say so in import.notes. Draw the layout in millimetres, x right and y down, as on the drawing: keep every part in the same place relative to the others (same row, same column, same order along a line), with about 30 mm between parts so their labels don't overlap.
+- External connections (P, T, A1, MP...) are ports; their single port is "port". A rail that ends at the block's edge with a plug drawn on it is a port with "plugged": true, in in_block, connected to the rail. Label it as the drawing does; if the drawing gives it no label, use "plug" and say in import.notes that you added the label. A loose plug in the parts table is still a bom_extra line.
+- Every connection on the schematic is a net of component ports. Port names are the symbol's (see above). A dashed line is part of the net it joins, like any other line; how it is drawn goes on its wire (see layout.wires). A valve drawn with an extra dashed pilot line coming from another line connects that line to its symbol's port X (see pilot_port above). If its catalogue valve type's symbol has no X, that type doesn't match the valve: leave valve_type out and set display to the symbol with pilot_port. Then propose a new valve type (a new key, set as requested.key), unless the datasheet shows that this same type has port X; only then propose a new version of it, with requested.key its key. Say which in import.notes. Draw the layout in millimetres, x right and y down, as on the drawing: keep every part in the same place relative to the others (same row, same column, same order along a line), with about 30 mm between parts so their labels don't overlap.
 - Every symbol must look exactly as it does on the drawing: the engineer compares the two side by side. Place it with "rotation" (0, 90, 180 or 270 degrees clockwise) and "mirror" (true flips it left to right, before the rotation). Unrotated and unmirrored, symbols stand upright with flow running up: inlets (P, A, In, the motor's A) at the bottom, outlets (T, B, Out) at the top, a relief valve's spring on the right and its pilot line on the left, a check valve's spring on top, a test point's M at the bottom; directional valves show their positions side by side, ports above and below, actuators at the ends as listed in left/right. 90 puts the bottom port on the left, 180 at the top, 270 on the right.
 - For each symbol, find the one of the eight placements (four rotations, each with or without mirror) where both of these match the drawing: (1) which side every port leaves the symbol, and (2) which side the spring, solenoid, lever, adjustment arrow, pilot line and drain are on. Ports alone are not enough. Examples for a relief valve: P bottom, T top, spring right: rotation 0. Spring left instead: mirror. P left, T right, spring below: 90. P left, T right, spring on top: 90 with mirror. P right, T left, spring on top: 270. P right, T left, spring below: 270 with mirror. A check valve whose flow runs downwards is 180. If no placement matches, say which symbol and how it differs in import.notes.
-- layout.wires traces each net's lines as the drawing routes them: per net id, a list of wires, each a list of [x, y] points in the same millimetres. A wire runs horizontally or vertically from point to point; where the line turns, add the corner point. Each wire ends on a port of its net or on another wire of the same net (a T-junction, drawn with a dot), and together a net's wires reach every port of the net in one connected piece: wires that only cross are not joined, so end one on the other. A wire never touches a port or wire of another net, except to cross it, and never runs through a part's symbol. Keep the drawing's corners, junctions and crossings, and the side of each part a line passes. Trace every net: a net left out of wires is drawn with automatic elbows, which rarely match the drawing. Hydra works out where each port is from the symbol and its placement; when a wire end misses a port, the problem says where the net's ports are, so move the end, and the corner before it, there.
+- layout.wires traces each net's lines as the drawing routes them: per net id, a list of wires, each a list of [x, y] points in the same millimetres. A wire runs horizontally or vertically from point to point; where the line turns, add the corner point. Each wire ends on a port of its net or on another wire of the same net (a T-junction, drawn with a dot), and together a net's wires reach every port of the net in one connected piece: wires that only cross are not joined, so end one on the other. A wire never touches a port or wire of another net, except to cross it, and never runs through a part's symbol. Keep the drawing's corners, junctions and crossings, and the side of each part a line passes. Trace every net: a net left out of wires is drawn with automatic elbows, which rarely match the drawing and are always solid. A dashed line is a pilot or drain line: trace it as a wire of its own, {"kind": "pilot", "points": [[x, y], ...]} for a control line into a pilot port such as X, or "kind": "drain" for leakage back to tank (e.g. a motor's L), and end it on the solid wire it joins, as in n4 above. Solid lines are plain lists of points. Hydra works out where each port is from the symbol and its placement; when a wire end misses a port, the problem says where the net's ports are, so move the end, and the corner before it, there.
 - in_block lists every component inside the manifold block: what the drawing's dash-dot boundary encloses, with the ports on its edge. Parts outside it (motors, cylinders, pumps, valves mounted elsewhere) are left out, and their layout places them clear of the block's parts, since Hydra draws the block's outline around everything in in_block. For an L-shaped block, place the outside parts in the notch, clear of every block part: Hydra cuts a corner with no block parts out of the outline around them, and lists each such part in the reply's warnings to check. Leave in_block out when the drawing shows no block.
 - What you can't read goes in import.notes, never guessed.
 

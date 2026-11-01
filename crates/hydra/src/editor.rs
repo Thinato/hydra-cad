@@ -1049,27 +1049,6 @@ impl SchematicEditor {
                     inside,
                 });
             }
-            // What each connected port's net carries; pilot and drain lines are drawn dashed.
-            for port in c.ports(catalogue).unwrap_or_default() {
-                let Some(net) = (self.doc.circuit.nets.iter())
-                    .find(|n| (n.ports.iter()).any(|p| p.component == c.id && p.port == port))
-                else {
-                    continue;
-                };
-                let (net, kind) = (net.id.clone(), net.kind);
-                ui.label(port);
-                let mut choice = kind;
-                egui::ComboBox::from_id_salt(("net-kind", &c.id, port))
-                    .selected_text(kind.words())
-                    .show_ui(ui, |ui| {
-                        for k in hydra_core::NetKind::ALL {
-                            ui.selectable_value(&mut choice, k, k.words());
-                        }
-                    });
-                if choice != kind {
-                    self.apply(Command::SetNetKind { net, kind: choice });
-                }
-            }
             if ui.button("Rotate").clicked() {
                 self.rotate_selected();
             }
@@ -2593,38 +2572,22 @@ mod tests {
     }
 
     #[test]
-    fn a_ports_line_kind_and_plug_are_set_and_undone() {
+    fn a_port_is_plugged_and_unplugged_with_undo() {
         let mut h = import_harness(None, false);
-        let state = |h: &Harness<State>| {
-            let circuit = &h.state().0.doc.circuit;
-            let net = (circuit.nets.iter())
-                .find(|n| n.ports.iter().any(|p| p.component == "P"))
-                .unwrap();
-            let plugged = matches!(
-                circuit.component("P").unwrap().kind,
+        let plugged = |h: &Harness<State>| {
+            matches!(
+                h.state().0.doc.circuit.component("P").unwrap().kind,
                 ComponentKind::Port { plugged: true, .. }
-            );
-            (net.kind, plugged)
+            )
         };
         h.state_mut().0.selected = Some("P".into());
         h.run_steps(2);
-        h.get_all_by_role(egui::accesskit::Role::ComboBox)
-            .find(|n| n.value().as_deref() == Some("working line"))
-            .expect("P's line kind")
-            .click();
-        h.run();
-        h.get_by_label("pilot line").click();
-        h.run_steps(2);
-        assert_eq!(state(&h), (hydra_core::NetKind::Pilot, false));
         h.get_by_label("Plugged").click();
         h.run_steps(2);
-        assert_eq!(state(&h), (hydra_core::NetKind::Pilot, true));
+        assert!(plugged(&h));
         h.state_mut().0.undo();
         h.run_steps(2);
-        assert_eq!(state(&h), (hydra_core::NetKind::Pilot, false));
-        h.state_mut().0.undo();
-        h.run_steps(2);
-        assert_eq!(state(&h), (hydra_core::NetKind::Working, false));
+        assert!(!plugged(&h));
     }
 
     #[test]

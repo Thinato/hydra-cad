@@ -490,7 +490,7 @@ async fn imported_circuits_are_saved_as_unchecked_drafts(pool: PgPool) {
         // The motors drawing comes with its wires traced; they are kept as drawn.
         assert_eq!(
             opened.document.layout.wires.len(),
-            if name == "demo-import-motors" { 6 } else { 0 },
+            if name == "demo-import-motors" { 5 } else { 0 },
             "{name}"
         );
         let revisions = list_revisions(&pool, &summary.id).await.unwrap();
@@ -550,12 +550,15 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
         "{e}"
     );
     assert!(e.contains("HM1 is placed at 200000000, 15"), "{e}");
-    // A net kind that isn't one, and a second pilot on a flow control with no compensator.
+    // A wire kind that isn't one, and a second pilot on a flow control with no compensator.
     let mut kinds = demo_circuit("demo-import-motors");
-    kinds["nets"][0]["kind"] = "dashed".into();
+    kinds["layout"]["wires"]["n-2"][1]["kind"] = "dashed".into();
     let e = mcp.import_circuit(import(kinds)).await.unwrap_err();
     assert!(
-        e.contains("at nets[0].kind: unknown variant `dashed`"),
+        e.contains(
+            "at layout.wires.n-2[1]: a wire: a list of [x, y] points, or {\"kind\": \"pilot\" \
+             or \"drain\", \"points\": [[x, y], ...]}"
+        ),
         "{e}"
     );
     let mut pilot = demo_circuit("demo-import-motors");

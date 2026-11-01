@@ -2,8 +2,8 @@
 //! undo/redo and a readable log of what changed.
 
 use crate::{
-    Assembly, CatalogueRef, Circuit, Component, ComponentKind, ExtraBomLine, Net, NetKind,
-    Placement, PortRef,
+    Assembly, CatalogueRef, Circuit, Component, ComponentKind, ExtraBomLine, Net, Placement,
+    PortRef,
 };
 
 // Commands are few and short-lived; boxing `Add` would only add noise at every call site.
@@ -66,8 +66,6 @@ pub enum Command {
     RemoveExtraLine { index: usize },
     /// Replace an imported circuit's notes. Blank notes are dropped.
     SetNotes { notes: Vec<String> },
-    /// Make a net a working, pilot or drain line.
-    SetNetKind { net: String, kind: NetKind },
     /// Plug an external connection, or unplug it.
     SetPlugged { id: String, plugged: bool },
 }
@@ -108,7 +106,6 @@ impl Command {
             Command::SetExtraLine { index, .. } => format!("Edit extra line {}", index + 1),
             Command::RemoveExtraLine { index } => format!("Delete extra line {}", index + 1),
             Command::SetNotes { .. } => "Edit the import notes".into(),
-            Command::SetNetKind { net, kind } => format!("Make net {net} a {}", kind.words()),
             Command::SetPlugged { id, plugged: true } => format!("Plug {id}"),
             Command::SetPlugged { id, plugged: false } => format!("Unplug {id}"),
         }
@@ -195,9 +192,6 @@ impl Command {
                         if circuit.nets[i].name.is_none() {
                             circuit.nets[i].name = merged.name;
                         }
-                        if circuit.nets[i].kind.is_working() {
-                            circuit.nets[i].kind = merged.kind;
-                        }
                         let ids = [circuit.nets[i].id.clone(), merged.id];
                         circuit.layout.wires.retain(|k, _| !ids.contains(k));
                     }
@@ -216,7 +210,6 @@ impl Command {
                         circuit.nets.push(Net {
                             id,
                             name: None,
-                            kind: NetKind::Working,
                             ports: vec![a.clone(), b.clone()],
                         });
                     }
@@ -411,15 +404,6 @@ impl Command {
                     return Err("the import notes are unchanged".into());
                 }
                 import.notes = notes;
-            }
-            Command::SetNetKind { net, kind } => {
-                let n = (circuit.nets.iter_mut())
-                    .find(|n| &n.id == net)
-                    .ok_or_else(|| format!("net {net} is not in the circuit"))?;
-                if n.kind == *kind {
-                    return Err(format!("net {net} is already a {}", kind.words()));
-                }
-                n.kind = *kind;
             }
             Command::SetPlugged { id, plugged } => {
                 let Some(ComponentKind::Port { plugged: p, .. }) = (circuit.components.iter_mut())

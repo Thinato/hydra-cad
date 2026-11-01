@@ -207,7 +207,7 @@ fn moving_rotating_and_relabelling() {
     d.circuit
         .layout
         .wires
-        .insert("n1".into(), vec![vec![[0.0, 0.0], [10.0, 0.0]]]);
+        .insert("n1".into(), vec![vec![[0.0, 0.0], [10.0, 0.0]].into()]);
     let to = Placement {
         x: 5.0,
         y: 7.5,
@@ -301,7 +301,6 @@ fn edits_leave_untouched_nets_alone_and_merging_keeps_names() {
     d.circuit.nets.push(Net {
         id: "lone".into(),
         name: None,
-        kind: NetKind::Working,
         ports: vec![pr("E", PORT_PIN)],
     });
     d.apply(connect("A", "B")).unwrap();
@@ -671,40 +670,6 @@ fn import_notes_are_edited_only_on_imported_circuits() {
     d.undo();
     d.undo();
     assert_eq!(notes(&d), ["Row 12 is illegible (demo)."]);
-}
-
-#[test]
-fn nets_become_pilot_or_drain_lines_and_merging_keeps_the_kind() {
-    let mut d = doc(&["A", "B", "C", "D"]);
-    d.apply(connect("A", "B")).unwrap();
-    d.apply(connect("C", "D")).unwrap();
-    let kind = |net: &str, kind| Command::SetNetKind {
-        net: net.into(),
-        kind,
-    };
-    assert_eq!(
-        d.apply(kind("n9", NetKind::Pilot)),
-        Err("net n9 is not in the circuit".into())
-    );
-    // New nets are working lines.
-    assert_eq!(
-        d.apply(kind("n1", NetKind::Working)),
-        Err("net n1 is already a working line".into())
-    );
-    d.apply(kind("n2", NetKind::Drain)).unwrap();
-    assert_eq!(d.undo_label(), Some("Make net n2 a drain line"));
-    assert_eq!(d.circuit.nets[1].kind, NetKind::Drain);
-    // Joining a working line to a drain line keeps the drain, whichever comes first.
-    d.apply(connect("A", "C")).unwrap();
-    assert_eq!(d.circuit.nets.len(), 1);
-    assert_eq!(d.circuit.nets[0].kind, NetKind::Drain);
-    d.undo();
-    d.undo();
-    assert_eq!(d.circuit.nets[1].kind, NetKind::Working);
-    // A pilot line merged into a working one stays a pilot line.
-    d.apply(kind("n1", NetKind::Pilot)).unwrap();
-    d.apply(connect("C", "A")).unwrap();
-    assert_eq!(d.circuit.nets[0].kind, NetKind::Pilot);
 }
 
 #[test]

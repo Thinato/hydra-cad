@@ -18,8 +18,8 @@ pub use catalogue::{
 };
 pub use circuit::{
     Assembly, Circuit, Component, ComponentKind, ExtraBomLine, Import, Issue, Item, Layout,
-    LoadError, Net, NetKind, PORT_PIN, Placement, PortRef, Requested, Rotation, SCHEMA_VERSION,
-    Severity, Valve,
+    LineKind, LoadError, Net, PORT_PIN, Placement, PortRef, Requested, Rotation, SCHEMA_VERSION,
+    Severity, Valve, Wire,
 };
 pub use edit::{Command, Document, next_id};
 pub use import::{
