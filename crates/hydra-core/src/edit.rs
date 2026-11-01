@@ -607,6 +607,9 @@ pub fn next_id<'a>(taken: impl Iterator<Item = &'a str> + Clone, prefix: &str) -
 /// Circuits are small; store inverse commands instead if documents ever get large.
 #[derive(Debug, Clone)]
 pub struct Document {
+    /// Change it only through [`Self::apply`], [`Self::undo`] and [`Self::redo`]: they count
+    /// [`Self::generation`], and anything cached per generation (the editor's render, statuses
+    /// and wire checks) goes stale on a change made any other way.
     pub circuit: Circuit,
     undo: Vec<(String, Circuit)>,
     redo: Vec<(String, Circuit)>,

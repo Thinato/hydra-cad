@@ -77,11 +77,12 @@ pub struct Saved {
 type Cached<K> = Option<(K, Arc<Rendered>)>;
 
 enum Drag {
-    /// Moving a part; `grab` is the pointer's offset from the part's origin.
+    /// Moving a part to `to`; `grab` is the pointer's offset from the part's origin. Rotation and
+    /// mirror stay the document's, so R or M pressed while dragging is kept on drop.
     Move {
         id: String,
         grab: [f32; 2],
-        to: Placement,
+        to: [f32; 2],
     },
     /// Drawing a connection from a port.
     Wire {
@@ -172,7 +173,7 @@ pub struct SchematicEditor {
     /// The document rendered for (edit counter, catalogue loads), like `valve_status`.
     rendered: Cached<(u64, u64)>,
     /// The document with the part being dragged at its new spot, for that key and the spot.
-    dragged: Cached<(u64, u64, String, Placement)>,
+    dragged: Cached<(u64, u64, String, [f32; 2])>,
     /// How often either was rendered, for tests.
     renders: usize,
 }
@@ -234,7 +235,7 @@ impl SchematicEditor {
         let Some(Drag::Move { id, to, .. }) = &self.drag else {
             return doc;
         };
-        if *to == self.placement(id) {
+        if self.moved(id, *to) == self.placement(id) {
             return doc;
         }
         let key = (
@@ -582,6 +583,15 @@ impl SchematicEditor {
         }
     }
 
+    /// `id` moved to `to`, turned and mirrored as it is now.
+    fn moved(&self, id: &str, [x, y]: [f32; 2]) -> Placement {
+        Placement {
+            x,
+            y,
+            ..self.placement(id)
+        }
+    }
+
     fn placement(&self, id: &str) -> Placement {
         self.doc
             .circuit
@@ -680,11 +690,11 @@ impl SchematicEditor {
         let locked = self.awaiting.is_some();
         let status = self.circuit_status(shared);
         let drawn_issues = self.drawn_issues(shared);
-        let outline_issues = self.rendered(shared).outline_issues.clone();
         ui.add_enabled_ui(!locked, |ui| {
             self.toolbar(ui, shared);
             self.import_banner(ui, shared);
             self.selection_bar(ui, &shared.catalogue, &status);
+            let outline_issues = self.rendered(shared).outline_issues.clone();
             self.validation(
                 ui,
                 &shared.catalogue,
@@ -1414,7 +1424,10 @@ impl SchematicEditor {
         // What to draw: the document, with a part being dragged shown at its new spot.
         let mut shown = self.doc.circuit.clone();
         if let Some(Drag::Move { id, to, .. }) = &self.drag {
-            shown.layout.components.insert(id.clone(), *to);
+            shown
+                .layout
+                .components
+                .insert(id.clone(), self.moved(id, *to));
         }
         let rendered = self.rendered_shown(&shown, shared);
         let (drawing, parts) = (&rendered.drawing, &rendered.parts);
@@ -1447,7 +1460,7 @@ impl SchematicEditor {
                         self.selected = Some(id.clone());
                         Drag::Move {
                             grab: [p[0] - place.x, p[1] - place.y],
-                            to: place,
+                            to: [place.x, place.y],
                             id,
                         }
                     }
@@ -1460,8 +1473,7 @@ impl SchematicEditor {
             let p = [v.x, v.y];
             match drag {
                 Drag::Move { grab, to, .. } => {
-                    to.x = snap(p[0] - grab[0]);
-                    to.y = snap(p[1] - grab[1]);
+                    *to = [snap(p[0] - grab[0]), snap(p[1] - grab[1])];
                 }
                 Drag::Wire { end, .. } => *end = p,
                 Drag::Pan => {
@@ -1472,8 +1484,9 @@ impl SchematicEditor {
         }
         if response.drag_stopped() {
             match self.drag.take() {
-                Some(Drag::Move { id, to, .. }) if to != self.placement(&id) => {
-                    self.apply(Command::Place { id, placement: to });
+                Some(Drag::Move { id, to, .. }) if self.moved(&id, to) != self.placement(&id) => {
+                    let placement = self.moved(&id, to);
+                    self.apply(Command::Place { id, placement });
                 }
                 Some(Drag::Wire { from, end, .. }) => {
                     // Any port is a valid target, including external ones.
@@ -2535,6 +2548,8 @@ mod tests {
         let mut h = wiring_harness();
         let wire = vec![[0.0, 0.0], [0.0, -10.0], [30.0, -10.0], [30.0, 0.0]];
         (h.state_mut().0.doc.circuit.layout.wires).insert("n1".into(), vec![wire.into()]);
+        // Changed outside a command, so the render cached for this edit is stale.
+        h.state_mut().0.rendered = None;
         h.run();
         let state = |h: &Harness<State>| {
             let (e, s) = h.state();
@@ -3000,7 +3015,7 @@ mod tests {
         h.state_mut().0.circuit_saved("c2".into(), 1);
         // The copy is a new document: nothing cached about the original carries over.
         assert!(h.state().0.drawn_issues.is_none() && h.state().0.valve_status.is_none());
-        assert!(h.state().0.rendered.is_none());
+        assert!(h.state().0.rendered.is_none() && h.state().0.dragged.is_none());
         assert_eq!(
             h.state()
                 .0
@@ -3645,6 +3660,51 @@ mod tests {
     }
 
     #[test]
+    fn a_catalogue_reload_redraws_the_status_words() {
+        let mut h = import_harness(Some(1), false);
+        let not_listed = |h: &Harness<State>| {
+            let r = &h.state().0.rendered.as_ref().unwrap().1;
+            (r.drawing.primitives.iter()).any(|p| {
+                matches!(p, hydra_symbols::Primitive::Text { text, .. } if text == "PART NOT LISTED DEMO-CB10-21")
+            })
+        };
+        assert!(!not_listed(&h));
+        let before = h.state().0.renders;
+        let s = &mut h.state_mut().1;
+        (s.catalogue.parts).retain(|p| p.part_number != "DEMO-CB10-21");
+        s.catalogue_loads += 1;
+        h.run_steps(3);
+        assert_eq!(h.state().0.renders, before + 1);
+        assert!(
+            not_listed(&h),
+            "2.1's part is gone from the reloaded catalogue"
+        );
+    }
+
+    #[test]
+    fn turning_a_part_while_dragging_it_is_kept_on_drop() {
+        let mut h = harness();
+        h.get_by_label("Add port").click();
+        h.run();
+        let from = anchor(&h, "X1", PORT_PIN);
+        let to = from + Vec2::new(0.0, 150.0);
+        h.hover_at(from);
+        h.drag_at(from);
+        h.run();
+        h.hover_at(from + (to - from) * 0.5);
+        h.run();
+        h.key_press(Key::R);
+        h.run();
+        h.hover_at(to);
+        h.run();
+        h.drop_at(to);
+        h.run();
+        let placed = h.state().0.placement("X1");
+        assert_eq!(placed.rotation, Rotation::R90, "{placed:?}");
+        assert!(placed.y > 20.0, "and it moved: {placed:?}");
+    }
+
+    #[test]
     fn dragging_and_undo_redraw_what_the_canvas_hit_tests() {
         let mut h = harness();
         h.get_by_label("Add port").click();
@@ -3665,6 +3725,10 @@ mod tests {
         h.hover_at(from + (to - from) * 0.75);
         h.run();
         assert_eq!(h.state().0.renders, mid + 1);
+        // A catalogue reload renders the document and the part at its drag spot again.
+        h.state_mut().1.catalogue_loads += 1;
+        h.run();
+        assert_eq!(h.state().0.renders, mid + 3);
         h.hover_at(to);
         h.run();
         h.drop_at(to);

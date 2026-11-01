@@ -1063,7 +1063,7 @@ pub fn render(circuit: &Circuit, catalogue: &Catalogue) -> Rendered {
 /// Each drawn part by id, exactly as [`render_circuit`] draws it: its designator keeps clear of
 /// the circuit's wires, so anything measuring or hit-testing parts should use this.
 pub fn render_parts(circuit: &Circuit, catalogue: &Catalogue) -> Vec<(String, Drawing)> {
-    render(circuit, catalogue).parts
+    parts_and_wires(circuit, catalogue).0
 }
 
 /// The parts by id, the wires with every port anchor named `component.port`, and the block's
