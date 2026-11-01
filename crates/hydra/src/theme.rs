@@ -4,9 +4,9 @@
 //! [`apply`]; the contrast test below checks every palette listed in it.
 
 use eframe::egui::{
-    self, Button, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Frame,
-    Label, Margin, Painter, Rect, Response, RichText, Sense, Shadow, Shape, Stroke, StrokeKind,
-    TextStyle, Theme, Ui, Vec2, WidgetInfo, WidgetType,
+    self, Align, Button, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId,
+    Frame, Label, Layout, Margin, Painter, Rect, Response, RichText, Sense, Shadow, Shape, Stroke,
+    StrokeKind, TextStyle, Theme, Ui, Vec2, Widget, WidgetInfo, WidgetType,
     text::{LayoutJob, TextFormat},
 };
 use std::sync::Arc;
@@ -133,8 +133,8 @@ pub enum Mark {
     Warning,
     /// ■ missing, or an error.
     Error,
-    /// ⇄ stand-in. No tab shows valve status in a chip yet; the Schematic restyle will.
-    #[allow(dead_code)]
+    /// ⇄ stand-in.
+    #[cfg_attr(not(test), expect(dead_code, reason = "used by the Schematic restyle"))]
     StandIn,
     /// ✓ approved or checked.
     Check,
@@ -149,7 +149,8 @@ pub enum Mark {
 impl Mark {
     /// The tone a chip or banner with this mark is drawn in. Waiting takes the accent (a
     /// decision still to make) and rejected is grey: neither is a catalogue status.
-    pub fn tone(self, p: &Palette) -> Tone {
+    pub fn tone(self) -> Tone {
+        let p = &LIGHT;
         match self {
             Mark::Warning => p.unlisted,
             Mark::Error => p.missing,
@@ -210,14 +211,17 @@ impl Mark {
     }
 }
 
-/// The mark, then `text`, both in the mark's tone: a problem line, a "No symbol" note.
+/// The mark, then `text`, both in the mark's tone and the mark as tall as the text: a problem
+/// line, a "No symbol" note. Always left to right, whatever the layout around it.
 pub fn marked(ui: &mut Ui, mark: Mark, text: impl Into<RichText>) -> Response {
-    let color = mark.tone(&LIGHT).text;
-    ui.horizontal(|ui| {
-        let side = ui.text_style_height(&TextStyle::Body);
+    let color = mark.tone().text;
+    let text = text.into().color(color);
+    let side = ui.fonts_mut(|f| text.font_height(f, ui.style()));
+    let row = Vec2::new(ui.available_size_before_wrap().x, side);
+    ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
         mark.paint(ui.painter(), rect.shrink(side * 0.2), color);
-        ui.add(Label::new(text.into().color(color)).wrap())
+        ui.add(Label::new(text).wrap())
     })
     .inner
 }
@@ -225,7 +229,7 @@ pub fn marked(ui: &mut Ui, mark: Mark, text: impl Into<RichText>) -> Response {
 /// A status chip: the mark and the word in the mark's tone, on its tint with a strong edge,
 /// 24 px high. Screen readers and kittests read the word as a label.
 pub fn chip(ui: &mut Ui, mark: Mark, word: &str) -> Response {
-    let tone = mark.tone(&LIGHT);
+    let tone = mark.tone();
     let size = TextStyle::Small.resolve(ui.style()).size;
     let font = FontId::new(size, FontFamily::Name(SEMIBOLD.into()));
     let galley = ui.painter().layout_no_wrap(word.into(), font, tone.text);
@@ -252,31 +256,66 @@ pub fn chip(ui: &mut Ui, mark: Mark, word: &str) -> Response {
 }
 
 /// The primary button: filled accent, for the one action in a view that commits. 32 px high.
-pub fn primary(text: impl Into<String>) -> Button<'static> {
-    let text = RichText::new(text)
-        .family(FontFamily::Name(SEMIBOLD.into()))
-        .color(LIGHT.on_accent);
-    Button::new(text)
-        .fill(LIGHT.accent)
-        .stroke(Stroke::new(1.0, LIGHT.accent_hover))
-        .min_size(Vec2::new(0.0, 32.0))
+pub fn primary(text: impl Into<String>) -> impl Widget {
+    let p = &LIGHT;
+    button(
+        text.into(),
+        [p.accent, p.accent_hover],
+        [p.accent_hover; 2],
+        p.on_accent,
+    )
 }
 
 /// The danger button: outlined in the missing tone, never filled, for reject, delete and
 /// discard. 32 px high.
-pub fn danger(text: impl Into<String>) -> Button<'static> {
-    let text = RichText::new(text)
-        .family(FontFamily::Name(SEMIBOLD.into()))
-        .color(LIGHT.missing.text);
-    Button::new(text)
-        .fill(LIGHT.surface)
-        .stroke(Stroke::new(1.0, LIGHT.missing.text))
-        .min_size(Vec2::new(0.0, 32.0))
+pub fn danger(text: impl Into<String>) -> impl Widget {
+    let t = LIGHT.missing;
+    button(
+        text.into(),
+        [LIGHT.surface, t.tint],
+        [t.text, t.strong],
+        t.text,
+    )
+}
+
+/// A 32 px button with a semibold label in `text_color`, its fill and edge at rest and under
+/// the pointer (or pressed), and a 2 px accent ring while it has keyboard focus.
+fn button(
+    text: String,
+    fill: [Color32; 2],
+    edge: [Color32; 2],
+    text_color: Color32,
+) -> impl Widget {
+    move |ui: &mut Ui| {
+        ui.scope(|ui| {
+            let w = &mut ui.visuals_mut().widgets;
+            for (state, i) in [
+                (&mut w.inactive, 0),
+                (&mut w.hovered, 1),
+                (&mut w.active, 1),
+            ] {
+                state.weak_bg_fill = fill[i];
+                state.bg_fill = fill[i];
+                state.bg_stroke = Stroke::new(1.0, edge[i]);
+                state.fg_stroke = Stroke::new(1.0, text_color);
+            }
+            let label = RichText::new(text).family(FontFamily::Name(SEMIBOLD.into()));
+            let response = ui.add(Button::new(label).min_size(Vec2::new(0.0, 32.0)));
+            if response.has_focus() {
+                let ring = Stroke::new(2.0, LIGHT.accent);
+                let rect = response.rect.expand(1.0);
+                ui.painter()
+                    .rect_stroke(rect, RADIUS + 1, ring, StrokeKind::Outside);
+            }
+            response
+        })
+        .inner
+    }
 }
 
 /// A full-width banner in the mark's tone: the mark, the bold `first` sentence, then `rest`.
 pub fn banner(ui: &mut Ui, mark: Mark, first: &str, rest: &str) -> Response {
-    let tone = mark.tone(&LIGHT);
+    let tone = mark.tone();
     Frame::new()
         .fill(tone.tint)
         .stroke(Stroke::new(1.0, tone.strong))
@@ -473,11 +512,26 @@ pub fn themed<S>(mut h: egui_kittest::Harness<'_, S>) -> egui_kittest::Harness<'
     h
 }
 
-/// Whether [`apply`] has reached this ui. A kittest harness draws its first frame before
-/// [`themed`] can install the theme, so app closures using the theme's text styles skip it.
+/// A themed kittest harness of `size` around `app`. kittest draws a first frame before the
+/// theme can be installed, so `app` only runs once it is: the theme's text styles exist.
 #[cfg(test)]
-pub fn is_themed(ui: &Ui) -> bool {
-    ui.style().text_styles.contains_key(&label())
+pub fn harness<'a, S>(
+    size: Vec2,
+    mut app: impl FnMut(&mut Ui, &mut S) + 'a,
+    state: S,
+) -> egui_kittest::Harness<'a, S> {
+    themed(
+        egui_kittest::Harness::builder()
+            .with_size(size)
+            .build_ui_state(
+                move |ui, state| {
+                    if ui.style().text_styles.contains_key(&label()) {
+                        app(ui, state);
+                    }
+                },
+                state,
+            ),
+    )
 }
 
 #[cfg(test)]
@@ -521,6 +575,11 @@ mod tests {
                 pairs.push(("accent", p.accent, bg));
             }
             pairs.push(("accent text", p.accent_text, p.accent_tint));
+            // A selected row and a changed table row carry ordinary text.
+            for bg in [p.accent_tint, p.unlisted.tint] {
+                pairs.push(("ink", p.ink, bg));
+                pairs.push(("secondary", p.secondary, bg));
+            }
             for (tone_name, t) in [
                 ("unlisted", p.unlisted),
                 ("missing", p.missing),
@@ -678,14 +737,14 @@ mod tests {
 
     #[test]
     fn chips_and_banners_take_their_marks_tone() {
-        assert_eq!(Mark::Warning.tone(&LIGHT), LIGHT.unlisted);
-        assert_eq!(Mark::Error.tone(&LIGHT), LIGHT.missing);
-        assert_eq!(Mark::Check.tone(&LIGHT), LIGHT.ok);
-        assert_eq!(Mark::Agent.tone(&LIGHT), LIGHT.agent);
-        assert_eq!(Mark::Waiting.tone(&LIGHT).strong, LIGHT.accent);
-        assert_eq!(Mark::Rejected.tone(&LIGHT).text, LIGHT.secondary);
+        assert_eq!(Mark::Warning.tone(), LIGHT.unlisted);
+        assert_eq!(Mark::Error.tone(), LIGHT.missing);
+        assert_eq!(Mark::Check.tone(), LIGHT.ok);
+        assert_eq!(Mark::Agent.tone(), LIGHT.agent);
+        assert_eq!(Mark::Waiting.tone().strong, LIGHT.accent);
+        assert_eq!(Mark::Rejected.tone().text, LIGHT.secondary);
         for mark in MARKS {
-            let tone = mark.tone(&LIGHT);
+            let tone = mark.tone();
             let chip = shapes(|ui| {
                 chip(ui, mark, "Word");
             });
@@ -707,20 +766,65 @@ mod tests {
         }
     }
 
+    /// The shapes of a button after a few frames, with the pointer over it or keyboard focus.
+    fn button_shapes<W: Widget>(make: impl Fn() -> W, hover: bool, focus: bool) -> Vec<Shape> {
+        let ctx = egui::Context::default();
+        apply(&ctx, &LIGHT);
+        let mut rect = Rect::NOTHING;
+        let mut shapes = vec![];
+        for frame in 0..4 {
+            let mut input = egui::RawInput::default();
+            if hover && frame > 0 {
+                input.events.push(egui::Event::PointerMoved(rect.center()));
+            }
+            let mut out = ctx.run_ui(input, |ui| {
+                let response = ui.add(make());
+                if focus && frame == 1 {
+                    response.request_focus();
+                }
+                rect = response.rect;
+            });
+            out.textures_delta.clear();
+            shapes = out.shapes.into_iter().map(|s| s.shape).collect();
+        }
+        shapes
+    }
+
     #[test]
     fn primary_is_filled_and_danger_outlined() {
-        let primary = shapes(|ui| {
-            ui.add(primary("Approve"));
-        });
-        assert!(rects(&primary).iter().any(|r| r.fill == LIGHT.accent));
-        let danger = shapes(|ui| {
-            ui.add(danger("Reject"));
-        });
-        let edge = rects(&danger)
+        let fills = |shapes: &[Shape]| rects(shapes).iter().map(|r| r.fill).collect::<Vec<_>>();
+        let primary_ = || primary("Approve");
+        let rest = button_shapes(primary_, false, false);
+        assert!(fills(&rest).contains(&LIGHT.accent));
+        assert!(rects(&rest).iter().all(|r| r.rect.height() >= 32.0));
+        // Under the pointer it darkens, so it answers to hover.
+        assert!(fills(&button_shapes(primary_, true, false)).contains(&LIGHT.accent_hover));
+
+        let danger_ = || danger("Reject");
+        let rest = button_shapes(danger_, false, false);
+        let edge = rects(&rest)
             .into_iter()
             .find(|r| r.stroke.color == LIGHT.missing.text)
             .expect("an outline in the missing tone");
         assert_eq!(edge.fill, LIGHT.surface, "danger is never filled");
-        assert!(edge.rect.height() >= 32.0);
+        assert!(fills(&button_shapes(danger_, true, false)).contains(&LIGHT.missing.tint));
+
+        // Keyboard focus shows a 2 px accent ring on both.
+        for focused in [
+            button_shapes(primary_, false, true),
+            button_shapes(danger_, false, true),
+        ] {
+            assert!(
+                rects(&focused)
+                    .iter()
+                    .any(|r| r.stroke == Stroke::new(2.0, LIGHT.accent)),
+                "no focus ring"
+            );
+        }
+        assert!(
+            !rects(&rest)
+                .iter()
+                .any(|r| r.stroke == Stroke::new(2.0, LIGHT.accent))
+        );
     }
 }

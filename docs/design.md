@@ -2,7 +2,7 @@
 
 How Hydra looks, and why. Every tab is built from what is here, so a new feature looks like the rest of the app without a design pass of its own.
 
-- **In code:** `crates/hydra/src/theme.rs` holds the colours, fonts, type scale and spacing, and `theme::apply` installs them at start-up. Tabs take colours from `theme::LIGHT` and text styles from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. New code never writes a literal `Color32` or font size; the older literals left are listed under "Not built yet". Kittests build their harness through `theme::themed`, and app closures that use the theme's text styles skip the harness's first, unthemed frame with `theme::is_themed`.
+- **In code:** `crates/hydra/src/theme.rs` holds the colours, fonts, type scale and spacing, and `theme::apply` installs them at start-up. Tabs take colours from `theme::LIGHT` and text styles from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. New code never writes a literal `Color32` or font size; the older literals left are listed under "Not built yet". Kittests build their harness with `theme::harness(size, app, state)`, which installs the theme and skips kittest's first frame, drawn before the theme exists. Older tests wrap a harness in `theme::themed`.
 - **The boards:** the design canvas at <https://claude.ai/artifact/2kf45qw3E7AqKkBPAcYSzZ> (private to its owner) shows the foundations, the components, and the Schematic and Proposals tabs redrawn in the system. Its source is kept in [`docs/design/`](design/), so the boards can be rebuilt if the canvas is ever lost. Each `.dc.html` file is one board, and `canvas.json` lays them out. The files open in the claude.ai Design canvas, not in a plain browser.
 
 ## Who it is for
@@ -80,7 +80,7 @@ IBM Plex, chosen to match the lettering of the engineers' paper drawings. It is 
 - **Spacing:** a 4 px grid, using 4 / 8 / 12 / 16 / 24 / 32. Panels have 16 px padding and dialogs 16–32.
 - **Control heights:** 28 px for toolbars and inline controls, 32 px for form fields and dialog buttons, 36 px for list and issue rows.
 - **Corners:** `theme::RADIUS` (3 px) on controls, cards and chips. Panels, the sheet, title blocks and tables are square.
-- **Edges:** `border` for panel edges, `divider` between rows, and `border_strong` for anything you can click or type in. Focus and selection are 2 px `accent`.
+- **Edges:** `border` for panel edges, `divider` between rows, and `border_strong` for anything you can click or type in. Keyboard focus is a 2 px `accent` ring, and so is the selection frame on the sheet. A selected list row is quieter: `accent_tint` with a 1 px `accent` edge (see List rows).
 - **Shadows:** only floating menus and dialogs have one.
 - **Icons:** 16 px, 1.75 px stroke, painted. No emoji.
 
@@ -93,7 +93,7 @@ The Components board shows each one. How they map to egui, with the `theme` help
   - *Secondary* is the egui default button.
   - *Quiet* is a frameless button in `accent`, for toggles and links inside panels.
   - *Danger* (`theme::danger(text)`) is outlined in `missing.text`, never filled, and is used for reject, delete and discard.
-  - Both helpers return an egui `Button`, 32 px high, so `add_enabled` and the hover texts work as usual. A disabled primary button is the accent faded by egui.
+  - Both helpers return an `impl Widget` around an egui `Button`, 32 px high, so `add_enabled` and the hover texts work as usual. Under the pointer or pressed, primary turns `accent_hover` and danger takes the `missing` tint and strong edge. With keyboard focus both get the 2 px accent ring. A disabled primary button is the accent faded by egui.
   - A disabled button always says why in its tooltip (`on_disabled_hover_text`).
 - **Toolbar groups:** buttons grouped by job with joined edges (file, edit, place, export). A toggle shows its key (`W`) and turns `accent_tint` while on.
 - **Tabs:** the active tab has a 3 px `accent` top edge and the panel colour. Proposals carries a count of waiting proposals in the `agent` tone.
@@ -102,10 +102,10 @@ The Components board shows each one. How they map to egui, with the `theme` help
   - A changed field gets an `unlisted` edge, a CHANGED tag and "Was …" under it. In a table, the row is tinted `unlisted`, the label gets a ▲ Changed chip, and "was …" sits in its own column.
   - A field with an error gets a `missing` edge and the fix in plain words under it.
 - **Status chips:** `theme::chip(ui, mark, word)`: the mark, then the word, in the tone's text on its tint with a `strong` edge, 24 px high. Kittests and screen readers read the word as a label. The mark picks the tone (`Mark::tone`): ▲ `unlisted`, ■ `missing`, ⇄ `stand_in`, ✓ `ok`, ◆ `agent`, ● the accent (waiting for a person), ✕ grey (rejected). Valve status is about the catalogue. Review status (waiting, approved, rejected, checked) is about a person's decision.
-- **Marked text:** `theme::marked(ui, mark, text)`: the mark and the text in the mark's tone, for a problem line or a "No symbol" note.
+- **Marked text:** `theme::marked(ui, mark, text)`: the mark, as tall as the text, then the text, both in the mark's tone and always left to right. Used for a problem line, a queue row's check or a "No symbol" note.
 - **Banners:** `theme::banner(ui, mark, first, rest)`: a full-width strip in the mark's tint with a `strong` edge: the mark, the bold first sentence, then the fix. The board allows at most one button; the helper has none yet. An unchecked import, for example, will offer "Mark checked".
 - **Tables:** square, a `border` edge, `divider` lines between rows, a `panel`-coloured header row in Overline type and `secondary` colour, and 12 px cell padding.
-- **List rows:** a 1 px `divider` under each row; the selected row is `accent_tint` with a 1 px `accent` edge all round (never a coloured stripe down one side).
+- **List rows:** a 1 px `divider` under each row; the selected row is `accent_tint` with a 1 px `accent` edge all round (never a coloured stripe down one side), and a focused row gets the same edge. A clickable row tells screen readers its name and whether it is selected (`WidgetInfo::selected`).
 - **Segmented control:** joined `Button::selectable` segments in one `border_strong` frame; the selected one is `accent_tint`. The review queue's Waiting / All is one.
 - **Issue list:** one row per issue: the severity word with its mark, the part as a link that selects it on the sheet, then the message. Errors come first.
 - **Title block:** in the corner of the sheet: the circuit name, schema, drawn by, revision with an "edited" mark, and checked by. It replaces the toolbar's revision text and prints in the SVG and PDF.
@@ -128,7 +128,7 @@ The Proposals tab adds three things:
 
 Approve stays off while a problem is open, and the action bar says why.
 
-Built so far: the queue, the header with its chips, the symbol on the sheet, the replace banner, the fields and parts tables, the notes, and the action bar pinned under the detail with its problem count. The step list, the datasheet page beside the symbol, each field's source page and the activity feed wait for data hydra-mcp doesn't record yet (see TODO.md).
+Built so far: the queue, each waiting row with its check (■ problems, ▲ replaces a released type, ✓ checks pass), the header with its chips, the symbol on the sheet, the replace banner, the fields and parts tables, the notes, and the action bar pinned under the detail with its problem count. The step list, the datasheet page beside the symbol, each field's source page and the activity feed wait for data hydra-mcp doesn't record yet (see TODO.md).
 
 ## Not built yet
 

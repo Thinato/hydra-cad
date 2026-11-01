@@ -22,6 +22,38 @@ pub struct ProposalsPanel {
     /// A list, approve or reject request is waiting for its reply.
     busy: bool,
     error: Option<String>,
+    /// Each listed proposal's check for its queue row (`None` once reviewed), with the
+    /// catalogue size it was made against. Cleared when a new list arrives.
+    row_checks: Option<([usize; 4], Vec<RowCheck>)>,
+}
+
+/// A queue row's check: its mark and words, or `None` once the proposal is reviewed.
+type RowCheck = Option<(Mark, String)>;
+
+/// How many rows the catalogue has of each kind. Rows are only ever added, so a change in
+/// these tells that checks against it may have changed.
+fn catalogue_size(c: &Catalogue) -> [usize; 4] {
+    [
+        c.manufacturers.len(),
+        c.symbol_defs.len(),
+        c.valve_types.len(),
+        c.parts.len(),
+    ]
+}
+
+/// What a waiting proposal's queue row says about it: its problems, that it replaces a
+/// released valve type, or that its checks pass.
+fn row_check(p: &Proposal, catalogue: &Catalogue) -> (Mark, String) {
+    let n = p.problems(catalogue).len();
+    let base = catalogue.valve_type(&CatalogueRef::new(&p.valve_type.key, p.valve_type.version));
+    if n > 0 {
+        let s = if n == 1 { "" } else { "s" };
+        (Mark::Error, format!("{n} problem{s}"))
+    } else if base.is_some_and(|b| b.symbol.is_some()) {
+        (Mark::Warning, "Replaces a released type".into())
+    } else {
+        (Mark::Check, "Checks pass".into())
+    }
 }
 
 /// The selected proposal, with the reviewer's edits.
@@ -106,15 +138,12 @@ impl Review {
     /// Catalogue rows are only ever added, so their counts tell when it changed.
     fn checked(&mut self, catalogue: &Catalogue) -> &Checked {
         let key = format!(
-            "{}\0{}\0{}\0{}\0{} {} {} {}",
+            "{}\0{}\0{}\0{}\0{:?}",
             self.series,
             self.code,
             self.mounting,
             self.params,
-            catalogue.manufacturers.len(),
-            catalogue.symbol_defs.len(),
-            catalogue.valve_types.len(),
-            catalogue.parts.len()
+            catalogue_size(catalogue)
         );
         if self.checked.as_ref().is_none_or(|(k, _)| *k != key) {
             let checked = Checked::new(&self.edited(), catalogue);
@@ -158,6 +187,7 @@ impl ProposalsPanel {
             }
         }
         self.list = Some(list);
+        self.row_checks = None;
     }
 
     /// An approve or reject went through; the list is fetched again.
@@ -234,7 +264,7 @@ impl ProposalsPanel {
 
     /// The review queue: its header, the Waiting/All switch and one row per proposal.
     fn queue_ui(&mut self, ui: &mut egui::Ui, shared: &Shared) {
-        egui::Frame::new()
+        let header = egui::Frame::new()
             .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -277,16 +307,27 @@ impl ProposalsPanel {
                         });
                     });
             });
-        let rect = ui.min_rect();
         ui.painter().hline(
-            rect.x_range(),
-            rect.bottom(),
+            ui.max_rect().x_range(),
+            header.response.rect.bottom(),
             Stroke::new(1.0, LIGHT.border),
         );
 
         let Some(list) = &self.list else {
             return;
         };
+        let catalogue = &shared.catalogue;
+        let size = catalogue_size(catalogue);
+        if self.row_checks.as_ref().is_none_or(|(s, _)| *s != size) {
+            let checks = list
+                .iter()
+                .map(|p| {
+                    (p.status == ProposalStatus::Pending).then(|| row_check(&p.proposal, catalogue))
+                })
+                .collect();
+            self.row_checks = Some((size, checks));
+        }
+        let checks = &self.row_checks.as_ref().expect("just checked").1;
         if list.is_empty() {
             egui::Frame::new()
                 .inner_margin(egui::Margin::same(12))
@@ -301,9 +342,9 @@ impl ProposalsPanel {
         let mut picked = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            for p in list {
+            for (p, check) in list.iter().zip(checks) {
                 let selected = self.review.as_ref().is_some_and(|r| r.record.id == p.id);
-                if queue_row(ui, p, selected, &shared.catalogue).clicked() {
+                if queue_row(ui, p, check.as_ref(), selected, catalogue).clicked() {
                     picked = Some(p.clone());
                 }
             }
@@ -331,63 +372,85 @@ fn manufacturer_name<'a>(catalogue: &'a Catalogue, key: &'a str) -> &'a str {
         .map_or(key, |m| m.name.as_str())
 }
 
-/// One proposal in the queue: code and time, target, who drafted it, and once reviewed its
-/// decision. The selected row is tinted with an accent edge.
+/// One proposal in the queue: code and time, target, who drafted it, then its check while it
+/// waits or its decision once reviewed. The selected row is tinted with an accent edge; a
+/// focused one gets the edge too. Screen readers and kittests read it as "{series} {code}".
 fn queue_row(
     ui: &mut egui::Ui,
     p: &ProposalRecord,
+    check: Option<&(Mark, String)>,
     selected: bool,
     catalogue: &Catalogue,
 ) -> egui::Response {
     let v = &p.proposal.valve_type;
-    ui.scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
-        // Clicks on the row's text select the row.
-        ui.style_mut().interaction.selectable_labels = false;
-        let (fill, edge) = if selected {
-            (LIGHT.accent_tint, LIGHT.accent)
-        } else if ui.response().hovered() {
-            (LIGHT.hover, Color32::TRANSPARENT)
-        } else {
-            (Color32::TRANSPARENT, Color32::TRANSPARENT)
-        };
-        let row = egui::Frame::new()
-            .fill(fill)
-            .stroke(Stroke::new(1.0, edge))
-            .inner_margin(egui::Margin::same(12))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing.y = 4.0;
-                ui.horizontal(|ui| {
-                    let code = RichText::new(format!("{} {}", v.series, v.code))
-                        .family(FontFamily::Name(theme::MONO_SEMIBOLD.into()));
-                    ui.label(code);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(&p.created_at).small().color(LIGHT.secondary));
+    let name = format!("{} {}", v.series, v.code);
+    let row = ui
+        .scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
+            // Clicks on the row's text select the row.
+            ui.style_mut().interaction.selectable_labels = false;
+            let last = ui.response();
+            let fill = if selected {
+                LIGHT.accent_tint
+            } else if last.hovered() {
+                LIGHT.hover
+            } else {
+                Color32::TRANSPARENT
+            };
+            let edge = if selected || last.has_focus() {
+                LIGHT.accent
+            } else {
+                Color32::TRANSPARENT
+            };
+            let row = egui::Frame::new()
+                .fill(fill)
+                .stroke(Stroke::new(1.0, edge))
+                .inner_margin(egui::Margin::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.horizontal(|ui| {
+                        let code = RichText::new(&name)
+                            .family(FontFamily::Name(theme::MONO_SEMIBOLD.into()));
+                        ui.label(code);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new(&p.created_at).small().color(LIGHT.secondary));
+                        });
                     });
+                    ui.monospace(p.proposal.target().to_string());
+                    ui.label(
+                        RichText::new(format!(
+                            "{} · by {}",
+                            manufacturer_name(catalogue, &v.manufacturer),
+                            p.created_by
+                        ))
+                        .small()
+                        .color(LIGHT.secondary),
+                    );
+                    match check {
+                        Some((mark, text)) => {
+                            let text = RichText::new(text)
+                                .small()
+                                .family(FontFamily::Name(theme::SEMIBOLD.into()));
+                            theme::marked(ui, *mark, text);
+                        }
+                        None => {
+                            let (mark, word) = status_chip(p.status);
+                            theme::chip(ui, mark, word);
+                        }
+                    }
                 });
-                ui.monospace(p.proposal.target().to_string());
-                ui.label(
-                    RichText::new(format!(
-                        "{} · by {}",
-                        manufacturer_name(catalogue, &v.manufacturer),
-                        p.created_by
-                    ))
-                    .small()
-                    .color(LIGHT.secondary),
-                );
-                if p.status != ProposalStatus::Pending {
-                    let (mark, word) = status_chip(p.status);
-                    theme::chip(ui, mark, word);
-                }
-            });
-        let rect = row.response.rect;
-        ui.painter().hline(
-            rect.x_range(),
-            rect.bottom(),
-            Stroke::new(1.0, LIGHT.divider),
-        );
-    })
-    .response
+            let rect = row.response.rect;
+            ui.painter().hline(
+                rect.x_range(),
+                rect.bottom(),
+                Stroke::new(1.0, LIGHT.divider),
+            );
+        })
+        .response;
+    row.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name)
+    });
+    row
 }
 
 /// A heading over a section of the detail view, with space above it.
@@ -482,7 +545,7 @@ fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -
             egui::Frame::new()
                 .inner_margin(egui::Margin::symmetric(28, 20))
                 .show(ui, |ui| {
-                    let width = ui.available_width().min(760.0);
+                    let width = ui.available_width().clamp(0.0, 760.0);
                     ui.set_max_width(width);
                     ui.horizontal_top(|ui| {
                         ui.vertical(|ui| {
@@ -581,7 +644,7 @@ fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -
                             .stroke(Stroke::new(1.0, LIGHT.border))
                             .inner_margin(egui::Margin::same(12))
                             .show(ui, |ui| {
-                                ui.set_width(width - 24.0);
+                                ui.set_width((width - 24.0).max(0.0));
                                 ui.label(&proposal.notes);
                             });
                     }
@@ -616,26 +679,26 @@ fn symbol_preview(ui: &mut egui::Ui, symbol: Option<&SymbolDef>, proposal: &Prop
                                 .small()
                                 .family(FontFamily::Name(theme::SEMIBOLD.into())),
                         );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let reference =
-                                match (&proposal.new_symbol, &proposal.valve_type.symbol) {
-                                    (Some(new), _) => format!("new {}", new.reference()),
-                                    (None, Some(s)) => s.to_string(),
-                                    (None, None) => {
-                                        theme::marked(
-                                            ui,
-                                            Mark::Error,
-                                            RichText::new("No symbol").small(),
-                                        );
-                                        return;
-                                    }
-                                };
-                            ui.label(
-                                RichText::new(reference)
-                                    .text_style(egui::TextStyle::Monospace)
-                                    .color(LIGHT.secondary),
-                            );
-                        });
+                        let reference = match (&proposal.new_symbol, &proposal.valve_type.symbol) {
+                            (Some(new), _) => Some(format!("new {}", new.reference())),
+                            (None, Some(s)) => Some(s.to_string()),
+                            (None, None) => None,
+                        };
+                        match reference {
+                            Some(reference) => {
+                                let right = egui::Layout::right_to_left(egui::Align::Center);
+                                ui.with_layout(right, |ui| {
+                                    ui.label(
+                                        RichText::new(reference)
+                                            .text_style(egui::TextStyle::Monospace)
+                                            .color(LIGHT.secondary),
+                                    );
+                                });
+                            }
+                            None => {
+                                theme::marked(ui, Mark::Error, RichText::new("No symbol").small());
+                            }
+                        }
                     });
                 });
             let top = caption.response.rect.top();
@@ -658,7 +721,7 @@ fn fields(
     width: f32,
 ) {
     // Field, value and was; the row's 12 px margins and gaps come off the table's width.
-    let cols = [150.0, (width - 150.0 - 72.0) * 0.6];
+    let cols = [150.0, ((width - 150.0 - 72.0) * 0.6).max(0.0)];
     let header = |ui: &mut egui::Ui, text: &str| {
         ui.label(
             RichText::new(text)
@@ -858,6 +921,7 @@ fn actions(
 mod tests {
     use std::sync::mpsc::{Receiver, channel};
 
+    use eframe::egui::accesskit::{Role, Toggled};
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
 
@@ -896,23 +960,22 @@ mod tests {
 
     type State = (Review, Shared, Option<Request>);
 
-    fn detail_harness(record: ProposalRecord) -> Harness<'static, State> {
-        let mut h = crate::theme::themed(
-            Harness::builder()
-                .with_size(Vec2::new(900.0, 700.0))
-                .build_ui_state(
-                    |ui, (r, s, out): &mut State| {
-                        if theme::is_themed(ui)
-                            && let Some(req) = detail(ui, r, s, false)
-                        {
-                            *out = Some(req);
-                        }
-                    },
-                    (Review::new(record), shared(), None),
-                ),
+    fn detail_harness_sized(record: ProposalRecord, size: Vec2) -> Harness<'static, State> {
+        let mut h = theme::harness(
+            size,
+            |ui, (r, s, out): &mut State| {
+                if let Some(req) = detail(ui, r, s, false) {
+                    *out = Some(req);
+                }
+            },
+            (Review::new(record), shared(), None),
         );
         h.run();
         h
+    }
+
+    fn detail_harness(record: ProposalRecord) -> Harness<'static, State> {
+        detail_harness_sized(record, Vec2::new(900.0, 700.0))
     }
 
     fn harness(status: ProposalStatus) -> Harness<'static, State> {
@@ -1005,6 +1068,7 @@ mod tests {
         assert_eq!(note, "Spool is tandem centre, see page 1");
 
         let h = harness(ProposalStatus::Approved);
+        assert!(h.query_by_label("DEMO-10 4-3-C").is_some());
         assert!(h.query_by_label("Approve").is_none());
         assert!(h.query_by_label("Reject").is_none());
     }
@@ -1043,17 +1107,10 @@ mod tests {
         let (requests, sent) = channel();
         let mut shared = shared();
         shared.db = Some(Db::new(requests, channel().1));
-        let h = crate::theme::themed(
-            Harness::builder()
-                .with_size(Vec2::new(1100.0, 700.0))
-                .build_ui_state(
-                    |ui, (panel, shared): &mut PanelState| {
-                        if theme::is_themed(ui) {
-                            panel.ui(ui, shared);
-                        }
-                    },
-                    (ProposalsPanel::default(), shared),
-                ),
+        let h = theme::harness(
+            Vec2::new(1100.0, 700.0),
+            |ui, (panel, shared): &mut PanelState| panel.ui(ui, shared),
+            (ProposalsPanel::default(), shared),
         );
         (h, sent)
     }
@@ -1110,8 +1167,73 @@ mod tests {
             .listed(vec![record(ProposalStatus::Pending)]);
         h.run();
         assert!(h.query_by_label("Waiting for review").is_none());
-        h.get_by_label("vt-demo-new@1").click();
+        let row = || h.get_by_role_and_label(Role::Button, "DEMO-10 4-3-C");
+        assert_eq!(row().accesskit_node().toggled(), Some(Toggled::False));
+        row().click();
         h.run();
         assert!(h.query_by_label("Waiting for review").is_some());
+        let row = h.get_by_role_and_label(Role::Button, "DEMO-10 4-3-C");
+        assert_eq!(row.accesskit_node().toggled(), Some(Toggled::True));
+    }
+
+    #[test]
+    fn waiting_rows_show_their_check_and_follow_the_catalogue() {
+        let (mut h, _sent) = panel_harness();
+        h.step();
+        let mut problems = record(ProposalStatus::Pending);
+        problems.id = "p2".into();
+        problems.proposal.valve_type.key = "vt-acme-1".into();
+        problems.proposal.valve_type.manufacturer = "acme".into();
+        problems.proposal.valve_type.params = serde_json::json!({});
+        let mut update = record(ProposalStatus::Pending);
+        update.id = "p3".into();
+        update.proposal.valve_type = h
+            .state()
+            .1
+            .catalogue
+            .valve_types
+            .iter()
+            .find(|v| v.key == "vt-demo-4-2" && v.version == 1)
+            .unwrap()
+            .clone();
+        let mut approved = record(ProposalStatus::Approved);
+        approved.id = "p4".into();
+        approved.proposal = problems.proposal.clone();
+        h.state_mut().0.listed(vec![
+            record(ProposalStatus::Pending),
+            problems,
+            update,
+            approved,
+        ]);
+        h.run();
+        assert!(h.query_by_label("Checks pass").is_some());
+        // Unknown manufacturer and no function.
+        assert!(h.query_by_label("2 problems").is_some());
+        assert!(h.query_by_label("Replaces a released type").is_some());
+        // A reviewed row keeps its decision, not its check.
+        assert!(h.query_by_label("Approved").is_some());
+        assert_eq!(h.query_all_by_label_contains("problem").count(), 1);
+
+        // Adding the manufacturer to the catalogue leaves one problem.
+        h.state_mut()
+            .1
+            .catalogue
+            .manufacturers
+            .push(hydra_core::Manufacturer {
+                key: "acme".into(),
+                name: "Acme".into(),
+            });
+        h.run();
+        assert!(h.query_by_label("1 problem").is_some());
+    }
+
+    #[test]
+    fn a_narrow_detail_still_draws() {
+        // The queue dragged wide or the dock split leaves the detail a sliver.
+        for width in [250.0, 40.0] {
+            let h = detail_harness_sized(record(ProposalStatus::Pending), Vec2::new(width, 700.0));
+            assert!(h.query_by_label("Approve").is_some());
+            assert!(h.query_by_label("Ordering code table on page 2.").is_some());
+        }
     }
 }
