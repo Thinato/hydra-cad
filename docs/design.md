@@ -2,7 +2,7 @@
 
 How Hydra looks, and why. Every tab is built from what is here, so a new feature looks like the rest of the app without a design pass of its own.
 
-- **In code:** `crates/hydra/src/theme.rs` holds the colours, fonts, type scale and spacing, and `theme::apply` installs them at start-up. Tabs take colours from `theme::LIGHT` and text styles from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. New code never writes a literal `Color32` or font size; the older literals left are listed under "Not built yet".
+- **In code:** `crates/hydra/src/theme.rs` holds the colours, fonts, type scale and spacing, and `theme::apply` installs them at start-up. Tabs take colours from `theme::LIGHT` and text styles from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. New code never writes a literal `Color32` or font size; the older literals left are listed under "Not built yet". Kittests build their harness through `theme::themed`, and app closures that use the theme's text styles skip the harness's first, unthemed frame with `theme::is_themed`.
 - **The boards:** the design canvas at <https://claude.ai/artifact/2kf45qw3E7AqKkBPAcYSzZ> (private to its owner) shows the foundations, the components, and the Schematic and Proposals tabs redrawn in the system. Its source is kept in [`docs/design/`](design/), so the boards can be rebuilt if the canvas is ever lost. Each `.dc.html` file is one board, and `canvas.json` lays them out. The files open in the claude.ai Design canvas, not in a plain browser.
 
 ## Who it is for
@@ -46,7 +46,7 @@ Status colours come as a `theme::Tone`. Each has three parts: `strong` for an ed
 
 Rules:
 - **Status is never colour alone.** It always comes with a word and a mark of its own shape: ▲ part not listed or warning, ■ missing or error, ⇄ stand-in, ✓ approved or checked, ◆ assistant, ● waiting, ✕ rejected. That way a status survives a black-and-white printout and reads for colour-blind engineers.
-  - The marks are painted as shapes, not typed. Plex has none of ▲ ■ ◆ ● ✕. egui's fallback fonts cover some of them in some families, and ✕ in none.
+  - The marks are painted as shapes, not typed: `theme::Mark` names them and `Mark::paint` draws one in a rect. Plex has none of ▲ ■ ◆ ● ✕. egui's fallback fonts cover some of them in some families, and ✕ in none.
 - **Contrast is checked.** Text is at least 4.5:1 on every background it sits on. Edges and marks that must be seen (input borders, status frames, the accent) are at least 3:1. Amber and red also differ in lightness, not hue alone. The theme tests check all three for every palette.
 - **The sheet keeps ISO 1219 as on paper.** Lines are black ink and line kinds differ by dash pattern. UI colour reaches the sheet only as an overlay: the selection frame (2 px accent) and the status frame (`strong`). It never colours the lines themselves.
 
@@ -86,22 +86,27 @@ IBM Plex, chosen to match the lettering of the engineers' paper drawings. It is 
 
 ## Components
 
-The Components board shows each one. How they map to egui:
+The Components board shows each one. How they map to egui, with the `theme` helper where there is one:
 
 - **Buttons:**
-  - *Primary* is filled `accent` with `on_accent` text, and there is at most one per view: the action that commits.
+  - *Primary* (`theme::primary(text)`) is filled `accent` with `on_accent` text, and there is at most one per view: the action that commits.
   - *Secondary* is the egui default button.
   - *Quiet* is a frameless button in `accent`, for toggles and links inside panels.
-  - *Danger* is outlined in `missing.text`, never filled, and is used for reject, delete and discard.
+  - *Danger* (`theme::danger(text)`) is outlined in `missing.text`, never filled, and is used for reject, delete and discard.
+  - Both helpers return an egui `Button`, 32 px high, so `add_enabled` and the hover texts work as usual. A disabled primary button is the accent faded by egui.
   - A disabled button always says why in its tooltip (`on_disabled_hover_text`).
 - **Toolbar groups:** buttons grouped by job with joined edges (file, edit, place, export). A toggle shows its key (`W`) and turns `accent_tint` while on.
 - **Tabs:** the active tab has a 3 px `accent` top edge and the panel colour. Proposals carries a count of waiting proposals in the `agent` tone.
-- **Fields:** a label above, 32 px high.
+- **Fields:** a label above, 32 px high. In a table (the Proposals fields) the label is the first column instead.
   - Codes and refs are in Data type.
-  - A changed field gets an `unlisted` edge, a CHANGED tag and "Was …" under it.
+  - A changed field gets an `unlisted` edge, a CHANGED tag and "Was …" under it. In a table, the row is tinted `unlisted`, the label gets a ▲ Changed chip, and "was …" sits in its own column.
   - A field with an error gets a `missing` edge and the fix in plain words under it.
-- **Status chips:** the mark, then the word, in the tone's text on its tint with a `strong` edge, 24 px high. Valve status is about the catalogue. Review status (waiting, approved, rejected, checked) is about a person's decision.
-- **Banners:** a full-width strip in a tone's tint with a `strong` edge: the mark, a bold first sentence, the fix, and at most one button. An unchecked import, for example, offers "Mark checked".
+- **Status chips:** `theme::chip(ui, mark, word)`: the mark, then the word, in the tone's text on its tint with a `strong` edge, 24 px high. Kittests and screen readers read the word as a label. The mark picks the tone (`Mark::tone`): ▲ `unlisted`, ■ `missing`, ⇄ `stand_in`, ✓ `ok`, ◆ `agent`, ● the accent (waiting for a person), ✕ grey (rejected). Valve status is about the catalogue. Review status (waiting, approved, rejected, checked) is about a person's decision.
+- **Marked text:** `theme::marked(ui, mark, text)`: the mark and the text in the mark's tone, for a problem line or a "No symbol" note.
+- **Banners:** `theme::banner(ui, mark, first, rest)`: a full-width strip in the mark's tint with a `strong` edge: the mark, the bold first sentence, then the fix. The board allows at most one button; the helper has none yet. An unchecked import, for example, will offer "Mark checked".
+- **Tables:** square, a `border` edge, `divider` lines between rows, a `panel`-coloured header row in Overline type and `secondary` colour, and 12 px cell padding.
+- **List rows:** a 1 px `divider` under each row; the selected row is `accent_tint` with a 1 px `accent` edge all round (never a coloured stripe down one side).
+- **Segmented control:** joined `Button::selectable` segments in one `border_strong` frame; the selected one is `accent_tint`. The review queue's Waiting / All is one.
 - **Issue list:** one row per issue: the severity word with its mark, the part as a link that selects it on the sheet, then the message. Errors come first.
 - **Title block:** in the corner of the sheet: the circuit name, schema, drawn by, revision with an "edited" mark, and checked by. It replaces the toolbar's revision text and prints in the SVG and PDF.
 - **Dialogs:** a 16 px title, a sentence saying that nothing has been lost and what the choice is, then the buttons right-aligned on a panel-coloured footer, with the primary button last.
@@ -123,6 +128,8 @@ The Proposals tab adds three things:
 
 Approve stays off while a problem is open, and the action bar says why.
 
+Built so far: the queue, the header with its chips, the symbol on the sheet, the replace banner, the fields and parts tables, the notes, and the action bar pinned under the detail with its problem count. The step list, the datasheet page beside the symbol, each field's source page and the activity feed wait for data hydra-mcp doesn't record yet (see TODO.md).
+
 ## Not built yet
 
 The boards show the target. `theme.rs` is in place, but these parts are still to come in the restyle PRs (see TODO.md):
@@ -134,10 +141,11 @@ The boards show the target. `theme.rs` is in place, but these parts are still to
   - lettering in Plex in the SVG and PDF exports (they use Ubuntu Light).
 - **The tabs:**
   - the tab strip's 3 px accent edge and the Proposals count;
-  - toolbar groups and primary buttons;
-  - painted status marks;
-  - status chips, banners and the issue list;
-  - the side panels and the status bar.
+  - toolbar groups;
+  - the issue list;
+  - the side panels and the status bar, outside the Proposals tab;
+  - on the Proposals tab: the assistant's step list, the datasheet page beside the symbol, each field's source page and the activity feed, which need new data from hydra-mcp;
+  - primary buttons and chips in the tabs other than Proposals.
 - **Older literals:** a few places in older code still write literal colours or sizes: `schematic.rs` (sheet white and black ink), `viewer3d.rs`, and the catalogue's drop overlay. They move to the palette as their tab is restyled.
 
 ## Adding a theme

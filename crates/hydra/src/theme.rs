@@ -4,8 +4,10 @@
 //! [`apply`]; the contrast test below checks every palette listed in it.
 
 use eframe::egui::{
-    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Shadow,
-    Stroke, TextStyle, Theme, Vec2,
+    self, Button, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Frame,
+    Label, Margin, Painter, Rect, Response, RichText, Sense, Shadow, Shape, Stroke, StrokeKind,
+    TextStyle, Theme, Ui, Vec2, WidgetInfo, WidgetType,
+    text::{LayoutJob, TextFormat},
 };
 use std::sync::Arc;
 
@@ -122,6 +124,183 @@ pub fn label() -> TextStyle {
 }
 pub fn overline() -> TextStyle {
     TextStyle::Name("overline".into())
+}
+
+/// A status mark: ▲ ■ ⇄ ✓ ◆ ● ✕. Painted, because Plex and egui's fonts lack some of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// ▲ part not listed, or a warning.
+    Warning,
+    /// ■ missing, or an error.
+    Error,
+    /// ⇄ stand-in. No tab shows valve status in a chip yet; the Schematic restyle will.
+    #[allow(dead_code)]
+    StandIn,
+    /// ✓ approved or checked.
+    Check,
+    /// ◆ the assistant's work.
+    Agent,
+    /// ● waiting for a person's decision.
+    Waiting,
+    /// ✕ rejected.
+    Rejected,
+}
+
+impl Mark {
+    /// The tone a chip or banner with this mark is drawn in. Waiting takes the accent (a
+    /// decision still to make) and rejected is grey: neither is a catalogue status.
+    pub fn tone(self, p: &Palette) -> Tone {
+        match self {
+            Mark::Warning => p.unlisted,
+            Mark::Error => p.missing,
+            Mark::StandIn => p.stand_in,
+            Mark::Check => p.ok,
+            Mark::Agent => p.agent,
+            Mark::Waiting => Tone {
+                strong: p.accent,
+                tint: p.accent_tint,
+                text: p.accent_text,
+            },
+            Mark::Rejected => Tone {
+                strong: p.border_strong,
+                tint: p.panel,
+                text: p.secondary,
+            },
+        }
+    }
+
+    /// Paint the mark in `color`, centred in the largest square that fits in `rect`.
+    pub fn paint(self, painter: &Painter, rect: Rect, color: Color32) {
+        let c = rect.center();
+        let s = rect.width().min(rect.height()) / 2.0;
+        // Points on a square of side 2 round the centre, y down.
+        let at = |x: f32, y: f32| c + Vec2::new(x, y) * s;
+        let line = Stroke::new((s * 0.35).max(1.5), color);
+        let fill = |points| Shape::convex_polygon(points, color, Stroke::NONE);
+        match self {
+            Mark::Warning => {
+                painter.add(fill(vec![at(0.0, -0.9), at(1.0, 0.85), at(-1.0, 0.85)]));
+            }
+            Mark::Error => {
+                painter.rect_filled(Rect::from_center_size(c, Vec2::splat(s * 1.5)), 0.0, color);
+            }
+            Mark::StandIn => {
+                painter.arrow(at(-1.0, -0.45), Vec2::new(2.0 * s, 0.0), line);
+                painter.arrow(at(1.0, 0.45), Vec2::new(-2.0 * s, 0.0), line);
+            }
+            Mark::Check => {
+                painter.line(vec![at(-0.85, 0.0), at(-0.3, 0.6), at(0.85, -0.65)], line);
+            }
+            Mark::Agent => {
+                painter.add(fill(vec![
+                    at(0.0, -1.0),
+                    at(0.8, 0.0),
+                    at(0.0, 1.0),
+                    at(-0.8, 0.0),
+                ]));
+            }
+            Mark::Waiting => {
+                painter.circle_filled(c, s * 0.75, color);
+            }
+            Mark::Rejected => {
+                painter.line_segment([at(-0.7, -0.7), at(0.7, 0.7)], line);
+                painter.line_segment([at(0.7, -0.7), at(-0.7, 0.7)], line);
+            }
+        }
+    }
+}
+
+/// The mark, then `text`, both in the mark's tone: a problem line, a "No symbol" note.
+pub fn marked(ui: &mut Ui, mark: Mark, text: impl Into<RichText>) -> Response {
+    let color = mark.tone(&LIGHT).text;
+    ui.horizontal(|ui| {
+        let side = ui.text_style_height(&TextStyle::Body);
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
+        mark.paint(ui.painter(), rect.shrink(side * 0.2), color);
+        ui.add(Label::new(text.into().color(color)).wrap())
+    })
+    .inner
+}
+
+/// A status chip: the mark and the word in the mark's tone, on its tint with a strong edge,
+/// 24 px high. Screen readers and kittests read the word as a label.
+pub fn chip(ui: &mut Ui, mark: Mark, word: &str) -> Response {
+    let tone = mark.tone(&LIGHT);
+    let size = TextStyle::Small.resolve(ui.style()).size;
+    let font = FontId::new(size, FontFamily::Name(SEMIBOLD.into()));
+    let galley = ui.painter().layout_no_wrap(word.into(), font, tone.text);
+    let (pad, side, gap) = (8.0, 10.0, 6.0);
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(pad + side + gap + galley.size().x + pad, 24.0),
+        Sense::hover(),
+    );
+    let enabled = ui.is_enabled();
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, enabled, word));
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let edge = Stroke::new(1.0, tone.strong);
+        painter.rect(rect, RADIUS, tone.tint, edge, StrokeKind::Inside);
+        let mark_at = Rect::from_center_size(
+            rect.left_center() + Vec2::new(pad + side / 2.0, 0.0),
+            Vec2::splat(side),
+        );
+        mark.paint(painter, mark_at, tone.text);
+        let text_at = rect.left_center() + Vec2::new(pad + side + gap, -galley.size().y / 2.0);
+        painter.galley(text_at, galley, tone.text);
+    }
+    response
+}
+
+/// The primary button: filled accent, for the one action in a view that commits. 32 px high.
+pub fn primary(text: impl Into<String>) -> Button<'static> {
+    let text = RichText::new(text)
+        .family(FontFamily::Name(SEMIBOLD.into()))
+        .color(LIGHT.on_accent);
+    Button::new(text)
+        .fill(LIGHT.accent)
+        .stroke(Stroke::new(1.0, LIGHT.accent_hover))
+        .min_size(Vec2::new(0.0, 32.0))
+}
+
+/// The danger button: outlined in the missing tone, never filled, for reject, delete and
+/// discard. 32 px high.
+pub fn danger(text: impl Into<String>) -> Button<'static> {
+    let text = RichText::new(text)
+        .family(FontFamily::Name(SEMIBOLD.into()))
+        .color(LIGHT.missing.text);
+    Button::new(text)
+        .fill(LIGHT.surface)
+        .stroke(Stroke::new(1.0, LIGHT.missing.text))
+        .min_size(Vec2::new(0.0, 32.0))
+}
+
+/// A full-width banner in the mark's tone: the mark, the bold `first` sentence, then `rest`.
+pub fn banner(ui: &mut Ui, mark: Mark, first: &str, rest: &str) -> Response {
+    let tone = mark.tone(&LIGHT);
+    Frame::new()
+        .fill(tone.tint)
+        .stroke(Stroke::new(1.0, tone.strong))
+        .inner_margin(Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let body = TextStyle::Body.resolve(ui.style());
+            let bold = FontId::new(body.size, FontFamily::Name(SEMIBOLD.into()));
+            let mut job = LayoutJob::default();
+            job.append(first, 0.0, TextFormat::simple(bold, LIGHT.ink));
+            job.append(
+                &format!(" {rest}"),
+                0.0,
+                TextFormat::simple(body, LIGHT.ink),
+            );
+            ui.horizontal_top(|ui| {
+                let side = ui.text_style_height(&TextStyle::Body);
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
+                mark.paint(ui.painter(), rect.shrink(side * 0.15), tone.text);
+                ui.add(Label::new(job).wrap())
+            })
+            .inner
+        })
+        .inner
 }
 
 /// Install the fonts and the palette's style, and keep the app in light mode whatever the
@@ -294,6 +473,13 @@ pub fn themed<S>(mut h: egui_kittest::Harness<'_, S>) -> egui_kittest::Harness<'
     h
 }
 
+/// Whether [`apply`] has reached this ui. A kittest harness draws its first frame before
+/// [`themed`] can install the theme, so app closures using the theme's text styles skip it.
+#[cfg(test)]
+pub fn is_themed(ui: &Ui) -> bool {
+    ui.style().text_styles.contains_key(&label())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,5 +612,115 @@ mod tests {
             });
         });
         out.textures_delta.clear();
+    }
+
+    const MARKS: [Mark; 7] = [
+        Mark::Warning,
+        Mark::Error,
+        Mark::StandIn,
+        Mark::Check,
+        Mark::Agent,
+        Mark::Waiting,
+        Mark::Rejected,
+    ];
+
+    /// The shapes `paint` draws in a frame of the themed app.
+    fn shapes(mut paint: impl FnMut(&mut Ui)) -> Vec<Shape> {
+        let ctx = egui::Context::default();
+        apply(&ctx, &LIGHT);
+        // The fonts are installed at the start of the next frame.
+        let mut out = ctx.run_ui(Default::default(), |_| {});
+        out.textures_delta.clear();
+        let mut out = ctx.run_ui(Default::default(), |ui| paint(ui));
+        out.textures_delta.clear();
+        out.shapes.into_iter().map(|s| s.shape).collect()
+    }
+
+    fn rects(shapes: &[Shape]) -> Vec<&egui::epaint::RectShape> {
+        shapes
+            .iter()
+            .filter_map(|s| match s {
+                Shape::Rect(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_mark_paints_inside_its_rect() {
+        let rect = Rect::from_min_size(egui::pos2(100.0, 100.0), Vec2::splat(16.0));
+        for mark in MARKS {
+            let painted = shapes(|ui| mark.paint(ui.painter(), rect, LIGHT.ink));
+            assert!(!painted.is_empty(), "{mark:?} paints nothing");
+            for shape in &painted {
+                let bounds = shape.visual_bounding_rect();
+                assert!(bounds.area() > 0.0, "{mark:?} paints an empty shape");
+                // Lines may reach past by half their width.
+                assert!(
+                    rect.expand(3.0).contains_rect(bounds),
+                    "{mark:?}: {bounds:?}"
+                );
+            }
+        }
+        // Marks are told apart by shape, not colour: no two paint the same.
+        let all: Vec<_> = MARKS
+            .iter()
+            .map(|m| format!("{:?}", shapes(|ui| m.paint(ui.painter(), rect, LIGHT.ink))))
+            .collect();
+        for (i, a) in all.iter().enumerate() {
+            assert!(
+                !all[i + 1..].contains(a),
+                "{:?} looks like another mark",
+                MARKS[i]
+            );
+        }
+    }
+
+    #[test]
+    fn chips_and_banners_take_their_marks_tone() {
+        assert_eq!(Mark::Warning.tone(&LIGHT), LIGHT.unlisted);
+        assert_eq!(Mark::Error.tone(&LIGHT), LIGHT.missing);
+        assert_eq!(Mark::Check.tone(&LIGHT), LIGHT.ok);
+        assert_eq!(Mark::Agent.tone(&LIGHT), LIGHT.agent);
+        assert_eq!(Mark::Waiting.tone(&LIGHT).strong, LIGHT.accent);
+        assert_eq!(Mark::Rejected.tone(&LIGHT).text, LIGHT.secondary);
+        for mark in MARKS {
+            let tone = mark.tone(&LIGHT);
+            let chip = shapes(|ui| {
+                chip(ui, mark, "Word");
+            });
+            let frame = rects(&chip)
+                .into_iter()
+                .find(|r| r.fill == tone.tint)
+                .unwrap_or_else(|| panic!("{mark:?}: no chip on its tint"));
+            assert_eq!(frame.stroke.color, tone.strong, "{mark:?}");
+            assert_eq!(frame.rect.height(), 24.0, "{mark:?}");
+            let banner = shapes(|ui| {
+                banner(ui, mark, "First.", "Rest.");
+            });
+            assert!(
+                rects(&banner)
+                    .iter()
+                    .any(|r| r.fill == tone.tint && r.stroke.color == tone.strong),
+                "{mark:?}: no banner on its tint"
+            );
+        }
+    }
+
+    #[test]
+    fn primary_is_filled_and_danger_outlined() {
+        let primary = shapes(|ui| {
+            ui.add(primary("Approve"));
+        });
+        assert!(rects(&primary).iter().any(|r| r.fill == LIGHT.accent));
+        let danger = shapes(|ui| {
+            ui.add(danger("Reject"));
+        });
+        let edge = rects(&danger)
+            .into_iter()
+            .find(|r| r.stroke.color == LIGHT.missing.text)
+            .expect("an outline in the missing tone");
+        assert_eq!(edge.fill, LIGHT.surface, "danger is never filled");
+        assert!(edge.rect.height() >= 32.0);
     }
 }

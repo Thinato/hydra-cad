@@ -3,7 +3,7 @@
 //! datasheet, may correct the valve type's fields, then approves or rejects with a reason.
 //! Only approval writes catalogue rows.
 
-use eframe::egui::{self, Vec2};
+use eframe::egui::{self, Color32, FontFamily, RichText, Stroke, Vec2};
 use hydra_core::{Catalogue, CatalogueRef, Proposal, SymbolDef};
 use hydra_db::{ProposalRecord, ProposalStatus};
 use hydra_symbols::render_symbol;
@@ -11,6 +11,7 @@ use hydra_symbols::render_symbol;
 use crate::catalogue::Shared;
 use crate::db::Request;
 use crate::schematic::draw_fitted;
+use crate::theme::{self, LIGHT, Mark};
 
 #[derive(Default)]
 pub struct ProposalsPanel {
@@ -188,34 +189,21 @@ impl ProposalsPanel {
         if self.list.is_none() && !self.busy && self.error.is_none() {
             self.refresh(shared);
         }
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(!self.busy, egui::Button::new("Refresh"))
-                .clicked()
-            {
-                self.refresh(shared);
-            }
-            let toggle = ui.add_enabled(
-                !self.busy,
-                egui::Checkbox::new(&mut self.show_reviewed, "Show reviewed"),
-            );
-            if toggle.changed() {
-                self.refresh(shared);
-            }
-            if self.busy {
-                ui.spinner();
-            }
-        });
-        if let Some(e) = &self.error {
-            ui.colored_label(ui.visuals().error_fg_color, e);
-        }
-
         egui::Panel::left("proposal-list")
             .default_size(300.0)
             .min_size(220.0)
             .resizable(true)
-            .show(ui, |ui| self.list_ui(ui, &shared.catalogue));
-        egui::ScrollArea::vertical().show(ui, |ui| match self.review.as_mut() {
+            .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0))
+            .show(ui, |ui| self.queue_ui(ui, shared));
+
+        ui.painter()
+            .rect_filled(ui.available_rect_before_wrap(), 0.0, LIGHT.surface);
+        if let Some(e) = &self.error {
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(28, 8))
+                .show(ui, |ui| theme::marked(ui, Mark::Error, e.as_str()));
+        }
+        match self.review.as_mut() {
             Some(review) => {
                 if let Some(request) = detail(ui, review, shared, self.busy)
                     && let Some(db) = &shared.db
@@ -232,52 +220,92 @@ impl ProposalsPanel {
                 }
             }
             None => {
-                ui.weak(
-                    "Select a proposal. An AI assistant connected through hydra-mcp drafts them \
-                     from the datasheets attached to valve types.",
-                );
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(28, 20))
+                    .show(ui, |ui| {
+                        ui.weak(
+                            "Select a proposal. An AI assistant connected through hydra-mcp \
+                             drafts them from the datasheets attached to valve types.",
+                        );
+                    });
             }
-        });
+        }
     }
 
-    fn list_ui(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue) {
+    /// The review queue: its header, the Waiting/All switch and one row per proposal.
+    fn queue_ui(&mut self, ui: &mut egui::Ui, shared: &Shared) {
+        egui::Frame::new()
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("REVIEW QUEUE").text_style(theme::overline()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let refresh = ui
+                            .add_enabled(!self.busy, egui::Button::new("Refresh"))
+                            .on_hover_text("Fetch the queue again.")
+                            .on_disabled_hover_text("Waiting for the database.");
+                        if refresh.clicked() {
+                            self.refresh(shared);
+                        }
+                        if self.busy {
+                            ui.spinner();
+                        }
+                    });
+                });
+                // Two joined segments: waiting proposals only, or every proposal.
+                egui::Frame::new()
+                    .fill(LIGHT.surface)
+                    .stroke(Stroke::new(1.0, LIGHT.border_strong))
+                    .corner_radius(theme::RADIUS)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.horizontal(|ui| {
+                            let half = Vec2::new(ui.available_width() / 2.0, 28.0);
+                            for (all, word) in [(false, "Waiting"), (true, "All")] {
+                                let selected = self.show_reviewed == all;
+                                let segment = ui.add_enabled(
+                                    !self.busy,
+                                    egui::Button::selectable(selected, word)
+                                        .corner_radius(0)
+                                        .min_size(half),
+                                );
+                                if segment.clicked() && !selected {
+                                    self.show_reviewed = all;
+                                    self.refresh(shared);
+                                }
+                            }
+                        });
+                    });
+            });
+        let rect = ui.min_rect();
+        ui.painter().hline(
+            rect.x_range(),
+            rect.bottom(),
+            Stroke::new(1.0, LIGHT.border),
+        );
+
         let Some(list) = &self.list else {
             return;
         };
         if list.is_empty() {
-            ui.weak(if self.show_reviewed {
-                "No proposals yet."
-            } else {
-                "No proposals waiting for review."
-            });
+            egui::Frame::new()
+                .inner_margin(egui::Margin::same(12))
+                .show(ui, |ui| {
+                    ui.weak(if self.show_reviewed {
+                        "No proposals yet."
+                    } else {
+                        "No proposals waiting for review."
+                    });
+                });
         }
         let mut picked = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
             for p in list {
-                let v = &p.proposal.valve_type;
-                let manufacturer = catalogue
-                    .manufacturers
-                    .iter()
-                    .find(|m| m.key == v.manufacturer)
-                    .map_or(v.manufacturer.as_str(), |m| m.name.as_str());
-                let status = match p.status {
-                    ProposalStatus::Pending => "waiting",
-                    ProposalStatus::Approved => "approved",
-                    ProposalStatus::Rejected => "rejected",
-                };
-                let text = format!(
-                    "{} {} · {manufacturer}\n{} · {} · {} · {status}",
-                    v.series,
-                    v.code,
-                    p.proposal.target(),
-                    p.created_by,
-                    p.created_at
-                );
                 let selected = self.review.as_ref().is_some_and(|r| r.record.id == p.id);
-                if ui.selectable_label(selected, text).clicked() {
+                if queue_row(ui, p, selected, &shared.catalogue).clicked() {
                     picked = Some(p.clone());
                 }
-                ui.add_space(2.0);
             }
         });
         if let Some(p) = picked {
@@ -286,7 +314,128 @@ impl ProposalsPanel {
     }
 }
 
-/// One proposal: symbol, fields, parts and what's wrong; returns a review request to send.
+/// The chip of a review status.
+fn status_chip(status: ProposalStatus) -> (Mark, &'static str) {
+    match status {
+        ProposalStatus::Pending => (Mark::Waiting, "Waiting for review"),
+        ProposalStatus::Approved => (Mark::Check, "Approved"),
+        ProposalStatus::Rejected => (Mark::Rejected, "Rejected"),
+    }
+}
+
+fn manufacturer_name<'a>(catalogue: &'a Catalogue, key: &'a str) -> &'a str {
+    catalogue
+        .manufacturers
+        .iter()
+        .find(|m| m.key == key)
+        .map_or(key, |m| m.name.as_str())
+}
+
+/// One proposal in the queue: code and time, target, who drafted it, and once reviewed its
+/// decision. The selected row is tinted with an accent edge.
+fn queue_row(
+    ui: &mut egui::Ui,
+    p: &ProposalRecord,
+    selected: bool,
+    catalogue: &Catalogue,
+) -> egui::Response {
+    let v = &p.proposal.valve_type;
+    ui.scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
+        // Clicks on the row's text select the row.
+        ui.style_mut().interaction.selectable_labels = false;
+        let (fill, edge) = if selected {
+            (LIGHT.accent_tint, LIGHT.accent)
+        } else if ui.response().hovered() {
+            (LIGHT.hover, Color32::TRANSPARENT)
+        } else {
+            (Color32::TRANSPARENT, Color32::TRANSPARENT)
+        };
+        let row = egui::Frame::new()
+            .fill(fill)
+            .stroke(Stroke::new(1.0, edge))
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.horizontal(|ui| {
+                    let code = RichText::new(format!("{} {}", v.series, v.code))
+                        .family(FontFamily::Name(theme::MONO_SEMIBOLD.into()));
+                    ui.label(code);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(&p.created_at).small().color(LIGHT.secondary));
+                    });
+                });
+                ui.monospace(p.proposal.target().to_string());
+                ui.label(
+                    RichText::new(format!(
+                        "{} · by {}",
+                        manufacturer_name(catalogue, &v.manufacturer),
+                        p.created_by
+                    ))
+                    .small()
+                    .color(LIGHT.secondary),
+                );
+                if p.status != ProposalStatus::Pending {
+                    let (mark, word) = status_chip(p.status);
+                    theme::chip(ui, mark, word);
+                }
+            });
+        let rect = row.response.rect;
+        ui.painter().hline(
+            rect.x_range(),
+            rect.bottom(),
+            Stroke::new(1.0, LIGHT.divider),
+        );
+    })
+    .response
+}
+
+/// A heading over a section of the detail view, with space above it.
+fn section(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(16.0);
+    ui.label(RichText::new(title).text_style(theme::heading()));
+}
+
+/// A bordered table: square, with `rows` laid out flush.
+fn table(ui: &mut egui::Ui, width: f32, rows: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(LIGHT.surface)
+        .stroke(Stroke::new(1.0, LIGHT.border))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            rows(ui);
+        });
+}
+
+/// One table row on `fill`, with a divider under it.
+fn row(ui: &mut egui::Ui, fill: Color32, cells: impl FnOnce(&mut egui::Ui)) {
+    let r = egui::Frame::new()
+        .fill(fill)
+        .inner_margin(egui::Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = Vec2::new(12.0, 4.0);
+            ui.horizontal_top(cells);
+        });
+    let rect = r.response.rect;
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom(),
+        Stroke::new(1.0, LIGHT.divider),
+    );
+}
+
+/// A table cell `width` wide.
+fn cell(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) {
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        add(ui);
+    });
+}
+
+/// One proposal: header, symbol, fields, parts, notes and, while it waits, the action bar.
+/// Returns a request to send.
 fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -> Option<Request> {
     let catalogue = &shared.catalogue;
     let pending = review.pending();
@@ -299,184 +448,406 @@ fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -
     let base = catalogue
         .valve_type(&CatalogueRef::new(&v.key, v.version))
         .cloned();
+    let mut request = None;
+
+    if pending {
+        let id = egui::Id::new("proposal-actions");
+        let height = |ctx: &egui::Context| egui::PanelState::load(ctx, id).map(|s| s.size().y);
+        let before = height(ui.ctx());
+        egui::Panel::bottom(id)
+            .resizable(false)
+            .frame(
+                egui::Frame::side_top_panel(ui.style())
+                    .inner_margin(egui::Margin::symmetric(28, 12)),
+            )
+            .show(ui, |ui| {
+                if let Some(r) = actions(ui, review, &edited, catalogue, busy) {
+                    request = Some(r);
+                }
+            });
+        // The bar is placed at last frame's height: redo the frame when a problem came or went.
+        if height(ui.ctx()) != before {
+            ui.ctx().request_discard("the action bar changed height");
+        }
+    }
 
     let symbol: Option<&SymbolDef> = match (&proposal.new_symbol, &v.symbol) {
         (Some(new), _) => Some(&new.definition),
         (None, Some(s)) => catalogue.symbol_def(s),
         (None, None) => None,
     };
-    let mut request = None;
-    ui.horizontal_top(|ui| {
-        let side = Vec2::new(320.0, 220.0);
-        match symbol {
-            Some(def) => draw_fitted(ui, side, &render_symbol(def).primitives),
-            None => {
-                ui.allocate_exact_size(side, egui::Sense::hover());
-            }
-        }
-        ui.vertical(|ui| {
-            ui.heading(format!("{} {}", v.series, v.code));
-            ui.monospace(format!("{} → {}", v.key, proposal.target()));
-            match (&proposal.new_symbol, &v.symbol) {
-                (Some(new), _) => ui.label(format!("New symbol {}", new.reference())),
-                (None, Some(s)) => ui.label(format!("Symbol {s}")),
-                (None, None) => ui.colored_label(ui.visuals().error_fg_color, "No symbol"),
-            };
-            ui.weak(format!(
-                "Drafted by {} on {}",
-                review.record.created_by, review.record.created_at
-            ));
-            if let Some(by) = &review.record.reviewed_by {
-                let when = review.record.reviewed_at.as_deref().unwrap_or("");
-                ui.weak(format!("Reviewed by {by} on {when}"));
-            }
-            if let Some(note) = &review.record.review_note {
-                ui.label(format!("Reason: {note}"));
-            }
-            match (&review.record.datasheet_sha256, &shared.db) {
-                (Some(sha256), Some(_)) => {
-                    if ui.button("Open datasheet").clicked() {
-                        request = Some(Request::OpenAsset {
-                            sha256: sha256.clone(),
-                            extension: "pdf",
+    egui::ScrollArea::vertical()
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(28, 20))
+                .show(ui, |ui| {
+                    let width = ui.available_width().min(760.0);
+                    ui.set_max_width(width);
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                let (mark, word) = status_chip(review.record.status);
+                                theme::chip(ui, mark, word);
+                                theme::chip(ui, Mark::Agent, "Assistant draft");
+                            });
+                            ui.heading(format!("{} {}", v.series, v.code));
+                            ui.monospace(format!("{} → {}", v.key, proposal.target()));
+                            let caption = |ui: &mut egui::Ui, text: String| {
+                                ui.label(RichText::new(text).small().color(LIGHT.secondary));
+                            };
+                            caption(
+                                ui,
+                                format!(
+                                    "Drafted by {} on {}",
+                                    review.record.created_by, review.record.created_at
+                                ),
+                            );
+                            if let Some(by) = &review.record.reviewed_by {
+                                let when = review.record.reviewed_at.as_deref().unwrap_or("");
+                                caption(ui, format!("Reviewed by {by} on {when}"));
+                            }
+                            if let Some(note) = &review.record.review_note {
+                                ui.label(format!("Reason: {note}"));
+                            }
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| match (
+                            &review.record.datasheet_sha256,
+                            &shared.db,
+                        ) {
+                            (Some(sha256), Some(_)) => {
+                                let open = egui::Button::new("Open datasheet")
+                                    .min_size(Vec2::new(0.0, 32.0));
+                                if ui.add(open).clicked() {
+                                    request = Some(Request::OpenAsset {
+                                        sha256: sha256.clone(),
+                                        extension: "pdf",
+                                    });
+                                }
+                            }
+                            _ => {
+                                ui.weak("No datasheet attached.");
+                            }
+                        });
+                    });
+
+                    ui.add_space(16.0);
+                    symbol_preview(ui, symbol, &proposal);
+
+                    if pending && let Some(b) = base.as_ref().filter(|b| b.symbol.is_some()) {
+                        ui.add_space(16.0);
+                        theme::banner(
+                            ui,
+                            Mark::Warning,
+                            &format!(
+                                "This replaces {}, which is not a draft and may be in use.",
+                                b.reference()
+                            ),
+                            "Check every change.",
+                        );
+                    }
+
+                    section(ui, "Fields");
+                    fields(ui, review, v, base.as_ref(), catalogue, pending, width);
+
+                    let checked = review.checked(catalogue);
+                    if !checked.parts.is_empty() {
+                        section(
+                            ui,
+                            &format!("Parts of the new version ({})", checked.parts.len()),
+                        );
+                        table(ui, width, |ui| {
+                            for (number, options, how) in &checked.parts {
+                                row(ui, Color32::TRANSPARENT, |ui| {
+                                    cell(ui, 200.0, |ui| {
+                                        ui.label(
+                                            RichText::new(number).family(FontFamily::Name(
+                                                theme::MONO_SEMIBOLD.into(),
+                                            )),
+                                        );
+                                    });
+                                    cell(ui, 64.0, |ui| {
+                                        ui.label(RichText::new(*how).color(LIGHT.secondary));
+                                    });
+                                    ui.label(RichText::new(options).color(LIGHT.secondary));
+                                });
+                            }
                         });
                     }
+                    if !proposal.notes.is_empty() {
+                        section(ui, "Assistant's notes");
+                        egui::Frame::new()
+                            .fill(LIGHT.panel)
+                            .stroke(Stroke::new(1.0, LIGHT.border))
+                            .inner_margin(egui::Margin::same(12))
+                            .show(ui, |ui| {
+                                ui.set_width(width - 24.0);
+                                ui.label(&proposal.notes);
+                            });
+                    }
+                });
+        });
+    request
+}
+
+/// The symbol as Hydra will draw it, on the sheet, with its reference in a caption strip.
+fn symbol_preview(ui: &mut egui::Ui, symbol: Option<&SymbolDef>, proposal: &Proposal) {
+    let size = Vec2::new(360.0, 200.0);
+    egui::Frame::new()
+        .fill(LIGHT.sheet)
+        .stroke(Stroke::new(1.0, LIGHT.border))
+        .show(ui, |ui| {
+            ui.set_width(size.x);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            match symbol {
+                Some(def) => draw_fitted(ui, size, &render_symbol(def).primitives),
+                None => {
+                    ui.allocate_exact_size(size, egui::Sense::hover());
                 }
-                _ => {
-                    ui.weak("No datasheet attached.");
+            }
+            let caption = egui::Frame::new()
+                .fill(LIGHT.panel)
+                .inner_margin(egui::Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("How Hydra will draw it")
+                                .small()
+                                .family(FontFamily::Name(theme::SEMIBOLD.into())),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let reference =
+                                match (&proposal.new_symbol, &proposal.valve_type.symbol) {
+                                    (Some(new), _) => format!("new {}", new.reference()),
+                                    (None, Some(s)) => s.to_string(),
+                                    (None, None) => {
+                                        theme::marked(
+                                            ui,
+                                            Mark::Error,
+                                            RichText::new("No symbol").small(),
+                                        );
+                                        return;
+                                    }
+                                };
+                            ui.label(
+                                RichText::new(reference)
+                                    .text_style(egui::TextStyle::Monospace)
+                                    .color(LIGHT.secondary),
+                            );
+                        });
+                    });
+                });
+            let top = caption.response.rect.top();
+            ui.painter().hline(
+                caption.response.rect.x_range(),
+                top,
+                Stroke::new(1.0, LIGHT.border),
+            );
+        });
+}
+
+/// The fields table: what the proposal sets, editable while it waits, beside what it was.
+fn fields(
+    ui: &mut egui::Ui,
+    review: &mut Review,
+    v: &hydra_core::ValveType,
+    base: Option<&hydra_core::ValveType>,
+    catalogue: &Catalogue,
+    pending: bool,
+    width: f32,
+) {
+    // Field, value and was; the row's 12 px margins and gaps come off the table's width.
+    let cols = [150.0, (width - 150.0 - 72.0) * 0.6];
+    let header = |ui: &mut egui::Ui, text: &str| {
+        ui.label(
+            RichText::new(text)
+                .text_style(theme::overline())
+                .color(LIGHT.secondary),
+        );
+    };
+    // One row: the label, a CHANGED chip when the value differs from the base, the value, and
+    // what it was.
+    let field = |ui: &mut egui::Ui,
+                 label: &str,
+                 old: Option<String>,
+                 new: &str,
+                 value: &mut dyn FnMut(&mut egui::Ui)| {
+        let old = old.filter(|o| o != new);
+        let fill = if old.is_some() {
+            LIGHT.unlisted.tint
+        } else {
+            Color32::TRANSPARENT
+        };
+        row(ui, fill, |ui| {
+            cell(ui, cols[0], |ui| {
+                ui.label(RichText::new(label).text_style(theme::label()));
+                if old.is_some() {
+                    theme::chip(ui, Mark::Warning, "Changed");
                 }
+            });
+            cell(ui, cols[1], |ui| value(ui));
+            if let Some(old) = old {
+                ui.label(
+                    RichText::new(format!(
+                        "was {}",
+                        if old.is_empty() { "empty" } else { &old }
+                    ))
+                    .color(LIGHT.secondary),
+                );
             }
         });
-    });
-
-    ui.separator();
-    if pending && let Some(b) = base.as_ref().filter(|b| b.symbol.is_some()) {
-        ui.colored_label(
-            ui.visuals().warn_fg_color,
-            format!(
-                "This replaces {}, which is not a draft and may be in use. Check every change.",
-                b.reference()
-            ),
-        );
-    }
-    let was = |ui: &mut egui::Ui, old: Option<String>, new: &str| {
-        if let Some(old) = old.filter(|o| o != new) {
-            ui.weak(format!(
-                "was {}",
-                if old.is_empty() { "empty" } else { &old }
-            ));
-        }
     };
-    egui::Grid::new("proposal-fields")
-        .num_columns(3)
-        .show(ui, |ui| {
-            ui.label("Manufacturer");
-            let manufacturer = catalogue
-                .manufacturers
-                .iter()
-                .find(|m| m.key == v.manufacturer);
-            ui.label(manufacturer.map_or(v.manufacturer.as_str(), |m| m.name.as_str()));
-            ui.end_row();
-            let b = base.as_ref();
-            for (label, value, old) in [
-                ("Series", &mut review.series, b.map(|b| b.series.clone())),
-                ("Code", &mut review.code, b.map(|b| b.code.clone())),
-                (
-                    "Mounting",
-                    &mut review.mounting,
-                    b.map(|b| b.mounting.clone().unwrap_or_default()),
-                ),
-            ] {
-                ui.label(label);
-                ui.add_enabled(
-                    pending,
-                    egui::TextEdit::singleline(value).desired_width(260.0),
-                );
-                was(ui, old, value);
-                ui.end_row();
-            }
-            ui.label("Symbol");
-            let symbol = v.symbol.as_ref().map(|s| s.to_string()).unwrap_or_default();
-            ui.monospace(&symbol);
-            was(
-                ui,
-                b.map(|b| b.symbol.as_ref().map(|s| s.to_string()).unwrap_or_default()),
-                &symbol,
-            );
-            ui.end_row();
-            ui.label("Parameters");
+    table(ui, width, |ui| {
+        row(ui, LIGHT.panel, |ui| {
+            cell(ui, cols[0], |ui| header(ui, "FIELD"));
+            cell(ui, cols[1], |ui| {
+                header(
+                    ui,
+                    if pending {
+                        "VALUE · EDIT BEFORE APPROVING"
+                    } else {
+                        "VALUE"
+                    },
+                )
+            });
+            header(ui, "WAS");
+        });
+        field(ui, "Manufacturer", None, "", &mut |ui| {
+            ui.label(manufacturer_name(catalogue, &v.manufacturer));
+        });
+        let edit = |ui: &mut egui::Ui, value: &mut String| {
             ui.add_enabled(
                 pending,
-                egui::TextEdit::multiline(&mut review.params)
-                    .code_editor()
-                    .desired_rows(3)
-                    .desired_width(260.0),
+                egui::TextEdit::singleline(value)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY),
             );
-            let params = |p: &serde_json::Value| {
-                if p.is_null() {
-                    String::new()
-                } else {
-                    serde_json::to_string(p).unwrap_or_default()
-                }
-            };
-            was(ui, b.map(|b| params(&b.params)), &params(&v.params));
-            ui.end_row();
+        };
+        let series = review.series.clone();
+        field(
+            ui,
+            "Series",
+            base.map(|b| b.series.clone()),
+            &series,
+            &mut |ui| edit(ui, &mut review.series),
+        );
+        let code = review.code.clone();
+        field(ui, "Code", base.map(|b| b.code.clone()), &code, &mut |ui| {
+            edit(ui, &mut review.code)
         });
+        let mounting = review.mounting.clone();
+        field(
+            ui,
+            "Mounting",
+            base.map(|b| b.mounting.clone().unwrap_or_default()),
+            &mounting,
+            &mut |ui| edit(ui, &mut review.mounting),
+        );
+        let symbol = v.symbol.as_ref().map(|s| s.to_string()).unwrap_or_default();
+        field(
+            ui,
+            "Symbol",
+            base.map(|b| b.symbol.as_ref().map(|s| s.to_string()).unwrap_or_default()),
+            &symbol,
+            &mut |ui| {
+                ui.monospace(&symbol);
+            },
+        );
+        let params = |p: &serde_json::Value| {
+            if p.is_null() {
+                String::new()
+            } else {
+                serde_json::to_string(p).unwrap_or_default()
+            }
+        };
+        field(
+            ui,
+            "Parameters",
+            base.map(|b| params(&b.params)),
+            &params(&v.params),
+            &mut |ui| {
+                ui.add_enabled(
+                    pending,
+                    egui::TextEdit::multiline(&mut review.params)
+                        .code_editor()
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY),
+                );
+            },
+        );
+    });
+}
 
-    let checked = review.checked(catalogue);
-    if !checked.parts.is_empty() {
-        ui.label(format!(
-            "Parts of the new version ({})",
-            checked.parts.len()
-        ));
-        for (number, options, how) in &checked.parts {
-            ui.horizontal(|ui| {
-                ui.monospace(number);
-                ui.weak(*how);
-                ui.weak(options);
-            });
-        }
-    }
-    if !proposal.notes.is_empty() {
-        ui.label("Assistant's notes");
-        ui.weak(&proposal.notes);
-    }
-
-    if !pending {
-        return request;
-    }
-    ui.separator();
+/// The action bar of a waiting proposal: the reason and Reject, then what blocks approval and
+/// Approve. Returns the review request to send.
+fn actions(
+    ui: &mut egui::Ui,
+    review: &mut Review,
+    edited: &Result<Proposal, String>,
+    catalogue: &Catalogue,
+    busy: bool,
+) -> Option<Request> {
+    let mut request = None;
     // Checked against the catalogue as it is now: someone may have saved since.
     let problems = review.checked(catalogue).problems.clone();
     for p in &problems {
-        ui.colored_label(ui.visuals().error_fg_color, p);
+        theme::marked(ui, Mark::Error, p.as_str());
     }
     ui.horizontal(|ui| {
-        let approve = ui
-            .add_enabled(!busy && problems.is_empty(), egui::Button::new("Approve"))
-            .on_hover_text("Saves the valve type, its parts and any new symbol to the catalogue.");
-        if approve.clicked()
-            && let Ok(p) = &edited
-        {
-            request = Some(Request::ApproveProposal {
-                id: review.record.id.clone(),
-                proposal: p.clone(),
-            });
-        }
-        ui.separator();
+        // Centre everything on the 32 px buttons from the start.
+        ui.set_min_height(32.0);
+        ui.label(RichText::new("Reason").text_style(theme::label()));
         ui.add(
             egui::TextEdit::singleline(&mut review.note)
                 .hint_text("Why reject? The assistant reads this.")
-                .desired_width(280.0),
+                .desired_width(280.0)
+                .min_size(Vec2::new(0.0, 32.0)),
         );
-        let reject = ui.add_enabled(
-            !busy && !review.note.trim().is_empty(),
-            egui::Button::new("Reject"),
-        );
+        let reject = ui
+            .add_enabled(
+                !busy && !review.note.trim().is_empty(),
+                theme::danger("Reject"),
+            )
+            .on_disabled_hover_text(if busy {
+                "Waiting for the database."
+            } else {
+                "Write why first; the assistant reads it."
+            });
         if reject.clicked() {
             request = Some(Request::RejectProposal {
                 id: review.record.id.clone(),
                 note: review.note.trim().to_string(),
+            });
+        }
+        ui.separator();
+        if !problems.is_empty() {
+            let n = problems.len();
+            theme::marked(
+                ui,
+                Mark::Error,
+                RichText::new(format!(
+                    "Fix {n} problem{} to approve",
+                    if n == 1 { "" } else { "s" }
+                ))
+                .small()
+                .family(FontFamily::Name(theme::SEMIBOLD.into())),
+            );
+        }
+        let approve = ui
+            .add_enabled(!busy && problems.is_empty(), theme::primary("Approve"))
+            .on_hover_text("Saves the valve type, its parts and any new symbol to the catalogue.")
+            .on_disabled_hover_text(if busy {
+                "Waiting for the database."
+            } else {
+                "Fix the problems listed above first."
+            });
+        if approve.clicked()
+            && let Ok(p) = edited
+        {
+            request = Some(Request::ApproveProposal {
+                id: review.record.id.clone(),
+                proposal: p.clone(),
             });
         }
     });
@@ -485,10 +856,13 @@ fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc::{Receiver, channel};
+
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::*;
+    use crate::db::Db;
 
     fn shared() -> Shared {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/catalogue.json");
@@ -522,21 +896,27 @@ mod tests {
 
     type State = (Review, Shared, Option<Request>);
 
-    fn harness(status: ProposalStatus) -> Harness<'static, State> {
+    fn detail_harness(record: ProposalRecord) -> Harness<'static, State> {
         let mut h = crate::theme::themed(
             Harness::builder()
                 .with_size(Vec2::new(900.0, 700.0))
                 .build_ui_state(
                     |ui, (r, s, out): &mut State| {
-                        if let Some(req) = detail(ui, r, s, false) {
+                        if theme::is_themed(ui)
+                            && let Some(req) = detail(ui, r, s, false)
+                        {
                             *out = Some(req);
                         }
                     },
-                    (Review::new(record(status)), shared(), None),
+                    (Review::new(record), shared(), None),
                 ),
         );
         h.run();
         h
+    }
+
+    fn harness(status: ProposalStatus) -> Harness<'static, State> {
+        detail_harness(record(status))
     }
 
     fn approve_enabled(h: &Harness<State>) -> bool {
@@ -548,6 +928,7 @@ mod tests {
         let mut h = harness(ProposalStatus::Pending);
         assert!(h.query_by_label("Ordering code table on page 2.").is_some());
         assert!(approve_enabled(&h));
+        assert!(h.query_by_label_contains("to approve").is_none());
 
         // Emptying the code is a problem the reviewer sees, and approval waits for a fix.
         h.state_mut().0.code.clear();
@@ -556,6 +937,7 @@ mod tests {
             h.query_by_label("the valve type needs a series and a code")
                 .is_some()
         );
+        assert!(h.query_by_label("Fix 1 problem to approve").is_some());
         assert!(!approve_enabled(&h));
         h.state_mut().0.code = "4-3-C".into();
         h.state_mut().0.params = "{not json".into();
@@ -568,6 +950,7 @@ mod tests {
         h.state_mut().0.params = r#"{"function": "directional", "max_pressure_bar": 315}"#.into();
         h.state_mut().0.series = " DEMO-10X ".into();
         h.run();
+        assert!(approve_enabled(&h));
 
         h.get_by_label("Approve").click();
         h.run();
@@ -580,6 +963,34 @@ mod tests {
     }
 
     #[test]
+    fn every_problem_is_counted_and_blocks_approval() {
+        let mut h = harness(ProposalStatus::Pending);
+        h.state_mut().0.code.clear();
+        h.state_mut().0.params = r#"{"max_pressure_bar": 315}"#.into();
+        h.run();
+        assert!(h.query_by_label("Fix 2 problems to approve").is_some());
+        assert!(!approve_enabled(&h));
+        // A click on the disabled button sends nothing.
+        h.get_by_label("Approve").click();
+        h.run();
+        assert!(h.state().2.is_none());
+    }
+
+    #[test]
+    fn the_header_shows_review_status_and_the_assistant_chip() {
+        for (status, word) in [
+            (ProposalStatus::Pending, "Waiting for review"),
+            (ProposalStatus::Approved, "Approved"),
+            (ProposalStatus::Rejected, "Rejected"),
+        ] {
+            let h = harness(status);
+            assert!(h.query_by_label(word).is_some(), "{word}");
+            assert!(h.query_by_label("Assistant draft").is_some(), "{word}");
+            assert!(h.query_by_label("DEMO-10 4-3-C").is_some());
+        }
+    }
+
+    #[test]
     fn rejecting_needs_a_reason_and_reviewed_proposals_are_read_only() {
         let mut h = harness(ProposalStatus::Pending);
         assert!(h.get_by_label("Reject").accesskit_node().is_disabled());
@@ -587,9 +998,10 @@ mod tests {
         h.run();
         h.get_by_label("Reject").click();
         h.run();
-        let Some(Request::RejectProposal { note, .. }) = &h.state().2 else {
+        let Some(Request::RejectProposal { id, note }) = &h.state().2 else {
             panic!("expected a rejection")
         };
+        assert_eq!(id, "p1");
         assert_eq!(note, "Spool is tandem centre, see page 1");
 
         let h = harness(ProposalStatus::Approved);
@@ -610,27 +1022,96 @@ mod tests {
                       {"part_number": "DEMO-06-4-2-X-12DC"}]
         }))
         .unwrap();
-        let mut h = crate::theme::themed(
-            Harness::builder()
-                .with_size(Vec2::new(900.0, 700.0))
-                .build_ui_state(
-                    |ui, (r, s, out): &mut State| {
-                        if let Some(req) = detail(ui, r, s, false) {
-                            *out = Some(req);
-                        }
-                    },
-                    (Review::new(r), shared(), None),
-                ),
-        );
-        h.run();
+        let h = detail_harness(r);
         assert!(
             h.query_by_label_contains("This replaces vt-demo-4-2@1")
                 .is_some()
         );
         assert!(h.query_by_label("was 4-2-S").is_some());
+        // Only the code changed, so only its row is marked.
+        assert_eq!(h.query_all_by_label("Changed").count(), 1);
         assert!(h.query_by_label("Parts of the new version (3)").is_some());
         for how in ["new", "replaced", "kept"] {
             assert!(h.query_by_label(how).is_some(), "{how}");
         }
+    }
+
+    type PanelState = (ProposalsPanel, Shared);
+
+    /// The whole tab, connected to a fake database whose requests come out of the receiver.
+    fn panel_harness() -> (Harness<'static, PanelState>, Receiver<Request>) {
+        let (requests, sent) = channel();
+        let mut shared = shared();
+        shared.db = Some(Db::new(requests, channel().1));
+        let h = crate::theme::themed(
+            Harness::builder()
+                .with_size(Vec2::new(1100.0, 700.0))
+                .build_ui_state(
+                    |ui, (panel, shared): &mut PanelState| {
+                        if theme::is_themed(ui) {
+                            panel.ui(ui, shared);
+                        }
+                    },
+                    (ProposalsPanel::default(), shared),
+                ),
+        );
+        (h, sent)
+    }
+
+    fn listed(sent: &Receiver<Request>) -> Vec<bool> {
+        sent.try_iter()
+            .map(|r| match r {
+                Request::ListProposals { pending_only } => pending_only,
+                _ => panic!("expected a list request"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_queue_switches_between_waiting_and_all() {
+        let (mut h, sent) = panel_harness();
+        // A spinner turns while the list loads.
+        h.step();
+        // The first view asks for waiting proposals only.
+        assert_eq!(listed(&sent), [true]);
+        h.state_mut()
+            .0
+            .listed(vec![record(ProposalStatus::Pending)]);
+        h.step();
+
+        h.get_by_label("All").click();
+        h.step();
+        assert_eq!(listed(&sent), [false]);
+        let mut approved = record(ProposalStatus::Approved);
+        approved.id = "p2".into();
+        h.state_mut()
+            .0
+            .listed(vec![record(ProposalStatus::Pending), approved]);
+        h.step();
+        // A reviewed row shows its decision; a waiting one shows none.
+        assert!(h.query_by_label("Approved").is_some());
+        assert!(h.query_by_label("Waiting for review").is_none());
+
+        // Clicking the selected segment again asks for nothing.
+        h.get_by_label("All").click();
+        h.step();
+        assert_eq!(listed(&sent), Vec::<bool>::new());
+        h.get_by_label("Waiting").click();
+        h.step();
+        assert_eq!(listed(&sent), [true]);
+    }
+
+    #[test]
+    fn clicking_a_queue_row_opens_the_proposal() {
+        let (mut h, _sent) = panel_harness();
+        h.step();
+        h.state_mut()
+            .0
+            .listed(vec![record(ProposalStatus::Pending)]);
+        h.run();
+        assert!(h.query_by_label("Waiting for review").is_none());
+        h.get_by_label("vt-demo-new@1").click();
+        h.run();
+        assert!(h.query_by_label("Waiting for review").is_some());
     }
 }
