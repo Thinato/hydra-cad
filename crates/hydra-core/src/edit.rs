@@ -52,9 +52,9 @@ pub enum Command {
     /// Set an item's part number, description and parts-table position. Blank text clears one.
     SetItemDetails {
         id: String,
-        code: Option<String>,
-        description: Option<String>,
-        position: Option<String>,
+        code: String,
+        description: String,
+        position: String,
     },
     /// Add a bill-of-materials line that isn't a component, after the others.
     AddExtraLine { line: ExtraBomLine },
@@ -358,7 +358,7 @@ impl Command {
                 else {
                     return Err(format!("{id} is not an item in the circuit"));
                 };
-                let new = [code, description, position].map(|t| text(t.as_deref()));
+                let new = [code, description, position].map(|t| text(t));
                 let old = [&item.code, &item.description, &item.position];
                 if new.iter().zip(old).all(|(n, o)| n == o) {
                     return Err(format!("nothing changed on {id}"));
@@ -386,7 +386,7 @@ impl Command {
                     .import
                     .as_mut()
                     .ok_or("the circuit was not imported, so it has no import notes")?;
-                let notes: Vec<String> = notes.iter().filter_map(|n| text(Some(n))).collect();
+                let notes: Vec<String> = notes.iter().filter_map(|n| text(n)).collect();
                 if import.notes == notes {
                     return Err("the import notes are unchanged".into());
                 }
@@ -398,17 +398,17 @@ impl Command {
 }
 
 /// Trimmed text, or `None` when blank.
-fn text(t: Option<&str>) -> Option<String> {
-    t.map(str::trim).filter(|t| !t.is_empty()).map(String::from)
+fn text(t: &str) -> Option<String> {
+    Some(t.trim()).filter(|t| !t.is_empty()).map(String::from)
 }
 
 /// `line` with its text trimmed, or why it can't be extra line `n`.
 fn extra_line(line: &ExtraBomLine, n: usize) -> Result<ExtraBomLine, String> {
     let line = ExtraBomLine {
-        position: text(line.position.as_deref()),
+        position: line.position.as_deref().and_then(text),
         quantity: line.quantity,
-        code: text(line.code.as_deref()),
-        description: text(line.description.as_deref()),
+        code: line.code.as_deref().and_then(text),
+        description: line.description.as_deref().and_then(text),
     };
     if line.quantity < 1 {
         return Err(format!("extra line {n} needs a quantity of at least 1"));

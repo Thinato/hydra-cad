@@ -395,12 +395,12 @@ fn item(id: &str) -> Command {
     }
 }
 
-fn details(id: &str, code: Option<&str>, description: Option<&str>) -> Command {
+fn details(id: &str, code: &str, description: &str) -> Command {
     Command::SetItemDetails {
         id: id.into(),
-        code: code.map(String::from),
-        description: description.map(String::from),
-        position: Some(" 14 ".into()),
+        code: code.into(),
+        description: description.into(),
+        position: " 14 ".into(),
     }
 }
 
@@ -408,7 +408,7 @@ fn details(id: &str, code: Option<&str>, description: Option<&str>) -> Command {
 fn item_details_are_set_trimmed_cleared_and_undone() {
     let mut d = doc(&["P"]);
     d.apply(item("M1")).unwrap();
-    d.apply(details("M1", Some(" DEMO-MP-04 "), Some("Test point")))
+    d.apply(details("M1", " DEMO-MP-04 ", "Test point"))
         .unwrap();
     let get = |d: &Document| match &d.circuit.component("M1").unwrap().kind {
         ComponentKind::Item(i) => (i.code.clone(), i.description.clone(), i.position.clone()),
@@ -427,8 +427,7 @@ fn item_details_are_set_trimmed_cleared_and_undone() {
     assert_eq!(bom[0].position.as_deref(), Some("14"));
 
     // Blank text clears a field.
-    d.apply(details("M1", Some("DEMO-MP-04"), Some("  ")))
-        .unwrap();
+    d.apply(details("M1", "DEMO-MP-04", "  ")).unwrap();
     assert_eq!(get(&d).1, None);
     d.undo();
     assert_eq!(get(&d), set);
@@ -436,12 +435,12 @@ fn item_details_are_set_trimmed_cleared_and_undone() {
     // Refused: no change, not an item, not there.
     let before = d.circuit.clone();
     let e = d
-        .apply(details("M1", Some("DEMO-MP-04 "), Some("Test point")))
+        .apply(details("M1", "DEMO-MP-04 ", "Test point"))
         .unwrap_err();
     assert_eq!(e, "nothing changed on M1");
-    let e = d.apply(details("P", Some("X"), None)).unwrap_err();
+    let e = d.apply(details("P", "X", "")).unwrap_err();
     assert_eq!(e, "P is not an item in the circuit");
-    assert!(d.apply(details("Z", Some("X"), None)).is_err());
+    assert!(d.apply(details("Z", "X", "")).is_err());
     assert_eq!(d.circuit, before);
 }
 

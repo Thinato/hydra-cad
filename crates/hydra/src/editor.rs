@@ -42,6 +42,24 @@ struct Swap {
     ports: Vec<(String, Option<String>)>,
 }
 
+/// A text field whose finished edits become commands.
+#[derive(Clone, Debug, PartialEq, Hash)]
+enum Field {
+    /// Code, description or position of an item.
+    Item(String, usize),
+    /// Position, quantity, code or description of an extra BOM line.
+    Extra(usize, usize),
+    Notes,
+}
+
+/// A field being typed in: the value it started from and the text so far.
+struct Editing {
+    field: Field,
+    id: egui::Id,
+    original: String,
+    text: String,
+}
+
 /// Where the open circuit lives in the database.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Saved {
@@ -108,8 +126,8 @@ pub struct SchematicEditor {
     name: String,
     label: String,
     note: String,
-    /// The focused field of those drawn with [`Self::field`]: its key and its text so far.
-    editing: Option<(String, String)>,
+    /// The field drawn with [`Self::field`] that is being typed in.
+    editing: Option<Editing>,
     /// Position, quantity, code and description of the extra line about to be added.
     new_line: [String; 4],
     dialog: Option<Dialog>,
@@ -271,6 +289,7 @@ impl SchematicEditor {
 
     /// Whether the window may close now; if not, asks about unsaved changes first.
     pub fn may_close(&mut self) -> bool {
+        self.finish_edit();
         if self.allow_close || !self.doc.is_dirty() {
             return true;
         }
@@ -312,22 +331,32 @@ impl SchematicEditor {
         if self.awaiting.is_some() {
             return Err("Wait until the circuit has opened.".into());
         }
+        self.finish_edit();
         let result = self.doc.apply(command);
         self.prune_selection();
         result
     }
 
+    /// Apply `command` after any edit being typed, so edits land in the order they were made.
     fn apply(&mut self, command: Command) {
+        self.finish_edit();
+        self.execute(command);
+    }
+
+    fn execute(&mut self, command: Command) {
         self.status = self.doc.apply(command).err();
         self.prune_selection();
     }
 
+    /// Undo the last edit; text being typed is finished first, so that is what gets undone.
     fn undo(&mut self) {
+        self.finish_edit();
         self.status = self.doc.undo().map(|what| format!("Undid: {what}"));
         self.prune_selection();
     }
 
     fn redo(&mut self) {
+        self.finish_edit();
         self.status = self.doc.redo().map(|what| format!("Redid: {what}"));
         self.prune_selection();
     }
@@ -432,6 +461,7 @@ impl SchematicEditor {
 
     /// Run an action that replaces the document, asking first if there are unsaved changes.
     fn guarded(&mut self, action: Pending, shared: &Shared, ctx: &egui::Context) {
+        self.finish_edit();
         if self.doc.is_dirty() {
             self.dialog = Some(Dialog::Discard(action));
         } else {
@@ -458,11 +488,12 @@ impl SchematicEditor {
 
     fn can_save(&self, shared: &Shared) -> bool {
         // A clean, saved document has nothing to save; a new one can always be saved.
-        let changed = self.saved.is_none() || self.doc.is_dirty();
+        let changed = self.saved.is_none() || self.doc.is_dirty() || self.pending();
         shared.db.is_some() && self.in_flight.is_none() && self.awaiting.is_none() && changed
     }
 
     fn save(&mut self, shared: &Shared, as_copy: bool) {
+        self.finish_edit();
         let Some(db) = &shared.db else {
             return;
         };
@@ -489,6 +520,8 @@ impl SchematicEditor {
     // ---- UI ----
 
     pub fn ui(&mut self, ui: &mut egui::Ui, shared: &mut Shared) {
+        // A field that lost focus while not drawn, e.g. behind another tab, finishes its edit.
+        self.settle(ui.ctx());
         // Not while a circuit is being opened: its reply would replace the new part.
         if self.awaiting.is_none()
             && let Some(r) = shared.place.take()
@@ -705,7 +738,8 @@ impl SchematicEditor {
         let ready = shared.db.is_some()
             && self.in_flight.is_none()
             && self.awaiting.is_none()
-            && !self.doc.is_dirty();
+            && !self.doc.is_dirty()
+            && !self.pending();
         ui.horizontal_wrapped(|ui| {
             ui.colored_label(
                 ui.visuals().warn_fg_color,
@@ -721,107 +755,180 @@ impl SchematicEditor {
         });
     }
 
-    /// A text field showing `current` that returns its text once an edit is finished, so each
-    /// finished edit is one command and one undo step, not one per keystroke.
-    fn field(
-        &mut self,
-        ui: &mut egui::Ui,
-        key: &str,
-        label: egui::Id,
-        current: &str,
-        width: f32,
-        multiline: bool,
-    ) -> Option<String> {
-        let mut text = match &self.editing {
-            Some((k, t)) if k == key => t.clone(),
-            _ => current.to_string(),
-        };
+    /// A text field for `field` whose edit becomes one command and one undo step once finished,
+    /// not one per keystroke. Escape drops the edit. Its width is the ui's `text_edit_width`.
+    fn field(&mut self, ui: &mut egui::Ui, field: Field, label: egui::Id, multiline: bool) {
+        let current = self.field_text(&field).unwrap_or_default();
+        let mine = self.editing.as_ref().filter(|e| e.field == field);
+        let original = mine.map_or(current.clone(), |e| e.original.clone());
+        let mut text = mine.map_or(current, |e| e.text.clone());
         let edit = if multiline {
             egui::TextEdit::multiline(&mut text)
         } else {
             egui::TextEdit::singleline(&mut text)
         };
-        let response = ui
-            .add(edit.id_salt(key).desired_width(width))
-            .labelled_by(label);
-        if response.has_focus() {
-            self.editing = Some((key.to_string(), text));
-            return None;
+        let response = ui.add(edit.id_salt(&field)).labelled_by(label);
+        // Once it loses focus, `settle` finishes the edit at the start of the next frame.
+        if !response.has_focus() {
+            return;
         }
-        if self.editing.as_ref().is_some_and(|(k, _)| k == key) {
+        // Focus moved here straight from another field: that edit is finished.
+        if self.editing.as_ref().is_some_and(|e| e.field != field) {
+            self.finish_edit();
+        }
+        self.editing = Some(Editing {
+            field,
+            id: response.id,
+            original,
+            text,
+        });
+    }
+
+    /// What `field` shows now, or `None` once it no longer exists.
+    fn field_text(&self, field: &Field) -> Option<String> {
+        let circuit = &self.doc.circuit;
+        match field {
+            Field::Item(id, f) => match &circuit.component(id)?.kind {
+                ComponentKind::Item(item) => Some(item_texts(item)[*f].clone()),
+                _ => None,
+            },
+            Field::Extra(i, f) => Some(extra_texts(circuit.bom_extra.get(*i)?)[*f].clone()),
+            Field::Notes => Some(circuit.import.as_ref()?.notes.join("\n")),
+        }
+    }
+
+    /// A typed change is waiting to be applied.
+    fn pending(&self) -> bool {
+        self.editing
+            .as_ref()
+            .is_some_and(|e| e.text.trim() != e.original.trim())
+    }
+
+    /// Finish the edit of a field that no longer has focus, or drop it on Escape.
+    fn settle(&mut self, ctx: &egui::Context) {
+        let Some(e) = &self.editing else {
+            return;
+        };
+        if ctx.memory(|m| m.has_focus(e.id)) {
+            return;
+        }
+        // Taken, so the same Escape doesn't also deselect the part.
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             self.editing = None;
+        } else {
+            self.finish_edit();
         }
-        (response.lost_focus() && text != current).then_some(text)
+    }
+
+    /// Apply the field being typed in, unless what it shows changed meanwhile: the text was
+    /// typed over the old value and could land on the wrong thing.
+    fn finish_edit(&mut self) {
+        let Some(e) = self.editing.take() else {
+            return;
+        };
+        if e.text.trim() == e.original.trim() {
+            return;
+        }
+        if self.field_text(&e.field).as_ref() != Some(&e.original) {
+            let what = match &e.field {
+                Field::Item(id, _) => id.clone(),
+                Field::Extra(i, _) => format!("Extra line {}", i + 1),
+                Field::Notes => "The import notes".into(),
+            };
+            self.status = Some(format!(
+                "{what} changed while you were editing; type the change again."
+            ));
+            return;
+        }
+        let command = match e.field {
+            Field::Item(id, f) => {
+                let Some(ComponentKind::Item(item)) =
+                    self.doc.circuit.component(&id).map(|c| &c.kind)
+                else {
+                    return;
+                };
+                let mut texts = item_texts(item);
+                texts[f] = e.text;
+                let [code, description, position] = texts;
+                Command::SetItemDetails {
+                    id,
+                    code,
+                    description,
+                    position,
+                }
+            }
+            Field::Extra(index, f) => {
+                let mut texts = extra_texts(&self.doc.circuit.bom_extra[index]);
+                texts[f] = e.text;
+                match extra_line(texts) {
+                    Ok(line) => Command::SetExtraLine { index, line },
+                    Err(why) => {
+                        self.status = Some(why);
+                        return;
+                    }
+                }
+            }
+            Field::Notes => Command::SetNotes {
+                notes: e.text.lines().map(String::from).collect(),
+            },
+        };
+        self.execute(command);
     }
 
     /// The parts-list lines that aren't drawn, such as the block, plugs and coils.
     fn extra_lines(&mut self, ui: &mut egui::Ui) {
-        let lines = self.doc.circuit.bom_extra.clone();
-        egui::CollapsingHeader::new(format!("Extra BOM lines ({})", lines.len()))
+        let count = self.doc.circuit.bom_extra.len();
+        egui::CollapsingHeader::new(format!("Extra BOM lines ({count})"))
             .id_salt("bom-extra")
             .show(ui, |ui| {
-                let mut edited = None;
                 let mut remove = None;
                 let mut add = false;
-                egui::Grid::new("bom-extra-grid").show(ui, |ui| {
-                    let heads =
-                        ["Position", "Quantity", "Code", "Description"].map(|h| ui.strong(h).id);
-                    ui.end_row();
-                    let widths = [50.0, 50.0, 140.0, 220.0];
-                    for (i, line) in lines.iter().enumerate() {
-                        let mut texts = extra_texts(line);
-                        for f in 0..4 {
-                            let key = format!("extra-{i}-{f}");
-                            if let Some(t) =
-                                self.field(ui, &key, heads[f], &texts[f], widths[f], false)
-                            {
-                                texts[f] = t;
-                                edited = Some((i, texts.clone()));
+                egui::ScrollArea::vertical()
+                    .id_salt("bom-extra-scroll")
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        egui::Grid::new("bom-extra-grid").show(ui, |ui| {
+                            let heads = ["Position", "Quantity", "Code", "Description"]
+                                .map(|h| ui.strong(h).id);
+                            ui.end_row();
+                            let widths = [50.0, 50.0, 140.0, 220.0];
+                            for i in 0..count {
+                                for f in 0..4 {
+                                    ui.spacing_mut().text_edit_width = widths[f];
+                                    self.field(ui, Field::Extra(i, f), heads[f], false);
+                                }
+                                if ui.button("Delete line").clicked() {
+                                    remove = Some(i);
+                                }
+                                ui.end_row();
+                            }
+                            for (f, text) in self.new_line.iter_mut().enumerate() {
+                                ui.add(egui::TextEdit::singleline(text).desired_width(widths[f]))
+                                    .labelled_by(heads[f]);
+                            }
+                            add = ui.button("Add line").clicked();
+                            ui.end_row();
+                        });
+                    });
+                if self.new_line.iter().any(|t| !t.trim().is_empty()) {
+                    ui.weak("Click Add line to add it.");
+                }
+                // A cell finished by the same click is applied first, by `apply`.
+                if let Some(index) = remove {
+                    self.apply(Command::RemoveExtraLine { index });
+                }
+                if add {
+                    match extra_line(self.new_line.clone()) {
+                        Ok(line) => {
+                            self.apply(Command::AddExtraLine { line });
+                            if self.status.is_none() {
+                                self.new_line = Default::default();
                             }
                         }
-                        if ui.button("Delete line").clicked() {
-                            remove = Some(i);
-                        }
-                        ui.end_row();
+                        Err(why) => self.status = Some(why),
                     }
-                    for (f, text) in self.new_line.iter_mut().enumerate() {
-                        ui.add(egui::TextEdit::singleline(text).desired_width(widths[f]))
-                            .labelled_by(heads[f]);
-                    }
-                    add = ui.button("Add line").clicked();
-                    ui.end_row();
-                });
-                if let Some((index, texts)) = edited {
-                    self.apply_line(texts, |line| Command::SetExtraLine { index, line });
-                } else if let Some(index) = remove {
-                    self.apply(Command::RemoveExtraLine { index });
-                } else if add
-                    && self.apply_line(self.new_line.clone(), |line| Command::AddExtraLine { line })
-                {
-                    self.new_line = Default::default();
                 }
             });
-    }
-
-    /// Apply the command `make` builds from an extra line's texts; whether it was applied.
-    fn apply_line(
-        &mut self,
-        texts: [String; 4],
-        make: impl FnOnce(ExtraBomLine) -> Command,
-    ) -> bool {
-        let [position, quantity, code, description] = texts;
-        let Ok(quantity) = quantity.trim().parse() else {
-            self.status = Some("The quantity must be a whole number such as 2.".into());
-            return false;
-        };
-        let opt = |t: String| Some(t).filter(|t| !t.trim().is_empty());
-        self.apply(make(ExtraBomLine {
-            position: opt(position),
-            quantity,
-            code: opt(code),
-            description: opt(description),
-        }));
-        self.status.is_none()
     }
 
     /// An imported circuit's notes, one per line.
@@ -829,19 +936,14 @@ impl SchematicEditor {
         let Some(import) = &self.doc.circuit.import else {
             return;
         };
-        let current = import.notes.join("\n");
         egui::CollapsingHeader::new(format!("Import notes ({})", import.notes.len()))
             .id_salt("import-notes")
             .show(ui, |ui| {
                 let label = ui
                     .weak("What the assistant couldn't read or wasn't sure of, one note per line")
                     .id;
-                let width = ui.available_width();
-                if let Some(text) = self.field(ui, "import-notes", label, &current, width, true) {
-                    self.apply(Command::SetNotes {
-                        notes: text.lines().map(String::from).collect(),
-                    });
-                }
+                ui.spacing_mut().text_edit_width = ui.available_width();
+                self.field(ui, Field::Notes, label, true);
             });
     }
 
@@ -897,30 +999,15 @@ impl SchematicEditor {
                 }
                 ComponentKind::Item(_) => {}
             }
-            if let ComponentKind::Item(item) = &c.kind {
-                let mut texts = [&item.code, &item.description, &item.position]
-                    .map(|t| t.clone().unwrap_or_default());
-                let mut edited = false;
+            if matches!(c.kind, ComponentKind::Item(_)) {
                 for (f, (name, width)) in
                     [("Code", 120.0), ("Description", 180.0), ("Position", 40.0)]
                         .into_iter()
                         .enumerate()
                 {
                     let label = ui.label(name).id;
-                    let key = format!("item-{}-{f}", c.id);
-                    if let Some(t) = self.field(ui, &key, label, &texts[f], width, false) {
-                        texts[f] = t;
-                        edited = true;
-                    }
-                }
-                if edited {
-                    let [code, description, position] = texts.map(Some);
-                    self.apply(Command::SetItemDetails {
-                        id: c.id.clone(),
-                        code,
-                        description,
-                        position,
-                    });
+                    ui.spacing_mut().text_edit_width = width;
+                    self.field(ui, Field::Item(c.id.clone(), f), label, false);
                 }
             }
             let mut inside = self.doc.circuit.in_block.contains(&c.id);
@@ -1447,6 +1534,27 @@ impl SchematicEditor {
             self.dialog = None;
         }
     }
+}
+
+/// An item's code, description and position as text.
+fn item_texts(item: &Item) -> [String; 3] {
+    [&item.code, &item.description, &item.position].map(|t| t.clone().unwrap_or_default())
+}
+
+/// An extra line from its position, quantity, code and description as typed.
+fn extra_line(
+    [position, quantity, code, description]: [String; 4],
+) -> Result<ExtraBomLine, String> {
+    let quantity = quantity
+        .trim()
+        .parse()
+        .map_err(|_| "The quantity must be a whole number such as 2.".to_string())?;
+    Ok(ExtraBomLine {
+        position: Some(position),
+        quantity,
+        code: Some(code),
+        description: Some(description),
+    })
 }
 
 /// An extra line's position, quantity, code and description as text.
@@ -2229,11 +2337,29 @@ mod tests {
         let mut h = Harness::builder()
             .with_size(Vec2::new(1400.0, 900.0))
             .build_ui_state(
-                |ui, (e, s): &mut State| e.ui(ui, s),
+                |ui, (e, s): &mut State| {
+                    // Not drawn, as behind another dock tab, while `hide` says so.
+                    if !ui
+                        .ctx()
+                        .data(|d| d.get_temp::<bool>(hidden_id()).unwrap_or(false))
+                    {
+                        e.ui(ui, s);
+                    }
+                },
                 (SchematicEditor::new(circuit, saved), shared),
             );
         h.run_steps(4);
         h
+    }
+
+    fn hidden_id() -> egui::Id {
+        egui::Id::new("test-hidden")
+    }
+
+    /// Stop or start drawing the editor, as switching dock tabs does.
+    fn hide(h: &mut Harness<State>, hidden: bool) {
+        h.ctx.data_mut(|d| d.insert_temp(hidden_id(), hidden));
+        h.run_steps(3);
     }
 
     fn valve_type_of(h: &Harness<State>, id: &str) -> Option<String> {
@@ -2463,14 +2589,18 @@ mod tests {
         ));
     }
 
-    /// Replace the text of the `n`th text field labelled `label` and finish the edit with `end`.
-    fn retype(h: &mut Harness<State>, label: &str, n: usize, text: &str, end: Key) {
+    /// The `n`th text field labelled `label`.
+    fn text_field<'h>(h: &'h Harness<State>, label: &'h str, n: usize) -> egui_kittest::Node<'h> {
         use egui::accesskit::Role;
         h.query_all_by_role_and_label(Role::TextInput, label)
             .chain(h.query_all_by_role_and_label(Role::MultilineTextInput, label))
             .nth(n)
             .unwrap()
-            .click();
+    }
+
+    /// Replace the text of the `n`th text field labelled `label`, then press `end` if given.
+    fn retype(h: &mut Harness<State>, label: &str, n: usize, text: &str, end: Option<Key>) {
+        text_field(h, label, n).click();
         h.run_steps(2);
         h.key_press_modifiers(Modifiers::COMMAND, Key::A);
         for (i, line) in text.split('\n').enumerate() {
@@ -2484,8 +2614,10 @@ mod tests {
             }
         }
         h.run_steps(2);
-        h.key_press(end);
-        h.run_steps(2);
+        if let Some(end) = end {
+            h.key_press(end);
+            h.run_steps(2);
+        }
     }
 
     #[test]
@@ -2496,7 +2628,7 @@ mod tests {
         let lines = |h: &Harness<State>| h.state().0.doc.circuit.bom_extra.clone();
 
         // Four plugs become six, in one undo step; the bill of materials follows.
-        retype(&mut h, "Quantity", 1, "6", Key::Enter);
+        retype(&mut h, "Quantity", 1, "6", Some(Key::Enter));
         assert_eq!(lines(&h)[1].quantity, 6);
         assert_eq!(h.state().0.doc.undo_label(), Some("Edit extra line 2"));
         let (e, s) = h.state();
@@ -2506,13 +2638,15 @@ mod tests {
         assert!(csv.contains("20,6,,,Plug G1/4,DEMO-PLUG-G1/4"), "{csv}");
 
         // A bad quantity is refused in words and the field shows the line as it is.
-        retype(&mut h, "Quantity", 1, "many", Key::Enter);
+        retype(&mut h, "Quantity", 1, "many", Some(Key::Enter));
         assert_eq!(lines(&h)[1].quantity, 6);
         h.get_by_label("The quantity must be a whole number such as 2.");
+        assert_eq!(text_field(&h, "Quantity", 1).value().as_deref(), Some("6"));
 
         // Add a line from the last row.
-        retype(&mut h, "Code", 2, "DEMO-SEAL-12", Key::Tab);
-        retype(&mut h, "Quantity", 2, "2", Key::Tab);
+        retype(&mut h, "Code", 2, "DEMO-SEAL-12", Some(Key::Tab));
+        retype(&mut h, "Quantity", 2, "2", Some(Key::Tab));
+        h.get_by_label("Click Add line to add it.");
         h.get_by_label("Add line").click();
         h.run_steps(2);
         assert_eq!(lines(&h).len(), 3);
@@ -2538,7 +2672,7 @@ mod tests {
         let mut h = import_harness(None, false);
         h.state_mut().0.selected = Some("M1".into());
         h.run_steps(2);
-        retype(&mut h, "Code", 0, "DEMO-MP-05", Key::Enter);
+        retype(&mut h, "Code", 0, "DEMO-MP-05", Some(Key::Enter));
         let item = |h: &Harness<State>| match &h.state().0.doc.circuit.component("M1").unwrap().kind
         {
             ComponentKind::Item(i) => i.clone(),
@@ -2574,7 +2708,7 @@ mod tests {
             label,
             0,
             "Row 12 checked (demo).\n\nPlug count from page 2.",
-            Key::Escape,
+            Some(Key::Tab),
         );
         let notes = |h: &Harness<State>| h.state().0.doc.circuit.import.clone().unwrap().notes;
         assert_eq!(
@@ -2589,6 +2723,161 @@ mod tests {
         assert!(
             h.state().0.doc.undo_label().is_none(),
             "the whole edit was one step"
+        );
+    }
+
+    const NOTES: &str = "What the assistant couldn't read or wasn't sure of, one note per line";
+
+    fn open_section(h: &mut Harness<State>, title: &str) {
+        h.get_by_label(title).click();
+        h.run_steps(2);
+    }
+
+    fn notes_of(h: &Harness<State>) -> Vec<String> {
+        h.state().0.doc.circuit.import.clone().unwrap().notes
+    }
+
+    #[test]
+    fn escape_drops_an_edit_and_added_blank_space_is_no_change() {
+        let mut h = import_harness(None, false);
+        h.state_mut().0.selected = Some("M1".into());
+        h.run_steps(2);
+        retype(&mut h, "Code", 0, "DEMO-MP-99", Some(Key::Escape));
+        assert_eq!(
+            h.state().0.selected.as_deref(),
+            Some("M1"),
+            "still selected"
+        );
+        assert_eq!(
+            text_field(&h, "Code", 0).value().as_deref(),
+            Some("DEMO-MP-04")
+        );
+        retype(&mut h, "Code", 0, "DEMO-MP-04 ", Some(Key::Enter));
+        let e = &h.state().0;
+        assert!(
+            e.doc.undo_label().is_none() && e.status.is_none(),
+            "{:?}",
+            e.status
+        );
+    }
+
+    #[test]
+    fn undo_while_typing_undoes_the_typing_not_another_line() {
+        let mut h = import_harness(None, false);
+        open_section(&mut h, "Extra BOM lines (2)");
+        h.get_all_by_label("Delete line").next().unwrap().click();
+        h.run_steps(2);
+        // The plugs are the first line now: type over their code, then Undo before finishing.
+        retype(&mut h, "Code", 0, "DEMO-PLUG-M8", None);
+        h.get_by_label("Undo").click();
+        h.run_steps(2);
+        let lines = &h.state().0.doc.circuit.bom_extra;
+        assert_eq!(lines.len(), 1, "the block stays deleted");
+        assert_eq!(lines[0].code.as_deref(), Some("DEMO-PLUG-G1/4"));
+        assert_eq!(h.state().0.doc.redo_label(), Some("Edit extra line 1"));
+    }
+
+    #[test]
+    fn an_edit_over_a_value_that_changed_meanwhile_is_dropped_with_a_reason() {
+        let mut h = import_harness(Some(1), false);
+        open_section(&mut h, "Import notes (2)");
+        retype(&mut h, NOTES, 0, "Mine (demo).", None);
+        // A change that didn't come from this field lands before the edit is finished.
+        let theirs = "Theirs (demo).".to_string();
+        let doc = &mut h.state_mut().0.doc;
+        doc.circuit
+            .import
+            .as_mut()
+            .unwrap()
+            .notes
+            .push(theirs.clone());
+        hide(&mut h, true);
+        hide(&mut h, false);
+        assert_eq!(notes_of(&h).last(), Some(&theirs));
+        assert_eq!(
+            h.state().0.status.as_deref(),
+            Some("The import notes changed while you were editing; type the change again.")
+        );
+    }
+
+    #[test]
+    fn an_edit_left_behind_another_tab_or_selection_is_kept() {
+        let mut h = import_harness(Some(1), false);
+        open_section(&mut h, "Import notes (2)");
+        retype(&mut h, NOTES, 0, "Checked (demo).", None);
+        hide(&mut h, true);
+        hide(&mut h, false);
+        assert_eq!(notes_of(&h), ["Checked (demo)."]);
+
+        h.state_mut().0.selected = Some("M1".into());
+        h.run_steps(2);
+        retype(&mut h, "Code", 0, "DEMO-MP-05", None);
+        h.state_mut().0.selected = Some("X2".into());
+        h.run_steps(3);
+        let m1 = h
+            .state()
+            .0
+            .doc
+            .circuit
+            .component("M1")
+            .unwrap()
+            .kind
+            .clone();
+        let ComponentKind::Item(m1) = m1 else {
+            unreachable!()
+        };
+        assert_eq!(m1.code.as_deref(), Some("DEMO-MP-05"));
+    }
+
+    #[test]
+    fn save_takes_the_edit_being_typed() {
+        let mut h = import_harness(Some(1), false);
+        open_section(&mut h, "Import notes (2)");
+        retype(&mut h, NOTES, 0, "Checked (demo).", None);
+        assert!(
+            h.get_by_label("Mark checked")
+                .accesskit_node()
+                .is_disabled(),
+            "Mark checked saves the circuit unchanged"
+        );
+        h.get_by_label("Save").click();
+        h.run_steps(2);
+        let sent = h.state().0.in_flight.clone().expect("a save was sent");
+        assert_eq!(sent.import.unwrap().notes, ["Checked (demo)."]);
+    }
+
+    #[test]
+    fn a_cell_finished_by_clicking_delete_line_is_kept() {
+        let mut h = import_harness(None, false);
+        open_section(&mut h, "Extra BOM lines (2)");
+        retype(&mut h, "Code", 1, "DEMO-PLUG-M8", None);
+        h.get_all_by_label("Delete line").next().unwrap().click();
+        h.run_steps(2);
+        let lines = &h.state().0.doc.circuit.bom_extra;
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].code.as_deref(), Some("DEMO-PLUG-M8"));
+        assert_eq!(h.state().0.doc.undo_label(), Some("Delete extra line 1"));
+    }
+
+    #[test]
+    fn clicking_from_one_cell_into_another_keeps_the_first_edit() {
+        let mut h = import_harness(None, false);
+        open_section(&mut h, "Extra BOM lines (2)");
+        // The cell clicked into is drawn before the one typed in.
+        retype(&mut h, "Code", 1, "DEMO-PLUG-M8", None);
+        retype(&mut h, "Code", 0, "DEMO-BLOCK-460", Some(Key::Enter));
+        let codes: Vec<_> = h
+            .state()
+            .0
+            .doc
+            .circuit
+            .bom_extra
+            .iter()
+            .map(|l| l.code.clone())
+            .collect();
+        assert_eq!(
+            codes,
+            [Some("DEMO-BLOCK-460".into()), Some("DEMO-PLUG-M8".into())]
         );
     }
 }
