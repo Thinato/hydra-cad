@@ -587,13 +587,15 @@ fn orifice(adj: bool) -> Drawing {
     d
 }
 
+const PORT_RADIUS: f32 = 1.2;
+
 /// External connection, e.g. manifold port P.
 fn port_marker(label: &str) -> Drawing {
     Drawing {
         primitives: vec![
             Primitive::Circle {
                 center: [0.0, 0.0],
-                radius: 1.2,
+                radius: PORT_RADIUS,
                 filled: false,
             },
             text([0.0, -2.5], label, Align::Middle),
@@ -776,17 +778,30 @@ pub fn status_words(c: &Component, catalogue: &Catalogue) -> Option<String> {
 /// Components without a placement sit at the origin. Components whose catalogue rows are
 /// missing are skipped; [`Circuit::validate`] reports them.
 pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
+    let corners = block_outline(circuit, catalogue).unwrap_or_default();
+    let mut on_outline = Vec::new();
     let mut d = Drawing::default();
     for c in &circuit.components {
-        let place = circuit
-            .layout
-            .components
-            .get(&c.id)
-            .copied()
-            .unwrap_or_default();
-        let Some(part) = render_component(c, place, catalogue) else {
+        let place = placement(circuit, &c.id);
+        let Some(mut part) = render_component(c, place, catalogue) else {
             continue;
         };
+        // A port on the block's edge has its label outside the block.
+        let at = [place.x, place.y];
+        if let (ComponentKind::Port { .. }, Some([nx, ny])) = (&c.kind, outward(&corners, at)) {
+            on_outline.push(at);
+            for prim in &mut part.primitives {
+                if let Primitive::Text { at: t, align, .. } = prim {
+                    (*t, *align) = if nx == 0.0 {
+                        ([at[0], at[1] + 2.5 * ny.signum()], Align::Middle)
+                    } else if nx < 0.0 {
+                        ([at[0] - 2.0, at[1]], Align::End)
+                    } else {
+                        ([at[0] + 2.0, at[1]], Align::Start)
+                    };
+                }
+            }
+        }
         d.primitives.extend(part.primitives);
         for (name, p) in part.ports {
             d.ports.push((format!("{}.{name}", c.id), p));
@@ -839,9 +854,8 @@ pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
         }
     }
     d.primitives.extend(wires);
-    if let Some((min, max)) = block_outline(circuit, catalogue) {
-        let corners = [min, [max[0], min[1]], max, [min[0], max[1]]];
-        d.primitives.extend(dash_dot(&corners));
+    if !corners.is_empty() {
+        d.primitives.extend(dash_dot(&corners, &on_outline));
     }
     d
 }
@@ -849,39 +863,169 @@ pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
 /// Space between the block's outline and the parts inside it.
 const OUTLINE_PAD: f32 = 4.0;
 
-/// The block's outline `(min, max)`: around every part in the block, through the block's ports.
-/// `None` when no drawn component is in the block.
-pub fn block_outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<(Point, Point)> {
-    let mut min = [f32::INFINITY; 2];
-    let mut max = [f32::NEG_INFINITY; 2];
-    for c in circuit
-        .components
-        .iter()
-        .filter(|c| circuit.in_block.contains(&c.id))
-    {
-        // Ports set the edge exactly, as block ports sit on it; parts get room around them.
-        let (lo, hi) = match extent(circuit, c, catalogue) {
-            Some(e) if matches!(c.kind, ComponentKind::Port { .. }) => e,
-            Some((lo, hi)) => (
+/// Tolerance for a point lying on an outline edge, in mm.
+const ON_EDGE: f32 = 1e-3;
+
+type Rect = (Point, Point);
+
+/// The block's outline: the corners of a closed rectilinear polygon, clockwise from the top
+/// left. `None` when no drawn component is in the block.
+///
+/// It is the rectangle round every part in the block and through the block's ports, with a
+/// corner cut out round any part outside the block that stands in a corner holding no block
+/// part, so an L-shaped block keeps the part in its notch outside.
+pub fn block_outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<Vec<Point>> {
+    Some(outline(circuit, catalogue)?.corners())
+}
+
+/// Whether `c`, placed at `place`, would be drawn over the block's outline as it is now.
+pub fn drawn_inside_outline(
+    circuit: &Circuit,
+    c: &Component,
+    place: Placement,
+    catalogue: &Catalogue,
+) -> bool {
+    let Some(outline) = outline(circuit, catalogue) else {
+        return false;
+    };
+    extent(c, place, catalogue).is_some_and(|e| outline.covers(e))
+}
+
+/// The block's bounding rectangle and the corners cut out of it, top left, top right, bottom
+/// right, bottom left.
+struct Outline {
+    rect: Rect,
+    notches: [Option<Rect>; 4],
+}
+
+impl Outline {
+    /// Whether a drawing's extent reaches over the outline's interior.
+    fn covers(&self, e: Rect) -> bool {
+        let (lo, hi) = self.rect;
+        let clipped = (
+            [e.0[0].max(lo[0]), e.0[1].max(lo[1])],
+            [e.1[0].min(hi[0]), e.1[1].min(hi[1])],
+        );
+        overlaps(e, self.rect)
+            && !self.notches.iter().flatten().any(|n| {
+                n.0[0] <= clipped.0[0]
+                    && n.0[1] <= clipped.0[1]
+                    && clipped.1[0] <= n.1[0]
+                    && clipped.1[1] <= n.1[1]
+            })
+    }
+
+    fn corners(&self) -> Vec<Point> {
+        let mut corners = Vec::new();
+        for (k, notch) in self.notches.iter().enumerate() {
+            let c = flip(k, self.rect).0;
+            // With the corner flipped to the top left, a notch to `i` goes down, across, up.
+            let i = notch.map_or(c, |n| flip(k, n).1);
+            let mut three = [[c[0], i[1]], i, [i[0], c[1]]].map(|p| flip(k, (p, p)).0);
+            // One flip turns the polygon anticlockwise; walk it back.
+            if k % 2 == 1 {
+                three.reverse();
+            }
+            corners.extend(three);
+        }
+        corners.dedup();
+        corners
+    }
+}
+
+/// `r` mirrored so corner `k` of it (top left, top right, bottom right, bottom left) becomes its
+/// minimum; its own inverse.
+fn flip(k: usize, (lo, hi): Rect) -> Rect {
+    let axis = |lo: f32, hi: f32, flipped: bool| if flipped { (-hi, -lo) } else { (lo, hi) };
+    let (x0, x1) = axis(lo[0], hi[0], k == 1 || k == 2);
+    let (y0, y1) = axis(lo[1], hi[1], k >= 2);
+    ([x0, y0], [x1, y1])
+}
+
+fn overlaps(a: Rect, b: Rect) -> bool {
+    a.0[0] < b.1[0] && b.0[0] < a.1[0] && a.0[1] < b.1[1] && b.0[1] < a.1[1]
+}
+
+fn outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<Outline> {
+    let (mut members, mut others) = (Vec::new(), Vec::new());
+    for c in &circuit.components {
+        let Some((lo, hi)) = extent(c, placement(circuit, &c.id), catalogue) else {
+            continue;
+        };
+        match (circuit.in_block.contains(&c.id), &c.kind) {
+            (false, _) => others.push((lo, hi)),
+            // Ports set the edge exactly, as block ports sit on it; parts get room around them.
+            (true, ComponentKind::Port { .. }) => members.push((lo, hi)),
+            (true, _) => members.push((
                 [lo[0] - OUTLINE_PAD, lo[1] - OUTLINE_PAD],
                 [hi[0] + OUTLINE_PAD, hi[1] + OUTLINE_PAD],
-            ),
-            None => continue,
-        };
-        min = [min[0].min(lo[0]), min[1].min(lo[1])];
-        max = [max[0].max(hi[0]), max[1].max(hi[1])];
+            )),
+        }
     }
-    (min[0] <= max[0]).then_some((min, max))
+    let rect = members.iter().copied().reduce(|(a, b), (c, d)| {
+        (
+            [a[0].min(c[0]), a[1].min(c[1])],
+            [b[0].max(d[0]), b[1].max(d[1])],
+        )
+    })?;
+    let mut notches = [None; 4];
+    for k in 0..4 {
+        // Flipped so the corner is the top left, a notch runs from `c` to its inner corner.
+        let (c, far) = flip(k, rect);
+        let fits = |n: Point| {
+            // It leaves the far edges, no block part reaches into it, nor a port onto its outer
+            // edges...
+            n[0] < far[0]
+                && n[1] < far[1]
+                && members.iter().all(|&m| {
+                    let lo = flip(k, m).0;
+                    !(lo[0] < n[0] && lo[1] < n[1])
+                })
+                && notches.iter().flatten().all(|&o: &Rect| {
+                    // ...and it keeps clear of the other notches, so the outline stays one loop.
+                    let lo = flip(k, o).0;
+                    !(lo[0] <= n[0] && lo[1] <= n[1])
+                })
+        };
+        // ponytail: parts are taken greedily in drawing order, so two outside parts that each
+        // fit a notch but not together keep the first; a staircase outline would fit both.
+        let mut inner = c;
+        for &o in others.iter().filter(|&&o| overlaps(o, rect)) {
+            let hi = flip(k, o).1;
+            let want = [
+                inner[0].max(hi[0].min(far[0])),
+                inner[1].max(hi[1].min(far[1])),
+            ];
+            if fits(want) {
+                inner = want;
+            }
+        }
+        if inner != c {
+            // Room round the outside part too, where the block's parts allow it.
+            let p = OUTLINE_PAD;
+            let inner = [[p, p], [p, 0.0], [0.0, p], [0.0, 0.0]]
+                .map(|[dx, dy]| [inner[0] + dx, inner[1] + dy])
+                .into_iter()
+                .find(|&n| fits(n))
+                .unwrap_or(inner);
+            notches[k] = Some(flip(k, (c, inner)));
+        }
+    }
+    Some(Outline { rect, notches })
+}
+
+/// Where a component is placed; the origin when it has no placement.
+fn placement(circuit: &Circuit, id: &str) -> Placement {
+    circuit
+        .layout
+        .components
+        .get(id)
+        .copied()
+        .unwrap_or_default()
 }
 
 /// Where a component is on the sheet: a port's point, or the box round anything else's drawing.
-fn extent(circuit: &Circuit, c: &Component, catalogue: &Catalogue) -> Option<(Point, Point)> {
-    let place = circuit
-        .layout
-        .components
-        .get(&c.id)
-        .copied()
-        .unwrap_or_default();
+fn extent(c: &Component, place: Placement, catalogue: &Catalogue) -> Option<Rect> {
     match c.kind {
         ComponentKind::Port { .. } => Some(([place.x, place.y], [place.x, place.y])),
         _ => bounds(&render_component(c, place, catalogue)?.primitives),
@@ -891,7 +1035,7 @@ fn extent(circuit: &Circuit, c: &Component, catalogue: &Catalogue) -> Option<(Po
 /// Components outside the block that are drawn over its outline, so the schematic would show
 /// them in the block.
 pub fn outline_issues(circuit: &Circuit, catalogue: &Catalogue) -> Vec<Issue> {
-    let Some((min, max)) = block_outline(circuit, catalogue) else {
+    let Some(outline) = outline(circuit, catalogue) else {
         return Vec::new();
     };
     circuit
@@ -899,20 +1043,32 @@ pub fn outline_issues(circuit: &Circuit, catalogue: &Catalogue) -> Vec<Issue> {
         .iter()
         .filter(|c| !circuit.in_block.contains(&c.id))
         .filter(|c| {
-            extent(circuit, c, catalogue).is_some_and(|(lo, hi)| {
-                lo[0] < max[0] && min[0] < hi[0] && lo[1] < max[1] && min[1] < hi[1]
-            })
+            extent(c, placement(circuit, &c.id), catalogue).is_some_and(|e| outline.covers(e))
         })
         .map(|c| Issue::DrawnInsideBlock(c.id.clone()))
         .collect()
+}
+
+/// Outward from the outline edge `p` lies on, e.g. `[0, w]` on a bottom edge `w` long.
+fn outward(corners: &[Point], p: Point) -> Option<Point> {
+    (0..corners.len()).find_map(|k| {
+        let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let between = |v: f32, a: f32, b: f32| a.min(b) - ON_EDGE <= v && v <= a.max(b) + ON_EDGE;
+        // Edges are level or upright, so within the edge's box is on it.
+        let on = between(p[0], a[0], b[0]) && between(p[1], a[1], b[1]);
+        // Clockwise on a y-down sheet, the outside is to the left of travel.
+        (on && a != b).then_some([dy, -dx])
+    })
 }
 
 /// Longest outline drawn dash-dot; a longer one (a part placed far off by mistake) is drawn
 /// dashed, so a typo can't make millions of dashes.
 const MAX_DASH_DOT: f32 = 20_000.0;
 
-/// A closed dash-dot line through `corners`, the ISO 1219 boundary of a block or assembly.
-fn dash_dot(corners: &[Point]) -> Vec<Primitive> {
+/// A closed dash-dot line through `corners`, the ISO 1219 boundary of a block or assembly,
+/// broken round the port circles at `ports`.
+fn dash_dot(corners: &[Point], ports: &[Point]) -> Vec<Primitive> {
     let perimeter: f32 = (0..corners.len())
         .map(|k| {
             let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
@@ -939,12 +1095,32 @@ fn dash_dot(corners: &[Point]) -> Vec<Primitive> {
                 a[1] + (b[1] - a[1]) * t / len,
             ]
         };
+        // How far along this edge each port on it sits.
+        let holes: Vec<f32> = ports
+            .iter()
+            .filter_map(|p| {
+                let t = ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / len;
+                let q = at(t);
+                let on = (q[0] - p[0]).abs() + (q[1] - p[1]).abs() < ON_EDGE;
+                (on && (-ON_EDGE..=len + ON_EDGE).contains(&t)).then_some(t)
+            })
+            .collect();
         let mut pos = 0.0;
         while pos < len {
             let (dash, on) = PATTERN[i];
             let step = (dash - used).min(len - pos);
             if on {
-                out.push(line(at(pos), at(pos + step)));
+                let mut pieces = vec![(pos, pos + step)];
+                for &t in &holes {
+                    pieces = pieces
+                        .into_iter()
+                        .flat_map(|(s, e)| {
+                            [(s, e.min(t - PORT_RADIUS)), (s.max(t + PORT_RADIUS), e)]
+                        })
+                        .filter(|(s, e)| s < e)
+                        .collect();
+                }
+                out.extend(pieces.into_iter().map(|(s, e)| line(at(s), at(e))));
             }
             pos += step;
             used += step;

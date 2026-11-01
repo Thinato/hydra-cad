@@ -214,10 +214,10 @@ fn block_outline_goes_round_its_parts_through_its_ports() {
         {"id": "X2", "kind": "item", "symbol": {"kind": "orifice"}},
         {"id": "X3", "kind": "item", "symbol": {"kind": "orifice"}}],
         "layout": {"components": {"P": {"x": 0, "y": 60}, "X1": {"x": 30, "y": 30},
-                                  "X2": {"x": 10, "y": 45}, "X3": {"x": 100, "y": 30}}},
+                                  "X2": {"x": 20, "y": 45}, "X3": {"x": 100, "y": 30}}},
         "in_block": ["P", "X1"]}"#;
     let mut circuit = Circuit::from_json(json).unwrap();
-    let (min, max) = block_outline(&circuit, &catalogue).unwrap();
+    let (min, max) = bounds_of(&block_outline(&circuit, &catalogue).unwrap());
     // The port beyond the parts sits on the edge; the part has room inside.
     assert_eq!((min[0], max[1]), (0.0, 60.0));
     let x1 = render_circuit(
@@ -233,7 +233,7 @@ fn block_outline_goes_round_its_parts_through_its_ports() {
         min[1] < lo[1] - 3.0 && hi[0] + 3.0 < max[0],
         "{min:?} {max:?}"
     );
-    // X2 is drawn inside but isn't in the block; X3 is clear of it.
+    // X2 is drawn inside, beside X1, but isn't in the block; X3 is clear of it.
     let issues: Vec<String> = outline_issues(&circuit, &catalogue)
         .iter()
         .map(|i| i.to_string())
@@ -250,7 +250,7 @@ fn block_outline_goes_round_its_parts_through_its_ports() {
     circuit.in_block.clear();
     let without = render_circuit(&circuit, &catalogue).primitives;
     let added = &with[without.len()..];
-    assert_eq!(&with[..without.len()], &without[..]);
+    assert!(!added.is_empty());
     // Starting at the top-left corner: a 4 mm dash, a 1 mm gap, a 0.3 mm dot, a 1 mm gap.
     let first: Vec<_> = added[..3]
         .iter()
@@ -284,16 +284,14 @@ fn block_outline_goes_round_its_parts_through_its_ports() {
 
     // A part's drawing reaching over the outline counts, not only its origin.
     circuit.in_block = ["P".to_string(), "X1".to_string()].into();
-    circuit.layout.components.get_mut("X2").unwrap().y = 60.0 + 3.0;
+    let x2 = circuit.layout.components.get_mut("X2").unwrap();
+    (x2.x, x2.y) = (5.0, 60.0 + 3.0);
     let issues = outline_issues(&circuit, &catalogue);
     assert_eq!(issues, [hydra_core::Issue::DrawnInsideBlock("X2".into())]);
 
     // A block of one port is a point, and draws nothing.
     circuit.in_block = ["P".to_string()].into();
-    assert_eq!(
-        block_outline(&circuit, &catalogue),
-        Some(([0.0, 60.0], [0.0, 60.0]))
-    );
+    assert_eq!(block_outline(&circuit, &catalogue), Some(vec![[0.0, 60.0]]));
     assert_eq!(
         render_circuit(&circuit, &catalogue).primitives.len(),
         without.len()
@@ -312,6 +310,145 @@ fn block_outline_goes_round_its_parts_through_its_ports() {
             ..
         })
     ));
+}
+
+/// The outline's polylines, which `render_circuit` appends after everything else.
+fn outline_lines(circuit: &Circuit, catalogue: &Catalogue) -> Vec<[[f32; 2]; 2]> {
+    let with = render_circuit(circuit, catalogue).primitives;
+    let without = render_circuit(
+        &Circuit {
+            in_block: Default::default(),
+            ..circuit.clone()
+        },
+        catalogue,
+    )
+    .primitives;
+    with[without.len()..]
+        .iter()
+        .map(|p| match p {
+            Primitive::Polyline { points, .. } if points.len() == 2 => [points[0], points[1]],
+            _ => panic!("{p:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn an_outside_part_in_an_empty_corner_gets_a_notch() {
+    let catalogue = catalogue();
+    // Block parts A, B, C make an L; N stands outside the block in its top-right notch, and M
+    // outside it between A and B.
+    let json = r#"{"schema": 4, "name": "l", "components": [
+        {"id": "A", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "B", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "C", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "N", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "M", "kind": "item", "symbol": {"kind": "orifice"}}],
+        "layout": {"components": {"A": {"x": 0, "y": 0}, "B": {"x": 0, "y": 40},
+            "C": {"x": 40, "y": 40}, "N": {"x": 40, "y": 0}, "M": {"x": 0, "y": 20}}},
+        "in_block": ["A", "B", "C"]}"#;
+    let mut circuit = Circuit::from_json(json).unwrap();
+    let only = |id: &str| {
+        let mut c = circuit.clone();
+        c.components.retain(|c| c.id == id);
+        c.in_block.clear();
+        bounds(&render_circuit(&c, &catalogue).primitives).unwrap()
+    };
+    let (n, a, c) = (only("N"), only("A"), only("C"));
+    let (min, max) = ([a.0[0] - 4.0, a.0[1] - 4.0], [c.1[0] + 4.0, c.1[1] + 4.0]);
+    // The notch leaves room round N, as the outline does round the block's parts.
+    let inner = [n.0[0] - 4.0, n.1[1] + 4.0];
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            min,
+            [inner[0], min[1]],
+            inner,
+            [max[0], inner[1]],
+            max,
+            [min[0], max[1]]
+        ]
+    );
+    // N in the notch is fine; M between two block parts is drawn inside the block.
+    assert_eq!(
+        outline_issues(&circuit, &catalogue),
+        [hydra_core::Issue::DrawnInsideBlock("M".into())]
+    );
+    // The drawn outline is that same shape: every dash lies on one of its edges.
+    let corners = block_outline(&circuit, &catalogue).unwrap();
+    let on_edge = |p: [f32; 2]| {
+        (0..corners.len()).any(|k| {
+            let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
+            let within = |v: f32, a: f32, b: f32| a.min(b) - 1e-3 <= v && v <= a.max(b) + 1e-3;
+            within(p[0], a[0], b[0]) && within(p[1], a[1], b[1])
+        })
+    };
+    let lines = outline_lines(&circuit, &catalogue);
+    assert!(lines.len() > 20);
+    assert!(lines.iter().flatten().all(|&p| on_edge(p)), "{lines:?}");
+    // A part added in the notch would be drawn outside, one by M inside.
+    let n_part = circuit.component("N").unwrap().clone();
+    let place = |x, y| hydra_core::Placement {
+        x,
+        y,
+        ..Default::default()
+    };
+    assert!(!hydra_symbols::drawn_inside_outline(
+        &circuit,
+        &n_part,
+        place(40.0, 0.0),
+        &catalogue
+    ));
+    assert!(hydra_symbols::drawn_inside_outline(
+        &circuit,
+        &n_part,
+        place(0.0, 20.0),
+        &catalogue
+    ));
+
+    // With nothing in the corner the block stays a rectangle.
+    circuit.components.retain(|c| c.id != "N");
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [min, [max[0], min[1]], max, [min[0], max[1]]]
+    );
+}
+
+#[test]
+fn block_port_labels_sit_outside_and_the_outline_breaks_round_ports() {
+    let catalogue = catalogue();
+    let json = r#"{"schema": 4, "name": "p", "components": [
+        {"id": "X", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "T", "kind": "port", "label": "TOP"}, {"id": "B", "kind": "port", "label": "BOTTOM"},
+        {"id": "L", "kind": "port", "label": "LEFT"}, {"id": "R", "kind": "port", "label": "RIGHT"}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "T": {"x": 0, "y": -30},
+            "B": {"x": 5, "y": 30}, "L": {"x": -30, "y": 3}, "R": {"x": 30, "y": -3}}},
+        "in_block": ["X", "T", "B", "L", "R"]}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let (min, max) = bounds_of(&block_outline(&circuit, &catalogue).unwrap());
+    assert_eq!((min, max), ([-30.0, -30.0], [30.0, 30.0]));
+    let primitives = render_circuit(&circuit, &catalogue).primitives;
+    for label in ["TOP", "BOTTOM", "LEFT", "RIGHT"] {
+        let text = primitives
+            .iter()
+            .find(|p| matches!(p, Primitive::Text { text, .. } if text == label))
+            .unwrap();
+        let (lo, hi) = bounds(std::slice::from_ref(text)).unwrap();
+        let inside = lo[0] < max[0] && min[0] < hi[0] && lo[1] < max[1] && min[1] < hi[1];
+        assert!(!inside, "{label} at {lo:?}..{hi:?} is inside the block");
+    }
+    // No dash runs into a port's circle.
+    let lines = outline_lines(&circuit, &catalogue);
+    for port in [[0.0, -30.0], [5.0, 30.0], [-30.0, 3.0], [30.0, -3.0]] {
+        let near = |[a, b]: &[[f32; 2]; 2]| {
+            let clamp = |v: f32, a: f32, b: f32| v.clamp(a.min(b), a.max(b));
+            let q = [clamp(port[0], a[0], b[0]), clamp(port[1], a[1], b[1])];
+            (q[0] - port[0]).hypot(q[1] - port[1]) < 1.2 - 1e-3
+        };
+        assert!(
+            !lines.iter().any(near),
+            "the outline crosses the port at {port:?}"
+        );
+    }
 }
 
 /// Page size in points from the first `/MediaBox [0 0 w h]`.
@@ -413,4 +550,17 @@ fn statuses_and_item_labels_are_written_out() {
     // 1.1 and 5.1 not listed, 4.1, 5.2 and 9.1 missing, 3.1 a stand-in.
     assert_eq!(frames, 6);
     assert!(to_pdf(&drawing.primitives).is_ok());
+}
+
+/// The box round an outline's corners.
+fn bounds_of(corners: &[[f32; 2]]) -> ([f32; 2], [f32; 2]) {
+    corners.iter().fold(
+        ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]),
+        |(lo, hi), p| {
+            (
+                [lo[0].min(p[0]), lo[1].min(p[1])],
+                [hi[0].max(p[0]), hi[1].max(p[1])],
+            )
+        },
+    )
 }

@@ -11,7 +11,9 @@ use hydra_core::{
     ValveStatus, next_id, stand_ins,
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
-use hydra_symbols::{Drawing, bounds, outline_issues, render_circuit, render_component};
+use hydra_symbols::{
+    Drawing, bounds, drawn_inside_outline, outline_issues, render_circuit, render_component,
+};
 
 use crate::catalogue::Shared;
 use crate::db::Request;
@@ -335,7 +337,8 @@ impl SchematicEditor {
             .filter(|id| circuit.component(id).is_some());
     }
 
-    /// Add a part in the middle of the view and select it.
+    /// Add a part in the middle of the view and select it. A part landing inside the block's
+    /// outline goes in the block, in the same undoable step.
     fn add(&mut self, kind: ComponentKind, catalogue: &Catalogue) {
         let prefix = match &kind {
             ComponentKind::Port { .. } => "X",
@@ -360,12 +363,15 @@ impl SchematicEditor {
             y: snap(centre[1]),
             ..Placement::default()
         };
+        let component = Component {
+            id: id.clone(),
+            kind,
+        };
+        let in_block = drawn_inside_outline(&self.doc.circuit, &component, placement, catalogue);
         self.apply(Command::Add {
-            component: Component {
-                id: id.clone(),
-                kind,
-            },
+            component,
             placement,
+            in_block,
         });
         self.selected = Some(id);
     }
@@ -2185,20 +2191,78 @@ mod tests {
         };
         h.get_by_label_contains("Validation").click();
         h.run_steps(2);
-        // P (bottom left) and 4.1 (top right) span the sheet, so 6.1 stands inside the outline.
+        // P (bottom left), 1.1 (top left) and 4.1 (top right) span the sheet, so 6.1 stands
+        // inside the outline, in no empty corner.
         toggle(&mut h, "P");
+        toggle(&mut h, "1.1");
         toggle(&mut h, "4.1");
         assert_eq!(
             Vec::from_iter(&h.state().0.doc.circuit.in_block),
-            ["4.1", "P"]
+            ["1.1", "4.1", "P"]
         );
         assert!(flagged(&h));
         toggle(&mut h, "P");
-        assert_eq!(Vec::from_iter(&h.state().0.doc.circuit.in_block), ["4.1"]);
+        assert_eq!(
+            Vec::from_iter(&h.state().0.doc.circuit.in_block),
+            ["1.1", "4.1"]
+        );
         assert!(!flagged(&h));
         h.state_mut().0.undo();
         h.run_steps(2);
         assert!(flagged(&h));
+    }
+
+    #[test]
+    fn new_parts_landing_inside_the_outline_go_in_the_block() {
+        let mut h = harness();
+        let in_block = |h: &Harness<State>| -> Vec<String> {
+            h.state().0.doc.circuit.in_block.iter().cloned().collect()
+        };
+        let add_orifice = |h: &mut Harness<State>| {
+            h.get_by_label("Add part").click();
+            h.run();
+            h.get_by_label("Fixed orifice").click();
+            h.run();
+        };
+        // No block parts, so no outline: a new part stays out.
+        add_orifice(&mut h);
+        assert!(in_block(&h).is_empty());
+        let centre = h.state().0.placement("O1");
+        h.state_mut().0.delete_selected();
+        // Two block ports on either side of the middle of the view draw an outline round it.
+        for (id, d) in [("P", -20.0), ("T", 20.0)] {
+            h.state_mut().0.apply(Command::Add {
+                component: Component {
+                    id: id.into(),
+                    kind: ComponentKind::Port { label: id.into() },
+                },
+                placement: Placement {
+                    x: centre.x + d,
+                    y: centre.y + d,
+                    ..Placement::default()
+                },
+                in_block: true,
+            });
+        }
+        h.run();
+        add_orifice(&mut h);
+        assert_eq!(in_block(&h), ["O1", "P", "T"]);
+        assert!(
+            outline_issues(&h.state().0.doc.circuit, &h.state().1.catalogue).is_empty(),
+            "nothing is flagged"
+        );
+        // One undo takes the part away, and out of the block.
+        h.get_by_label("Undo").click();
+        h.run();
+        assert!(h.state().0.doc.circuit.component("O1").is_none());
+        assert_eq!(in_block(&h), ["P", "T"]);
+        // With the view moved off to the left of the block, a new part stays out.
+        let zoom = h.state().0.zoom;
+        h.state_mut().0.pan.x += 60.0 * zoom;
+        h.run();
+        add_orifice(&mut h);
+        assert!(h.state().0.placement("O1").x < centre.x - 40.0);
+        assert_eq!(in_block(&h), ["P", "T"]);
     }
 
     #[test]
