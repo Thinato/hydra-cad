@@ -50,6 +50,9 @@ pub enum Error {
     /// `current` is the circuit's revision number now.
     #[error("someone saved revision {current} since you opened this circuit")]
     Conflict { current: i32 },
+    /// Proposal `id`, for the same valve type and base version, still waits for review.
+    #[error("proposal {id} for the same valve type version is still waiting for review")]
+    AlreadyPending { id: String },
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
 }
