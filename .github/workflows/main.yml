@@ -1,0 +1,62 @@
+name: Main
+
+# Runs when a pull request is merged into main. The PR checks already tested that code, so this
+# only acts on a version bump: when the merge changed [workspace.package] version in Cargo.toml,
+# it tags the merge commit vX.Y.Z and runs the release workflow, which opens a draft release.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: tag
+        name: Tag the new version
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          version() { sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p'; }
+          new="$(version < Cargo.toml)"
+          old="$(git show "$BEFORE:Cargo.toml" 2>/dev/null | version || true)"
+          if [[ -z "$new" ]]; then
+            echo "::error::No version found in [workspace.package] of Cargo.toml."
+            exit 1
+          fi
+          if [[ "$old" == "$new" ]]; then
+            echo "Version unchanged ($new); nothing to release."
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/v$new" >/dev/null; then
+            echo "Tag v$new already exists; nothing to release."
+            exit 0
+          fi
+          git tag "v$new" "$GITHUB_SHA"
+          git push origin "v$new"
+          echo "Tagged v$new (was $old)."
+          echo "tag=v$new" >> "$GITHUB_OUTPUT"
+
+  # A tag pushed by this workflow's token doesn't start other workflows, so call it directly.
+  release:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: write

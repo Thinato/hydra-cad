@@ -206,7 +206,13 @@ fn page_png<'a>(
     let row = w.div_ceil(2);
     let mut gray = vec![0u8; row * h];
     // Opaque on white, so premultiplied alpha doesn't matter.
-    for (i, p) in pixmap.data_as_u8_slice().chunks_exact(4).enumerate() {
+    for (i, p) in pixmap
+        .data_as_u8_slice()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .enumerate()
+    {
         let luma = (p[0] as u32 * 299 + p[1] as u32 * 587 + p[2] as u32 * 114) / 1000;
         let v = ((luma * 15 + 127) / 255) as u8;
         let (x, y) = (i % w, i / w);

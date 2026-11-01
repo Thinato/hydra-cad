@@ -1,17 +1,25 @@
 name: Release
 
-# A pushed tag vX.Y.Z builds signed installers and opens a draft GitHub release.
+# Builds signed installers and opens a draft GitHub release for tag vX.Y.Z. main.yml calls it
+# when a merged PR bumps the workspace version; pushing a tag by hand starts it too.
 # Run it by hand (workflow_dispatch) for an unsigned dry run: the installers are only
 # uploaded as workflow artifacts and no secret is used.
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to release, vX.Y.Z, already pushed
+        type: string
+        required: true
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Secrets reach the build jobs only on tag pushes (`github.event_name == 'push'`).
+# Secrets reach the build jobs only on tag pushes and calls from main.yml, whose event is a
+# push to main (`github.event_name == 'push'`), never on hand-started dry runs.
 env:
   CARGO_TERM_COLOR: always
 
@@ -20,21 +28,27 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - id: version
         name: Check the tag matches the workspace version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           version="$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' Cargo.toml)"
           if [[ -z "$version" ]]; then
             echo "::error::No version found in [workspace.package] of Cargo.toml."
             exit 1
           fi
-          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match the workspace version $version in Cargo.toml. Bump [workspace.package] version or tag v$version."
+          tag="${INPUT_TAG:-}"
+          if [[ -z "$tag" && "$GITHUB_REF_TYPE" == tag ]]; then tag="$GITHUB_REF_NAME"; fi
+          if [[ -n "$tag" && "$tag" != "v$version" ]]; then
+            echo "::error::Tag $tag does not match the workspace version $version in Cargo.toml. Bump [workspace.package] version or tag v$version."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   windows:
     needs: version
@@ -45,9 +59,8 @@ jobs:
       BIN: target\x86_64-pc-windows-msvc\release
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
+      # The toolchain pinned in rust-toolchain.toml.
+      - run: rustup toolchain install && rustup target add x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
         with:
           key: release
@@ -126,9 +139,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - run: rustup toolchain install && rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
           key: release
@@ -189,6 +200,7 @@ jobs:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/download-artifact@v4
@@ -199,18 +211,18 @@ jobs:
       # which resolve once the draft is published.
       - name: Write latest.json
         run: |
-          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           jq -n \
             --arg version "$VERSION" \
             --arg windows "$base/Hydra-$VERSION-x64.msi" \
             --arg macos "$base/Hydra-$VERSION-macos-universal.dmg" \
-            --arg notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" \
+            --arg notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" \
             '{version: $version, windows: $windows, macos: $macos, notes: $notes}' > dist/latest.json
           cat dist/latest.json
           test -f "dist/Hydra-$VERSION-x64.msi"
           test -f "dist/Hydra-$VERSION-macos-universal.dmg"
       - name: Create the draft release
         run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*
+          gh release create "$TAG" dist/*
           --repo "$GITHUB_REPOSITORY" --verify-tag --draft
           --title "Hydra $VERSION" --generate-notes

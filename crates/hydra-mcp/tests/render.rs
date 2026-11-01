@@ -1,6 +1,7 @@
 //! The datasheet renderer: `hydra-mcp render-pdf` run as a child, as read_datasheet runs it.
 
 use std::path::Path;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use base64::Engine;

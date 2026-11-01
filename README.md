@@ -186,14 +186,28 @@ The shared database is a single point of failure, so `ops/backup/` has a nightly
 
 ## CI
 
-`.github/workflows/ci.yml` checks formatting, runs clippy, builds and tests on Windows and macOS. It runs the database tests on Linux against a `postgres:15` service container, because GitHub only offers service containers on Linux runners.
+`.github/workflows/pr.yml` runs on every pull request into `main`:
+- it checks formatting, runs clippy, builds and tests on Windows and macOS;
+- it runs the database tests and the backup/restore test on Linux against a `postgres:15` service container, because GitHub only offers service containers on Linux runners;
+- it checks that a changed version goes up.
+
+`converter.yml` builds the STEP converter only when `tools/step2gltf` changes.
+
+The Rust version is pinned in `rust-toolchain.toml`, so CI and local builds run the same clippy.
+
+Merges into `main` aren't tested again, so keep "Require branches to be up to date before merging" on in the branch protection: that way the merged code is exactly what the checks ran on. `main.yml` runs on each merge but only acts on a version bump (see below).
 
 ## Releasing and installing
 
 ### Cutting a release
 
-1. Bump `version` under `[workspace.package]` in the root `Cargo.toml` and merge it.
-2. Tag that commit and push the tag: `git tag v1.2.3 && git push origin v1.2.3`. The tag must equal the workspace version or the release workflow stops.
+1. Open a pull request that only changes `version` under `[workspace.package]` in the root `Cargo.toml` (and `Cargo.lock`), titled `chore: release vX.Y.Z`. Choose the version as follows:
+   - major only when you decide to;
+   - minor when features merged since the last release;
+   - patch for fixes only.
+
+   The `version-bump` skill (`.claude/skills/version-bump/SKILL.md`) has Claude Code prepare it with the release notes.
+2. Merge it. `.github/workflows/main.yml` sees the new version, tags the merge commit `vX.Y.Z` and runs the release workflow. Pushing a tag by hand (`git tag v1.2.3 && git push origin v1.2.3`) starts it too; the tag must equal the workspace version or the release stops.
 3. `.github/workflows/release.yml` builds the Windows MSI and the macOS DMG, a tools archive per platform (`hydra-mcp`, `hydra-admin`), signs what it can, and opens a **draft** GitHub release with all of them plus `latest.json`.
 4. Review the draft, then publish it. Asset URLs, and so `latest.json`, only resolve once it's published.
 
