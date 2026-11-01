@@ -43,7 +43,7 @@ try {
     if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { throw "target directory '$Dir' is missing (is the share reachable?)" }
 
     $serverMajor = ((Run 'psql' @('-X', '-q', '-A', '-t', '-c', 'SHOW server_version_num')) | Out-String).Trim().Substring(0, 2)
-    $clientMajor = [regex]::Match((Run 'pg_dump' @('--version')) | Out-String, '(\d+)').Groups[1].Value
+    $clientMajor = [regex]::Match(((Run 'pg_dump' @('--version')) | Out-String), '(\d+)').Groups[1].Value
     # A newer pg_dump can emit settings the server rejects on restore (transaction_timeout, 17+ into 15).
     if ($serverMajor -ne $clientMajor) { throw "pg_dump is version $clientMajor but the server is $serverMajor; use matching client tools (HYDRA_PG_BIN)" }
 
