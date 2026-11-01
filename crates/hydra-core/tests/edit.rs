@@ -355,7 +355,10 @@ fn mounting_valves_on_a_block() {
         Err("the circuit already uses that block".into())
     );
     d.apply(mount("V1", Some("F1"))).unwrap();
-    assert_eq!(d.undo_label(), Some("Mount V1 on F1"));
+    assert_eq!(
+        d.undo_label(),
+        Some("Mount V1 on F1 and put it in the block")
+    );
     // A valve put on a taken face replaces the one there, in one undoable step.
     d.apply(mount("V2", Some("F1"))).unwrap();
     assert_eq!(mounts(&d), [("V2".into(), "F1".into())]);
@@ -398,6 +401,55 @@ fn mounting_valves_on_a_block() {
     d.apply(Command::SetBlock { block: None }).unwrap();
     assert_eq!(d.circuit.assembly, None);
     assert_eq!(d.undo_label(), Some("Remove the block"));
+}
+
+#[test]
+fn mounting_a_valve_puts_it_in_the_block_in_one_step() {
+    let mut d = doc(&[]);
+    d.apply(valve("V1")).unwrap();
+    d.apply(valve("V2")).unwrap();
+    d.apply(set_block("blk", 1)).unwrap();
+    let before = d.circuit.clone();
+    d.apply(mount("V1", Some("F1"))).unwrap();
+    assert!(d.circuit.in_block.contains("V1"));
+    // One undo takes off the mount and the tick together.
+    assert_eq!(
+        d.undo().as_deref(),
+        Some("Mount V1 on F1 and put it in the block")
+    );
+    assert_eq!(d.circuit, before);
+
+    // A valve already in the block stays in it when the mount is undone.
+    d.apply(Command::SetInBlock {
+        id: "V2".into(),
+        inside: true,
+    })
+    .unwrap();
+    let before = d.circuit.clone();
+    d.apply(mount("V2", Some("F2"))).unwrap();
+    assert_eq!(d.undo_label(), Some("Mount V2 on F2"));
+    d.undo();
+    assert_eq!(d.circuit, before);
+    assert!(d.circuit.in_block.contains("V2"));
+
+    // Unmounting leaves the valve in the block.
+    d.apply(mount("V1", Some("F1"))).unwrap();
+    d.apply(mount("V1", None)).unwrap();
+    assert!(d.circuit.in_block.contains("V1"));
+
+    // Unticking In block keeps the mount, and validation says so.
+    d.apply(mount("V1", Some("F1"))).unwrap();
+    d.apply(Command::SetInBlock {
+        id: "V1".into(),
+        inside: false,
+    })
+    .unwrap();
+    assert_eq!(mounts(&d), [("V1".into(), "F1".into())]);
+    assert!(
+        d.circuit
+            .validate(&Catalogue::default())
+            .contains(&Issue::MountedOutsideBlock("V1".into()))
+    );
 }
 
 fn item(id: &str) -> Command {
