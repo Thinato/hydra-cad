@@ -11,7 +11,8 @@ fn proposal() -> Proposal {
         "valve_type": {
             "key": "vt-demo-new", "version": 0, "manufacturer": "demo",
             "series": "DEMO-10", "code": "4-3-C", "symbol": "sym-4-3-closed-centre@1",
-            "mounting": "ISO 4401-05", "params": {"max_pressure_bar": 315}
+            "mounting": "ISO 4401-05",
+            "params": {"function": "directional", "max_pressure_bar": 315}
         },
         "parts": [
             {"part_number": "DEMO-10-24DC", "options": {"voltage": "24 V DC"}},
@@ -253,5 +254,127 @@ fn symbols_that_would_draw_wrong_are_refused() {
             "position 1 connects port A to itself",
             "position 2 both blocks and connects port P",
         ]
+    );
+}
+
+#[test]
+fn function_ratings_and_cavity_are_checked() {
+    let cat = catalogue();
+    let with = |params: serde_json::Value| {
+        let mut p = proposal();
+        p.valve_type.params = params;
+        p.problems(&cat)
+    };
+    let has = |problems: Vec<String>, needle: &str| {
+        assert!(
+            problems.iter().any(|p| p.contains(needle)),
+            "{needle}: {problems:?}"
+        );
+    };
+    has(with(serde_json::json!({})), "params.function is missing");
+    has(
+        with(serde_json::json!({"function": "valve"})),
+        "is not one of",
+    );
+    has(
+        with(serde_json::json!({"function": "relief", "max_pressure_bar": "315 bar"})),
+        "params: max_pressure_bar must be a positive number",
+    );
+    has(
+        with(serde_json::json!({"function": "relief", "max_flow_l_min": 0})),
+        "params: max_flow_l_min must be a positive number",
+    );
+    has(
+        with(serde_json::json!({"function": "relief", "cavity": "yes"})),
+        "params.cavity must be true or false",
+    );
+    has(
+        with(serde_json::json!({"function": "relief", "setting_range_bar": [210, 175]})),
+        "setting_range_bar must be [min, max]",
+    );
+    has(
+        with(serde_json::json!({"function": "relief", "setting_range_bar": 210})),
+        "setting_range_bar must be [min, max]",
+    );
+    assert_eq!(
+        with(
+            serde_json::json!({"function": "directional", "cavity": false,
+            "setting_range_bar": [1, 2], "max_pressure_bar": 315.5})
+        ),
+        Vec::<String>::new()
+    );
+    // A cartridge names its cavity in mounting.
+    let mut p = proposal();
+    p.valve_type.mounting = None;
+    p.valve_type.params = serde_json::json!({"function": "relief", "cavity": true});
+    has(
+        p.problems(&cat),
+        "params.cavity is true but mounting is missing",
+    );
+    // Parts may state their own setting range, checked the same way.
+    let mut p = proposal();
+    p.parts[0].options = serde_json::json!({"setting_range_bar": [0, 100]});
+    has(p.problems(&cat), "part DEMO-10-24DC: setting_range_bar");
+    // An update may rely on the symbol for its function.
+    let mut p = proposal();
+    p.valve_type = cat
+        .valve_type(&CatalogueRef::new("vt-demo-check", 1))
+        .unwrap()
+        .clone();
+    p.parts.clear();
+    assert_eq!(p.problems(&cat), Vec::<String>::new());
+}
+
+#[test]
+fn only_valve_symbols_enter_the_catalogue() {
+    let mut p = proposal();
+    p.valve_type.symbol = Some(CatalogueRef::new("sym-box-x", 1));
+    p.new_symbol = Some(SymbolDefRecord {
+        key: "sym-box-x".into(),
+        version: 1,
+        definition: SymbolDef::Box {
+            label: "X".into(),
+            ports: vec!["1".into()],
+        },
+    });
+    let problems = p.problems(&catalogue());
+    assert!(
+        problems.iter().any(|p| p.contains("is not a valve symbol")),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_requested_part_is_added_to_an_existing_type() {
+    let cat = catalogue();
+    let base = cat
+        .valve_type(&CatalogueRef::new("vt-demo-check", 1))
+        .unwrap()
+        .clone();
+    let p = Proposal {
+        valve_type: base,
+        new_symbol: None,
+        parts: vec![PartDraft {
+            part_number: "DEMO-CK10-05".into(),
+            options: serde_json::Value::Null,
+        }],
+        notes: "page 2, ordering code".into(),
+    };
+    assert_eq!(p.problems(&cat), Vec::<String>::new());
+    let after = p.apply(&cat);
+    let v2 = CatalogueRef::new("vt-demo-check", 2);
+    assert_eq!(after.parts_of(&v2).count(), 1);
+}
+
+#[test]
+fn part_ratings_must_be_numbers_too() {
+    let mut p = proposal();
+    p.parts[1].options = serde_json::json!({"max_pressure_bar": "315 bar"});
+    let problems = p.problems(&catalogue());
+    assert!(
+        problems
+            .iter()
+            .any(|x| x.contains("part DEMO-10-230AC: max_pressure_bar must be a positive number")),
+        "{problems:?}"
     );
 }

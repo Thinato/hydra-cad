@@ -4,28 +4,44 @@
 //! proposal is checked with [`Proposal::problems`]; valid ones wait in Hydra's review queue, and
 //! only an engineer's approval writes catalogue rows.
 
-use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
-use hydra_core::{Catalogue, Proposal, ValveType};
+use hydra_core::{
+    Catalogue, Circuit, CircuitStatus, Import, Proposal, SCHEMA_VERSION, Severity, ValveStatus,
+    ValveType,
+};
 use hydra_db::{LoadedCatalogue, PgPool, ProposalStatus};
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{Implementation, ServerCapabilities, ServerConfig};
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
 
 /// Sent at initialize: the workflow, in a few lines.
 pub const INSTRUCTIONS: &str = "\
 Hydra is a hydraulic CAD app. With these tools you fill in draft valve types from their \
-manufacturer datasheets; an engineer reviews every proposal in Hydra before anything enters \
-the catalogue.
+manufacturer datasheets, and turn circuit drawings into Hydra circuits. An engineer reviews \
+every proposal in Hydra before anything enters the catalogue, and checks every imported circuit.
+Datasheets:
 1. list_valve_types: find the draft the engineer means (symbol: none, datasheet: yes).
-2. read_datasheet: read its PDF.
+2. read_datasheet: it returns the PDF's pages as images, plus their text. Read the images: \
+tables, symbols and ordering codes are laid out there.
 3. symbol_format: read the symbol and proposal format and the existing symbol definitions.
 4. Reuse an existing symbol definition that shows the same valve, or define a new one.
 5. submit_proposal: it is checked at once; fix every problem it reports and submit again.
 6. Tell the engineer the proposal id and to review it in Hydra's Proposals tab.
-Never invent part numbers or values that aren't in the datasheet; put doubts in the notes.";
+Circuit drawings (photos or PDFs the engineer gives you, ideally the parts table and the \
+schematic as separate images):
+1. symbol_format: read the circuit import section and the symbols; list_valve_types: the \
+catalogue to match the parts table against.
+2. import_circuit with every part, connection and parts-table row; fix the problems it reports \
+and import again; check each warning it returns against the drawing.
+3. Tell the engineer to open the circuit in Hydra and check it.
+Never invent part numbers or values that aren't in the documents; put doubts in the notes.";
 
 /// The `symbol_format` guide, before the list of existing symbol definitions.
 const GUIDE: &str = r#"# Symbol definitions
@@ -35,9 +51,27 @@ A symbol definition says what an ISO 1219 valve symbol shows; Hydra draws it. It
 {"kind": "check", "spring": true}         non-return valve, free flow A -> B; spring-loaded if spring
 {"kind": "orifice", "adjustable": false}  restriction between A and B; a throttle if adjustable
 {"kind": "relief", "adjustable": true}    pressure relief valve from P to T
-{"kind": "directional_valve", ...}        spool valve, see below
+{"kind": "pilot_check", "spring": true}   pilot-operated check A -> B, opened backwards by pilot X
+{"kind": "counterbalance"}                counterbalance / overcenter valve: V (valve side), C (load), pilot X
+{"kind": "flow_control", "actuator": "proportional", "compensated": true, "bypass": true}
+                                          flow control In -> Out; actuator "manual" or "proportional";
+                                          compensated = pressure compensated; bypass adds port Bypass
+{"kind": "directional_valve", ...}        spool or poppet valve, see below
 
-check and orifice always have ports A and B, relief always P and T; they take no other fields.
+These are valve symbols: the only kinds a catalogue valve type may use. Their ports are fixed:
+check and orifice A, B; relief P, T; pilot_check A, B, X; counterbalance V, C, X; flow_control
+In, Out (and Bypass). Datasheets often number cartridge ports 1, 2, 3: write in the notes which
+number is which port (e.g. "port 1 = V, 2 = C, 3 = X, page 1").
+
+Circuits can also draw parts that are not catalogue valves:
+{"kind": "test_point"}                    gauge connection, port M
+{"kind": "hydraulic_motor", "bidirectional": false, "variable": false, "drain": false}
+                                          ports A, B (and L when drain)
+{"kind": "pump", "variable": false}       ports S (suction), P (pressure)
+{"kind": "box", "label": "PB10", "ports": ["1", "2", "3"]}
+                                          a labelled box, for anything without a symbol of its own
+
+A 2/2 poppet (solenoid cartridge) is a directional_valve with two ports and two positions.
 
 directional_valve fields:
 - ports: [{"name": "A", "side": "top"}, ...] in drawing order along their side ("top" or "bottom"), usually A, B on top and P, T at the bottom.
@@ -57,7 +91,8 @@ Submit with submit_proposal:
   "valve_type": {
     "key": "vt-demo-10", "version": 1, "manufacturer": "demo",
     "series": "DEMO-10", "code": "4-3-C", "symbol": "sym-4-3-closed-centre@1",
-    "mounting": "ISO 4401-05", "params": {"max_pressure_bar": 315, "max_flow_l_min": 120}
+    "mounting": "ISO 4401-05",
+    "params": {"function": "directional", "max_pressure_bar": 315, "max_flow_l_min": 120}
   },
   "new_symbol": {"key": "sym-...", "version": 1, "definition": {...}},
   "parts": [{"part_number": "...", "options": {"voltage": "24 V DC", "connector": "..."}}],
@@ -66,20 +101,75 @@ Submit with submit_proposal:
 
 Rules:
 - valve_type.version is the base: the latest version of the key you update (list_valve_types, get_valve_type), or 0 for a new key. Approval saves key@(version + 1).
-- manufacturer is a manufacturer key from list_valve_types. series and code must not be empty. Leave mounting out if the valve has no subplate pattern. params is a free JSON object of datasheet values, with units in the names.
+- manufacturer is a manufacturer key from list_valve_types. series and code must not be empty. mounting is the subplate pattern (e.g. "ISO 4401-03") or, for a screw-in cartridge, the cavity as printed (e.g. "BP3 (C-10-3S)"); leave it out if there is neither. When the catalogue already spells a standard (list_valve_types, block faces), copy its spelling exactly.
+- params is a JSON object of datasheet values, with units in the names. These keys are checked, because stand-in suggestions rely on them:
+  - function (required for a new key): one of directional, check, pilot_operated_check, relief, counterbalance, flow_control, pressure_reducing, sequence, other.
+  - max_pressure_bar, max_flow_l_min: plain numbers, no units.
+  - setting_range_bar: [min, max] a pressure valve can be set to. When spring variants differ, put it in each part's options instead.
+  - cavity: true for a screw-in cartridge (then mounting names the cavity).
 - symbol is "key@version". Reuse an existing definition below when it shows exactly this valve. Otherwise add new_symbol (leave it out when reusing): its version is the next of its key (1 for a new key), and valve_type.symbol must be new_symbol's key@version.
 - parts are the orderable part numbers of the new version, with their ordering-code options. Parts of the base version are kept, unless you list the same part number again to replace its options. Don't list a part twice.
 - notes cite the datasheet page of every value (e.g. "pressure and flow: page 1; part numbers: page 2") and say anything the reviewer should check.
 - Never invent part numbers or values that aren't in the datasheet; put doubts in notes.
 
+# Functions, ratings, cartridges, ordering codes
+
+- Parts are only the part numbers the datasheet prints, plus any a circuit asks for. Check a requested code against the ordering code and cite the page. Never expand an ordering code into every combination.
+- To add a part a circuit asks for to an existing valve type, propose valve_type.version = its latest version, with just that part: the existing parts are kept.
+- A datasheet covering several sizes (e.g. sizes 16 and 25) is one valve type per size, so one proposal per type. The engineer creates one draft per size and attaches the same PDF to each; each proposal's notes cite the pages for its size.
+
+# Circuit import
+
+Send a circuit read from a drawing with import_circuit:
+
+{
+  "name": "MH-450",
+  "components": [
+    {"id": "P", "kind": "port", "label": "P"},
+    {"id": "7.1", "kind": "valve", "valve_type": "vt-demo-cartridge-relief@1", "part": "DEMO-CR10-210",
+     "requested": {"code": "DEMO-CR10-210", "description": "Relief valve 210 bar", "function": "relief",
+                   "mounting": "DEMO-C10-2", "setting_bar": 210}},
+    {"id": "5.2", "kind": "valve",
+     "requested": {"code": "...", "description": "...", "function": "directional", "mounting": "ISO 4401-05"},
+     "display": {"kind": "directional_valve", ...}},
+    {"id": "X1", "kind": "item", "symbol": {"kind": "orifice"}, "label": "X 0.5 mm"},
+    {"id": "M1", "kind": "item", "symbol": {"kind": "test_point"}, "label": "MP SAE-04",
+     "code": "...", "description": "Test point", "position": "14"}
+  ],
+  "nets": [{"id": "n1", "ports": [{"component": "P", "port": "port"}, {"component": "7.1", "port": "P"}]}],
+  "layout": {"components": {"P": {"x": 0, "y": 100}, "7.1": {"x": 40, "y": 60, "rotation": 0}}},
+  "bom_extra": [{"position": "1", "quantity": 1, "code": "...", "description": "Manifold block"}],
+  "import": {"notes": ["row 12 of the parts table is illegible"]}
+}
+
+Rules:
+- name is the drawing number. Every parts-table row ends up exactly once: as a valve, an item or a bom_extra line.
+- Valves: "requested" holds the code exactly as printed, the description, the function and the mounting or cavity. If the catalogue has that valve type, set valve_type (key@version) and, when the exact part is listed, part. If not, leave valve_type out, set "display" to a look-alike symbol definition (copy an existing definition's JSON, or a box with the valve's ports), and fill requested.function and requested.mounting; add requested.key when you propose the valve type. setting_bar, max_pressure_bar and max_flow_l_min go in requested when the drawing states them.
+- Fixed orifices, test points, hydraulic motors and pumps are items, never valves; give them code, description and position when the parts table lists them. The block, plugs, coils and seals are bom_extra lines.
+- A part with no symbol of its own (e.g. a 3-port pressure compensator) is a valve missing from the catalogue whose display is a labelled box with its ports.
+- External connections (P, T, A1, MP...) are ports; their single port is "port".
+- Every connection on the schematic is a net of component ports. Port names are the symbol's (see above). Draw the layout in millimetres, x right and y down, roughly as on the drawing, with about 30 mm between parts.
+- What you can't read goes in import.notes, never guessed.
+
 # Existing symbol definitions
 "#;
 
-/// Datasheet text returned in one call, in characters.
+/// Datasheet text returned in one call when there are no page images, in characters.
 const MAX_CHARS: usize = 60_000;
+/// Datasheet text returned beside the page images, in characters.
+const MAX_CHARS_WITH_IMAGES: usize = 15_000;
 /// Largest datasheet read; manufacturer datasheets are a few MB.
-const MAX_PDF_BYTES: usize = 64 << 20;
-const PDF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+pub const MAX_PDF_BYTES: usize = 64 << 20;
+/// Long edge of a page image in pixels: the most Claude looks at without scaling down.
+pub const MAX_PX: u32 = 1568;
+/// Page images per call: by default, and at most.
+const DEFAULT_PAGES: u32 = 2;
+const MAX_PAGES: u32 = 4;
+/// Version of the `hydra-mcp render-pdf` arguments and output.
+pub const RENDER_PROTOCOL: &str = "1";
+pub const RENDER_TIMEOUT: Duration = Duration::from_secs(60);
+/// Largest renderer output read: four pages are well under 1 MB.
+const MAX_RENDER_OUTPUT: usize = 32 << 20;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchParams {
@@ -101,9 +191,30 @@ pub struct DatasheetParams {
     /// First page to read, from 1. Default 1.
     #[serde(default)]
     pub first_page: Option<u32>,
-    /// Last page to read. Default: the last page.
+    /// Last page to read. Default: as many as max_pages allows.
     #[serde(default)]
     pub last_page: Option<u32>,
+    /// Pages to show as images in this call, 1 to 4. Default 2.
+    #[serde(default)]
+    pub max_pages: Option<u32>,
+}
+
+/// What `hydra-mcp render-pdf` prints: the page count, the text of every page, and the
+/// requested pages as base64 PNGs.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Rendered {
+    pub pages: u32,
+    pub text: Option<Vec<String>>,
+    pub text_error: Option<String>,
+    pub images: Vec<PageImage>,
+    pub image_errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PageImage {
+    /// From 1.
+    pub page: u32,
+    pub png_base64: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -114,21 +225,30 @@ pub struct ProposalParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CircuitParams {
+    /// The circuit read from a drawing: a JSON object as symbol_format's "Circuit import"
+    /// section describes.
+    pub circuit: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct IdParams {
     /// Proposal id, as submit_proposal returned it.
     pub id: String,
 }
 
-/// The MCP server: one database pool, the engineer's own role.
+/// The MCP server: one database pool, the engineer's own role, and the `hydra-mcp` program
+/// that renders datasheets.
 #[derive(Clone)]
 pub struct HydraMcp {
     pool: PgPool,
+    renderer: PathBuf,
 }
 
 #[tool_router]
 impl HydraMcp {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, renderer: PathBuf) -> Self {
+        Self { pool, renderer }
     }
 
     #[tool(
@@ -147,7 +267,8 @@ impl HydraMcp {
             out += &format!("  {}  {}\n", m.key, m.name);
         }
         let search = p.search.unwrap_or_default().to_lowercase();
-        let rows: Vec<_> = latest_versions(c)
+        let rows: Vec<_> = c
+            .latest_valve_types()
             .into_values()
             .filter(|v| {
                 let maker = c.manufacturers.iter().find(|m| m.key == v.manufacturer);
@@ -164,7 +285,7 @@ impl HydraMcp {
                 .any(|s| s.to_lowercase().contains(&search))
             })
             .collect();
-        out += "\nValve types (key@latest version  manufacturer  series code  mounting  symbol  datasheet):\n";
+        out += "\nValve types (key@latest version  manufacturer  series code  mounting  function  symbol  datasheet):\n";
         if rows.is_empty() {
             out += "  none match\n";
         }
@@ -175,12 +296,14 @@ impl HydraMcp {
                 .symbol
                 .as_ref()
                 .map_or("none (draft)".to_string(), |s| s.to_string());
+            let function = c.function_of(&r).map_or("-", |f| f.name());
             out += &format!(
-                "  {r}  {}  {} {}  {}  symbol: {symbol}  datasheet: {}",
+                "  {r}  {}  {} {}  {}{}  {function}  symbol: {symbol}  datasheet: {}",
                 v.manufacturer,
                 v.series,
                 v.code,
                 v.mounting.as_deref().unwrap_or("-"),
+                if v.is_cartridge() { " (cavity)" } else { "" },
                 if datasheet { "yes" } else { "no" }
             );
             if v.symbol.is_none() && datasheet {
@@ -218,14 +341,14 @@ impl HydraMcp {
     }
 
     #[tool(
-        description = "Text of the PDF datasheet attached to a valve type's latest version, \
-        with --- page N --- markers. Long datasheets come in parts: pass first_page and \
-        last_page to read the rest."
+        description = "The PDF datasheet attached to a valve type's latest version: its text \
+        with --- page N --- markers, then an image of each page. Two pages per call by default \
+        (max_pages up to 4); pass first_page to read on."
     )]
     pub async fn read_datasheet(
         &self,
         Parameters(p): Parameters<DatasheetParams>,
-    ) -> Result<String, String> {
+    ) -> Result<CallToolResult, String> {
         let loaded = self.load().await?;
         let r = latest_of(&loaded.catalogue, &p.key)?.reference();
         let Some(sha) = loaded.datasheets.get(&r) else {
@@ -244,34 +367,7 @@ impl HydraMcp {
                      engineer to attach the PDF again"
                 )
             })?;
-        if bytes.len() > MAX_PDF_BYTES {
-            return Err(unreadable(&format!(
-                "it is {} MB, more than the {} MB this server reads",
-                bytes.len() >> 20,
-                MAX_PDF_BYTES >> 20
-            )));
-        }
-        // pdf-extract can panic on unusual PDFs; on the blocking pool a panic is just an Err.
-        // ponytail: a reader stuck in a loop keeps its thread after the timeout; run extraction
-        // in a child process if hostile PDFs ever matter.
-        let pages = tokio::time::timeout(
-            PDF_TIMEOUT,
-            tokio::task::spawn_blocking(move || {
-                pdf_extract::extract_text_from_mem_by_pages(&bytes)
-            }),
-        )
-        .await;
-        let pages = match pages {
-            Ok(Ok(Ok(pages))) => pages,
-            Ok(Ok(Err(e))) => return Err(unreadable(&e.to_string())),
-            Ok(Err(_)) => return Err(unreadable("the PDF reader failed")),
-            Err(_) => return Err(unreadable("reading it took too long")),
-        };
-        let text = select_pages(&pages, p.first_page, p.last_page, MAX_CHARS)?;
-        Ok(format!(
-            "Datasheet of {r}, {} pages.\n\n{text}",
-            pages.len()
-        ))
+        read_pdf(&self.renderer, &r.to_string(), bytes, &p).await
     }
 
     #[tool(
@@ -303,6 +399,106 @@ impl HydraMcp {
             )),
             Err(e) => Err(db_error(e)),
         }
+    }
+
+    #[tool(
+        description = "Save a circuit read from a drawing (JSON, shape in symbol_format's \
+        \"Circuit import\" section) as a new circuit in Hydra, marked as imported and \
+        unchecked. It is checked first; if it has problems they are all listed, so you can fix \
+        them and import again. The reply lists every warning to double-check against the drawing."
+    )]
+    pub async fn import_circuit(
+        &self,
+        Parameters(p): Parameters<CircuitParams>,
+    ) -> Result<String, String> {
+        let mut value = json_object(p.circuit, "circuit")?;
+        // Whatever version the assistant wrote, it wrote this build's format.
+        value["schema"] = SCHEMA_VERSION.into();
+        let mut circuit: Circuit = parse_json(value, "circuit")?;
+        circuit.import.get_or_insert_with(Import::default);
+        let catalogue = self.load().await?.catalogue;
+        circuit.choose_requested_parts(&catalogue);
+        let problems = circuit.import_problems(&catalogue);
+        if !problems.is_empty() {
+            tracing::warn!(
+                name = circuit.name,
+                components = circuit.components.len(),
+                problems = problems.len(),
+                "import_circuit refused"
+            );
+            return Err(format!(
+                "The circuit was not saved. Fix these problems and import again:\n- {}",
+                problems.join("\n- ")
+            ));
+        }
+        let message = format!(
+            "Imported by the AI assistant from drawing {}; unchecked",
+            circuit.name
+        );
+        let opened = match hydra_db::create_circuit_once(&self.pool, &circuit, Some(&message)).await
+        {
+            Ok(opened) => opened,
+            Err(hydra_db::Error::Invalid(problems)) => {
+                return Err(format!(
+                    "{}; if this is another drawing, use its own drawing number as the name, \
+                     otherwise ask the engineer",
+                    problems.join("; ")
+                ));
+            }
+            Err(e) => return Err(db_error(e)),
+        };
+
+        let status = CircuitStatus::compute(&circuit, &catalogue);
+        let count = |s: ValveStatus| status.valves.values().filter(|(v, _)| *v == s).count();
+        let (normal, amber, red, stand_in) = (
+            count(ValveStatus::Normal),
+            count(ValveStatus::PartNotListed),
+            count(ValveStatus::Missing),
+            count(ValveStatus::StandIn),
+        );
+        let warnings: Vec<String> = circuit
+            .validate(&catalogue)
+            .into_iter()
+            .chain(status.issues)
+            .filter(|i| i.severity() == Severity::Warning)
+            .map(|i| i.to_string())
+            .collect();
+        tracing::info!(
+            name = circuit.name,
+            components = circuit.components.len(),
+            normal,
+            part_not_listed = amber,
+            missing = red,
+            stand_in,
+            warnings = warnings.len(),
+            id = opened.id,
+            "import_circuit saved"
+        );
+        let mut out = format!(
+            "Circuit {:?} is saved in Hydra (id {}), marked as imported and unchecked.\n\
+             Valves: {normal} in the catalogue, {amber} with a part not listed, {red} missing, \
+             {stand_in} stand-ins; {} items, {} extra lines.\n",
+            circuit.name,
+            opened.id,
+            circuit
+                .components
+                .iter()
+                .filter(|c| matches!(c.kind, hydra_core::ComponentKind::Item(_)))
+                .count(),
+            circuit.bom_extra.len()
+        );
+        if warnings.is_empty() {
+            out += "No warnings.\n";
+        } else {
+            out += "Warnings: check each against the drawing (an unconnected port usually means \
+                    a missed connection):\n";
+            for w in &warnings {
+                out += &format!("- {w}\n");
+            }
+        }
+        out += "Next: tell the engineer to open it in Hydra, check it against the drawing and \
+                press Mark checked. Missing valves can be proposed from their datasheets.";
+        Ok(out)
     }
 
     #[tool(
@@ -375,49 +571,219 @@ fn db_error(e: hydra_db::Error) -> String {
 }
 
 fn unreadable(why: &str) -> String {
-    format!(
-        "could not read the text of the datasheet: {why}. Ask the engineer to check the PDF, or \
-         to attach one with selectable text."
-    )
+    format!("could not read the datasheet: {why}. Ask the engineer to check the PDF.")
 }
 
-/// The latest version of every valve type key, by key.
-fn latest_versions(c: &Catalogue) -> BTreeMap<&str, &ValveType> {
-    let mut latest: BTreeMap<&str, &ValveType> = BTreeMap::new();
-    for v in &c.valve_types {
-        let e = latest.entry(&v.key).or_insert(v);
-        if v.version > e.version {
-            *e = v;
-        }
+/// The `read_datasheet` reply for `pdf`, the datasheet of `name`, rendered by `renderer`
+/// (a `hydra-mcp` program) in a child process.
+pub async fn read_pdf(
+    renderer: &Path,
+    name: &str,
+    pdf: Vec<u8>,
+    p: &DatasheetParams,
+) -> Result<CallToolResult, String> {
+    let bytes_in = pdf.len();
+    if bytes_in > MAX_PDF_BYTES {
+        return Err(unreadable(&format!(
+            "it is {} MB, more than the {} MB this server reads",
+            bytes_in >> 20,
+            MAX_PDF_BYTES >> 20
+        )));
     }
-    latest
+    let first = p.first_page.unwrap_or(1);
+    let count = p.max_pages.unwrap_or(DEFAULT_PAGES).clamp(1, MAX_PAGES);
+    let last = first
+        .saturating_add(count - 1)
+        .min(p.last_page.unwrap_or(u32::MAX));
+    let mut cmd = Command::new(renderer);
+    cmd.args(["render-pdf", RENDER_PROTOCOL])
+        .args([first, last, MAX_PX].map(|n| n.to_string()));
+    let started = Instant::now();
+    let rendered = run_renderer(cmd, pdf, RENDER_TIMEOUT).await;
+    let ms = started.elapsed().as_millis();
+    let rendered = rendered.map_err(|e| {
+        tracing::warn!(key = name, bytes_in, ms, "datasheet not read: {e}");
+        unreadable(&e)
+    })?;
+    let pages = rendered.pages;
+    let reply = datasheet_reply(name, rendered, first, p.last_page)?;
+    let bytes_out: usize = reply
+        .content
+        .iter()
+        .map(|c| match c {
+            ContentBlock::Text(t) => t.text.len(),
+            ContentBlock::Image(i) => i.data.len(),
+            _ => 0,
+        })
+        .sum();
+    tracing::info!(key = name, pages, bytes_in, bytes_out, ms, "datasheet read");
+    Ok(reply)
+}
+
+/// Runs `cmd`, a `hydra-mcp render-pdf` command, with `pdf` on its stdin, and reads its
+/// [`Rendered`] output. The child is killed if it takes longer than `timeout`.
+pub async fn run_renderer(
+    mut cmd: Command,
+    pdf: Vec<u8>,
+    timeout: Duration,
+) -> Result<Rendered, String> {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true);
+    // CREATE_NO_WINDOW: no console window flashes up.
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("the PDF reader did not start: {e}"))?;
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let mut out = Vec::new();
+    let talk = async {
+        // A child that exits early closes its stdin; its exit status tells why.
+        let write = async {
+            let _ = stdin.write_all(&pdf).await;
+            drop(stdin);
+        };
+        let mut stdout = stdout.take(MAX_RENDER_OUTPUT as u64 + 1);
+        let ((), read) = tokio::join!(write, stdout.read_to_end(&mut out));
+        read.map_err(|e| format!("the PDF reader's output could not be read: {e}"))?;
+        if out.len() > MAX_RENDER_OUTPUT {
+            // It is still writing into a full pipe; waiting would only end in the timeout.
+            let _ = child.kill().await;
+            return Err("the PDF reader's output is too large".to_string());
+        }
+        child
+            .wait()
+            .await
+            .map_err(|e| format!("the PDF reader failed: {e}"))
+    };
+    let status = match tokio::time::timeout(timeout, talk).await {
+        Ok(status) => status?,
+        Err(_) => {
+            let _ = child.kill().await;
+            return Err(format!(
+                "reading it took too long, more than {} s",
+                timeout.as_secs_f32()
+            ));
+        }
+    };
+    if !status.success() {
+        return Err(format!("the PDF reader failed ({status})"));
+    }
+    serde_json::from_slice(&out).map_err(|e| format!("the PDF reader's output is garbled: {e}"))
+}
+
+/// The reply: a header and the text of the pages shown, then one image per page. Without
+/// images, the text alone, as much as fits in [`MAX_CHARS`].
+fn datasheet_reply(
+    name: &str,
+    out: Rendered,
+    first: u32,
+    last: Option<u32>,
+) -> Result<CallToolResult, String> {
+    let total = out.pages;
+    if total == 0 {
+        let why = out
+            .text_error
+            .into_iter()
+            .chain(out.image_errors)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(unreadable(if why.is_empty() {
+            "it has no pages"
+        } else {
+            &why
+        }));
+    }
+    if first < 1 || first > total {
+        return Err(format!(
+            "first_page must be from 1 to {total}: the datasheet has {total} pages"
+        ));
+    }
+    let mut head = format!("Datasheet of {name}, {total} pages.\n");
+    for e in &out.image_errors {
+        head += &format!("[Page image unavailable: {e}]\n");
+    }
+    let Some(shown) = out.images.last().map(|i| i.page) else {
+        let pages = out.text.ok_or_else(|| {
+            unreadable(out.text_error.as_deref().unwrap_or("the PDF reader failed"))
+        })?;
+        let text = select_pages(&pages, Some(first), last, MAX_CHARS)?;
+        return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+            "{head}\n{text}"
+        ))]));
+    };
+    let no_text = |why: &str| {
+        let more = if shown < total {
+            format!(
+                " Call read_datasheet with first_page={} to read on.",
+                shown + 1
+            )
+        } else {
+            String::new()
+        };
+        format!("[Text unavailable: {why}. Read the page images.{more}]\n")
+    };
+    let text = match &out.text {
+        Some(pages) if pages.iter().any(|t| !t.trim().is_empty()) => {
+            select_pages(pages, Some(first), Some(shown), MAX_CHARS_WITH_IMAGES)
+                .unwrap_or_else(|e| no_text(&e))
+        }
+        Some(_) => no_text("the PDF has no text, perhaps only scanned images"),
+        None => no_text(out.text_error.as_deref().unwrap_or("the PDF reader failed")),
+    };
+    head += &format!("Its text, then an image of each page from {first} to {shown}.\n\n{text}");
+    let mut content = vec![ContentBlock::text(head)];
+    content.extend(
+        out.images
+            .into_iter()
+            .map(|i| ContentBlock::image(i.png_base64, "image/png")),
+    );
+    Ok(CallToolResult::success(content))
 }
 
 fn latest_of<'a>(c: &'a Catalogue, key: &str) -> Result<&'a ValveType, String> {
-    latest_versions(c).remove(key).ok_or_else(|| {
+    c.latest_valve_types().remove(key).ok_or_else(|| {
         format!("there is no valve type with key {key:?}; list_valve_types shows the keys")
     })
 }
 
 /// A proposal from the assistant's JSON, or what is wrong with it, with its path if known.
-/// A JSON string holding the object is accepted too: some assistants send objects that way.
 pub fn parse_proposal(value: serde_json::Value) -> Result<Proposal, String> {
+    parse_json(json_object(value, "proposal")?, "proposal")
+}
+
+/// The JSON object the assistant sent as `what`. A JSON string holding the object is accepted
+/// too: some assistants send objects that way.
+fn json_object(value: serde_json::Value, what: &str) -> Result<serde_json::Value, String> {
     let value = match value {
         serde_json::Value::String(s) => {
-            serde_json::from_str(&s).map_err(|e| format!("the proposal is not valid JSON: {e}"))?
+            serde_json::from_str(&s).map_err(|e| format!("the {what} is not valid JSON: {e}"))?
         }
         v => v,
     };
     if !value.is_object() {
-        return Err("the proposal must be a JSON object; symbol_format shows its shape".into());
+        return Err(format!(
+            "the {what} must be a JSON object; symbol_format shows its shape"
+        ));
     }
+    Ok(value)
+}
+
+/// `value` as a `T`, or what is wrong with it, with its path if known.
+fn parse_json<T: serde::de::DeserializeOwned>(
+    value: serde_json::Value,
+    what: &str,
+) -> Result<T, String> {
     serde_path_to_error::deserialize(value).map_err(|e| {
         let path = e.path().to_string();
         let inner = e.into_inner();
         if path == "." {
-            format!("the proposal doesn't match the format in symbol_format: {inner}")
+            format!("the {what} doesn't match the format in symbol_format: {inner}")
         } else {
-            format!("the proposal doesn't match the format in symbol_format, at {path}: {inner}")
+            format!("the {what} doesn't match the format in symbol_format, at {path}: {inner}")
         }
     })
 }
@@ -472,7 +838,13 @@ pub fn select_pages(
              read_datasheet with first_page={} to read on.]\n",
             shown + 1
         );
-    } else if first > 1 || last < total {
+    } else if last < total {
+        out += &format!(
+            "\n[Showing pages {first}-{last} of {total}. Call read_datasheet with first_page={} to \
+             read on.]\n",
+            last + 1
+        );
+    } else if first > 1 {
         out += &format!("\n[Showing pages {first}-{last} of {total}.]\n");
     }
     Ok(out)
@@ -550,26 +922,98 @@ mod tests {
         assert!(e.starts_with("the proposal is not valid JSON"), "{e}");
     }
 
+    fn rendered(text: Option<Vec<String>>, images: &[u32]) -> Rendered {
+        Rendered {
+            pages: 3,
+            text,
+            images: images
+                .iter()
+                .map(|&page| PageImage {
+                    page,
+                    png_base64: format!("png{page}"),
+                })
+                .collect(),
+            ..Rendered::default()
+        }
+    }
+
+    fn texts(r: &CallToolResult) -> Vec<&str> {
+        r.content
+            .iter()
+            .filter_map(|c| c.as_text().map(|t| t.text.as_str()))
+            .collect()
+    }
+
+    fn images(r: &CallToolResult) -> Vec<&str> {
+        r.content
+            .iter()
+            .filter_map(|c| c.as_image().map(|i| i.data.as_str()))
+            .collect()
+    }
+
     #[test]
-    fn the_demo_datasheet_reads_back() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/datasheets/demo-10-datasheet.pdf"
+    fn the_reply_has_the_text_of_the_pages_shown_then_their_images() {
+        let text = Some(pages(3, 5));
+        let r = datasheet_reply("vt@1", rendered(text.clone(), &[1, 2]), 1, None).unwrap();
+        assert_eq!(images(&r), ["png1", "png2"]);
+        let [t] = texts(&r)[..] else { panic!("{r:?}") };
+        assert!(t.starts_with("Datasheet of vt@1, 3 pages.\n"), "{t}");
+        assert!(
+            t.contains("--- page 2 ---") && !t.contains("--- page 3 ---"),
+            "{t}"
         );
-        let pages =
-            pdf_extract::extract_text_from_mem_by_pages(&std::fs::read(path).unwrap()).unwrap();
-        assert_eq!(pages.len(), 2);
-        for text in [
-            "4/3 directional valve",
-            "ISO 4401-05",
-            "315 bar",
-            "120 l/min",
-        ] {
-            assert!(pages[0].contains(text), "{text} not in {:?}", pages[0]);
-        }
-        for text in ["DEMO-10-4-3-C-24DC", "DEMO-10-4-3-C-230AC", "EN 175301-803"] {
-            assert!(pages[1].contains(text), "{text} not in {:?}", pages[1]);
-        }
+        assert!(t.contains("first_page=3"), "{t}");
+        // The text beside images is capped, with a note on where to read on.
+        let long = Some(pages(3, MAX_CHARS_WITH_IMAGES));
+        let r = datasheet_reply("vt@1", rendered(long, &[1, 2]), 1, None).unwrap();
+        let t = texts(&r)[0];
+        assert!(
+            t.contains("page 1 is cut off") && t.contains("first_page=2"),
+            "{t}"
+        );
+        assert!(t.len() < MAX_CHARS_WITH_IMAGES + 500, "{}", t.len());
+
+        // Without text, or with no text in it, the images still come with a note.
+        let mut out = rendered(None, &[3]);
+        out.text_error = Some("bad font".into());
+        let r = datasheet_reply("vt@1", out, 3, None).unwrap();
+        assert!(
+            texts(&r)[0].contains("[Text unavailable: bad font."),
+            "{r:?}"
+        );
+        assert_eq!(images(&r), ["png3"]);
+        let blank = Some(vec![String::new(); 3]);
+        let r = datasheet_reply("vt@1", rendered(blank, &[1]), 1, None).unwrap();
+        assert!(texts(&r)[0].contains("[Text unavailable: the PDF has no text"));
+        assert_eq!(images(&r), ["png1"]);
+    }
+
+    #[test]
+    fn without_images_the_reply_is_the_text_alone() {
+        let mut out = rendered(Some(pages(3, 5)), &[]);
+        out.image_errors = vec!["page 1: boom".into()];
+        let r = datasheet_reply("vt@1", out, 1, None).unwrap();
+        assert!(images(&r).is_empty());
+        let t = texts(&r)[0];
+        assert!(t.contains("[Page image unavailable: page 1: boom]"), "{t}");
+        assert!(t.contains("--- page 3 ---"), "{t}");
+
+        let e = datasheet_reply("vt@1", rendered(Some(pages(3, 5)), &[]), 4, None).unwrap_err();
+        assert!(e.contains("has 3 pages"), "{e}");
+        let mut out = rendered(None, &[]);
+        out.text_error = Some("bad xref".into());
+        let e = datasheet_reply("vt@1", out, 1, None).unwrap_err();
+        assert!(
+            e.starts_with("could not read the datasheet: bad xref."),
+            "{e}"
+        );
+        let out = Rendered {
+            text_error: Some("bad header".into()),
+            image_errors: vec!["can't open".into()],
+            ..Rendered::default()
+        };
+        let e = datasheet_reply("vt@1", out, 1, None).unwrap_err();
+        assert!(e.contains("bad header; can't open"), "{e}");
     }
 
     fn pages(n: usize, len: usize) -> Vec<String> {
@@ -585,7 +1029,12 @@ mod tests {
         );
         assert_eq!(
             select_pages(&p, Some(2), Some(2), 1000).unwrap(),
-            "--- page 2 ---\n22222\n\n[Showing pages 2-2 of 3.]\n"
+            "--- page 2 ---\n22222\n\n[Showing pages 2-2 of 3. Call read_datasheet with \
+             first_page=3 to read on.]\n"
+        );
+        assert_eq!(
+            select_pages(&p, Some(2), None, 1000).unwrap(),
+            "--- page 2 ---\n22222\n--- page 3 ---\n33333\n\n[Showing pages 2-3 of 3.]\n"
         );
         // A last page past the end means up to the end.
         assert!(
@@ -611,7 +1060,7 @@ mod tests {
         assert!(
             select_pages(&p, None, Some(2), 1000)
                 .unwrap()
-                .ends_with("--- page 2 ---\n22222\n\n[Showing pages 1-2 of 3.]\n")
+                .ends_with("--- page 2 ---\n22222\n\n[Showing pages 1-2 of 3. Call read_datasheet with first_page=3 to read on.]\n")
         );
         // No text at all, as in a scanned PDF, is an error; a blank page among others is not.
         let blank = vec![" \n".to_string(), String::new()];
@@ -651,7 +1100,7 @@ mod tests {
         assert!(
             !select_pages(&p, Some(1), Some(2), 232)
                 .unwrap()
-                .contains("first_page")
+                .contains("as much as fits")
         );
         // One page over the cap is cut, and still counts as read.
         let out = select_pages(&p, Some(1), Some(2), 50).unwrap();

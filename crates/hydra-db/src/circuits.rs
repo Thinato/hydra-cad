@@ -94,6 +94,45 @@ pub async fn create_circuit(
 ) -> Result<OpenedCircuit, Error> {
     check_writable(document)?;
     let mut tx = pool.begin().await?;
+    let opened = insert_circuit(&mut tx, document, project, message).await?;
+    tx.commit().await?;
+    Ok(opened)
+}
+
+/// Like [`create_circuit`], but refuses a name another circuit already has. Concurrent calls
+/// with the same name are serialised, so a retried import can't create it twice.
+pub async fn create_circuit_once(
+    pool: &PgPool,
+    document: &Circuit,
+    message: Option<&str>,
+) -> Result<OpenedCircuit, Error> {
+    check_writable(document)?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('hydra circuit name: ' || $1))")
+        .bind(&document.name)
+        .execute(&mut *tx)
+        .await?;
+    let taken: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM circuits WHERE name = $1)")
+        .bind(&document.name)
+        .fetch_one(&mut *tx)
+        .await?;
+    if taken {
+        return Err(Error::Invalid(vec![format!(
+            "a circuit named {:?} already exists",
+            document.name
+        )]));
+    }
+    let opened = insert_circuit(&mut tx, document, None, message).await?;
+    tx.commit().await?;
+    Ok(opened)
+}
+
+async fn insert_circuit(
+    tx: &mut PgConnection,
+    document: &Circuit,
+    project: Option<&str>,
+    message: Option<&str>,
+) -> Result<OpenedCircuit, Error> {
     let id: Uuid =
         sqlx::query_scalar("INSERT INTO circuits (name, project) VALUES ($1, $2) RETURNING id")
             .bind(&document.name)
@@ -114,7 +153,6 @@ pub async fn create_circuit(
         .bind(revision)
         .execute(&mut *tx)
         .await?;
-    tx.commit().await?;
     Ok(OpenedCircuit {
         id: id.to_string(),
         project: project.map(Into::into),

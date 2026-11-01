@@ -22,7 +22,8 @@ fn new_key() -> Proposal {
         "valve_type": {
             "key": "vt-demo-new", "version": 0, "manufacturer": "demo",
             "series": "DEMO-10", "code": "4-3-C", "symbol": "sym-4-3-closed-centre@1",
-            "mounting": "ISO 4401-05", "params": {"max_pressure_bar": 315}
+            "mounting": "ISO 4401-05",
+            "params": {"function": "directional", "max_pressure_bar": 315}
         },
         "parts": [
             {"part_number": "DEMO-10-24DC", "options": {"voltage": "24 V DC"}},
@@ -172,7 +173,10 @@ async fn approving_a_new_key_creates_version_1(pool: PgPool) {
     let c = load_catalogue(&pool).await.unwrap().catalogue;
     let saved = c.valve_type(&target).unwrap();
     assert_eq!(saved.series, "DEMO-10");
-    assert_eq!(saved.params, json!({"max_pressure_bar": 315}));
+    assert_eq!(
+        saved.params,
+        json!({"function": "directional", "max_pressure_bar": 315})
+    );
     assert_eq!(
         parts(&c, &target),
         [
@@ -258,6 +262,38 @@ async fn approving_saves_the_new_symbol(pool: PgPool) {
     assert_eq!(
         c.valve_type(&target).unwrap().symbol,
         Some(symbol.reference())
+    );
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn approval_refuses_a_symbol_colliding_with_an_unreadable_one(pool: PgPool) {
+    imported(&pool).await;
+    sqlx::query(
+        "INSERT INTO symbol_defs (key, version, kind, definition) \
+         VALUES ('sym-future', 1, 'future_kind', '{\"kind\":\"future_kind\"}')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mut p = new_key();
+    let symbol = SymbolDefRecord {
+        key: "sym-future".into(),
+        version: 1,
+        definition: serde_json::from_value(json!({
+            "kind": "directional_valve",
+            "ports": [{"name": "A", "side": "top"}, {"name": "P", "side": "bottom"}],
+            "positions": [{"flows": [["P", "A"]]}, {"blocked": ["P", "A"]}],
+            "normal_position": 1
+        }))
+        .unwrap(),
+    };
+    p.new_symbol = Some(symbol.clone());
+    p.valve_type.symbol = Some(symbol.reference());
+    let id = submit_proposal(&pool, &p).await.unwrap();
+    assert_eq!(
+        invalid(approve_proposal(&pool, &id, &p).await),
+        vec!["stored symbol sym-future@1 can't be read by this build; update the app"]
     );
 }
 

@@ -1,0 +1,14 @@
+---
+source: crates/hydra-symbols/tests/fixtures.rs
+expression: "hydra_core::bom_csv(&circuit.bom(&catalogue))"
+---
+﻿Item,Position,Quantity,Designators,Manufacturer,Description,Part number,Catalogue,Status,Requested
+1,,1,FC1,"Demo (fixture data, not a real product)",DEMO-PFC32 C3,,vt-demo-flow-control-prop@1,PART NOT LISTED,DEMO-PFC32-C3-12E
+2,,1,FC2,,"Proportional flow control, compensated, 3 ports",,,MISSING,DEMO-PFC40-C3-12E
+3,,1,FC3,"Demo (fixture data, not a real product)",DEMO-PFC32 C3,,vt-demo-flow-control-prop@1,STAND-IN,DEMO-PFC25-C3-12E
+4,9,1,M1,,Test point SAE-04,DEMO-MP-04,,,
+5,,1,RV1,"Demo (fixture data, not a real product)",DEMO-CR10 R,DEMO-CR10-210,vt-demo-cartridge-relief@1,,
+6,,1,V1,,2/2 poppet solenoid cartridge,,,MISSING,DEMO-PS10-2N-12DC
+7,1,1,,,Manifold block,DEMO-BLOCK-03,,,
+8,8,3,,,Coil 12 V DC,DEMO-COIL-12DC,,,
+9,20,2,,,Plug SAE-6,DEMO-PLUG-SAE6,,,

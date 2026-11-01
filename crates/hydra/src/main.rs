@@ -123,6 +123,7 @@ impl Panels {
                 }
                 Reply::Catalogue(loaded) => {
                     self.shared.catalogue = loaded.catalogue;
+                    self.shared.catalogue_loads += 1;
                     self.shared.datasheets = loaded.datasheets;
                     self.shared.valve_models = loaded.valve_models;
                     self.shared.block_models = loaded.block_models;
@@ -370,6 +371,7 @@ fn main() -> eframe::Result {
                 match read(&path).and_then(|t| Ok(serde_json::from_str::<Catalogue>(&t)?)) {
                     Ok(c) => {
                         shared.catalogue = c;
+                        shared.catalogue_loads += 1;
                         shared.notice = Some(format!(
                             "Offline: read-only catalogue from {}. Set database_url in {} or {DATABASE_URL_VAR} to use the shared database.",
                             path.display(),

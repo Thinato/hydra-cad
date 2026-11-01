@@ -12,7 +12,7 @@ use crate::Error;
 pub const MAX_PROPOSAL_BYTES: usize = 256 * 1024;
 use crate::catalogue::{
     db_version, insert_part, insert_symbol_def, insert_valve_type, load, load_catalogue,
-    lock_catalogue,
+    lock_catalogue, unreadable_symbol,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,8 +233,19 @@ pub async fn approve_proposal(
             "a reviewer can't change which valve type a proposal is for".into(),
         ]));
     }
-    let catalogue = load(&mut tx).await?.catalogue;
-    let problems = edited.problems(&catalogue);
+    let loaded = load(&mut tx).await?;
+    let mut problems: Vec<String> = edited
+        .new_symbol
+        .iter()
+        .map(|s| s.reference())
+        .chain(edited.valve_type.symbol.clone())
+        .filter_map(|r| unreadable_symbol(&loaded.skipped_symbols, &r))
+        .collect();
+    problems.dedup();
+    let catalogue = loaded.catalogue;
+    if problems.is_empty() {
+        problems = edited.problems(&catalogue);
+    }
     if !problems.is_empty() {
         return Err(Error::Invalid(problems));
     }

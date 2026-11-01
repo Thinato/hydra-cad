@@ -5,8 +5,8 @@
 //! the nets. The canvas, SVG and PDF export all draw the same primitives.
 
 use hydra_core::{
-    Actuator, Catalogue, Circuit, Component, ComponentKind, DirectionalValve, PORT_PIN, Placement,
-    Rotation, Side, SymbolDef,
+    Actuator, Catalogue, Circuit, Component, ComponentKind, DirectionalValve, FlowActuator,
+    PORT_PIN, Placement, Rotation, Side, SymbolDef, ValveStatus,
 };
 
 mod svg;
@@ -166,7 +166,216 @@ pub fn render_symbol(def: &SymbolDef) -> Drawing {
         SymbolDef::Check { spring: has_spring } => check(*has_spring),
         SymbolDef::Relief { adjustable: adj } => relief(*adj),
         SymbolDef::Orifice { adjustable: adj } => orifice(*adj),
+        SymbolDef::FlowControl {
+            actuator,
+            compensated,
+            bypass,
+        } => flow_control(*actuator, *compensated, *bypass),
+        SymbolDef::PilotCheck { spring: has_spring } => pilot_check(*has_spring),
+        SymbolDef::Counterbalance => counterbalance(),
+        SymbolDef::TestPoint => test_point(),
+        SymbolDef::HydraulicMotor {
+            bidirectional,
+            variable,
+            drain,
+        } => hydraulic_motor(*bidirectional, *variable, *drain),
+        SymbolDef::Pump { variable } => pump(*variable),
+        SymbolDef::Box { label, ports } => labelled_box(label, ports),
     }
+}
+
+/// Horizontal port on the left (`left`) or right side at height `y`, its line starting at `x`.
+fn side_port(d: &mut Drawing, name: &str, x: f32, y: f32, left: bool) {
+    let edge = if left { x - STUB } else { x + STUB };
+    d.primitives.push(line([x, y], [edge, y]));
+    // Name above the line, running away from the symbol.
+    let (at, align) = if left {
+        ([x - 0.5, y - 1.5], Align::End)
+    } else {
+        ([x + 0.5, y - 1.5], Align::Start)
+    };
+    d.primitives.push(text(at, name, align));
+    d.ports.push((name.to_string(), [edge, y]));
+}
+
+/// Dashed pilot line from a port on the left side into `tip`.
+fn pilot_from_left(d: &mut Drawing, name: &str, x: f32, tip: Point) {
+    d.primitives.push(dashed(vec![[x, tip[1]], tip]));
+    d.primitives.push(arrow_head([x, tip[1]], tip));
+    side_port(d, name, x, tip[1], true);
+}
+
+fn triangle(tip: Point, base_mid: Point, half: f32) -> Primitive {
+    let (dx, dy) = (tip[0] - base_mid[0], tip[1] - base_mid[1]);
+    let len = (dx * dx + dy * dy).sqrt().max(f32::EPSILON);
+    let (nx, ny) = (-dy / len * half, dx / len * half);
+    Primitive::Polyline {
+        points: vec![
+            tip,
+            [base_mid[0] + nx, base_mid[1] + ny],
+            [base_mid[0] - nx, base_mid[1] - ny],
+        ],
+        closed: true,
+        dashed: false,
+        filled: true,
+    }
+}
+
+/// Flow control from In (bottom) to Out (top), with Bypass on the right when `bypass`.
+fn flow_control(actuator: FlowActuator, compensated: bool, bypass: bool) -> Drawing {
+    let mut d = Drawing::default();
+    let h = ENVELOPE / 2.0;
+    d.primitives.push(rect(-h, -h, ENVELOPE, ENVELOPE));
+    d.primitives.push(line([0.0, -h], [0.0, h]));
+    d.primitives.push(arc([-2.6, 0.0], 2.2, -50.0, 50.0));
+    d.primitives.push(arc([2.6, 0.0], 2.2, 130.0, 230.0));
+    d.primitives.extend(adjustable([0.0, 0.0], 3.5));
+    if compensated {
+        // Compensator: a small arrow beside the throttle.
+        let (from, tip) = ([3.3, 4.3], [3.3, 0.8]);
+        d.primitives.push(line(from, tip));
+        d.primitives.push(arrow_head(from, tip));
+    }
+    if actuator == FlowActuator::Proportional {
+        // Proportional solenoid on the left: a box with two slanted strokes.
+        let (x, y, w, hh) = (-h - ACTUATOR, -2.0, ACTUATOR, 4.0);
+        d.primitives.push(rect(x, y, w, hh));
+        d.primitives
+            .push(line([x + w * 0.2, y + hh], [x + w * 0.6, y]));
+        d.primitives
+            .push(line([x + w * 0.45, y + hh], [x + w * 0.85, y]));
+    }
+    if bypass {
+        d.primitives.push(line([0.0, h - 2.0], [h, h - 2.0]));
+        side_port(&mut d, "Bypass", h, h - 2.0, false);
+    }
+    vertical_ports(&mut d, "Out", "In", h);
+    d
+}
+
+/// Check valve A (bottom) to B (top), opened backwards by pilot pressure on X (left).
+fn pilot_check(has_spring: bool) -> Drawing {
+    let mut d = check(has_spring);
+    pilot_from_left(&mut d, "X", -5.0, [-1.8, 1.5]);
+    d
+}
+
+/// Counterbalance valve: V (bottom) to C (top) through the check, C held until X opens it.
+fn counterbalance() -> Drawing {
+    let mut d = Drawing::default();
+    let h = ENVELOPE / 2.0;
+    d.primitives.push(rect(-h, -h, ENVELOPE, ENVELOPE));
+    // Relief path C -> V, offset left of the port line.
+    let (from, tip) = ([-2.0, -h + 1.0], [-2.0, h - 1.0]);
+    d.primitives.push(line(from, tip));
+    d.primitives.push(arrow_head(from, tip));
+    // Check V -> C on the right.
+    d.primitives.push(Primitive::Circle {
+        center: [2.5, -0.5],
+        radius: 1.2,
+        filled: false,
+    });
+    d.primitives
+        .push(open(vec![[0.9, 0.2], [2.5, 2.5], [4.1, 0.2]]));
+    d.primitives.push(line([2.5, 2.5], [2.5, h]));
+    d.primitives.push(line([2.5, -1.7], [2.5, -h]));
+    d.primitives.push(line([0.0, -h], [0.0, -h + 1.0]));
+    d.primitives.push(line([0.0, h], [0.0, h - 1.0]));
+    d.primitives
+        .push(spring([h, -2.5], [h + 5.0, -2.5], 3, 1.5));
+    pilot_from_left(&mut d, "X", -h - 2.0, [-h, 2.5]);
+    vertical_ports(&mut d, "C", "V", h);
+    d
+}
+
+/// Gauge connection M.
+fn test_point() -> Drawing {
+    let mut d = Drawing::default();
+    let r = 1.8;
+    d.primitives.push(Primitive::Circle {
+        center: [0.0, 0.0],
+        radius: r,
+        filled: false,
+    });
+    let k = r * 0.7;
+    d.primitives.push(line([-k, -k], [k, k]));
+    d.primitives.push(line([-k, k], [k, -k]));
+    d.primitives.push(line([0.0, r], [0.0, r + STUB]));
+    d.primitives
+        .push(text([1.0, r + STUB - 1.0], "M", Align::Start));
+    d.ports.push(("M".to_string(), [0.0, r + STUB]));
+    d
+}
+
+/// Hydraulic motor A (bottom) to B (top), drain L on the right when `drain`.
+fn hydraulic_motor(bidirectional: bool, variable: bool, drain: bool) -> Drawing {
+    let mut d = Drawing::default();
+    let r = 5.0;
+    d.primitives.push(Primitive::Circle {
+        center: [0.0, 0.0],
+        radius: r,
+        filled: false,
+    });
+    // Motors: triangles pointing in, from where the oil arrives.
+    d.primitives.push(triangle([0.0, r - 2.2], [0.0, r], 1.3));
+    if bidirectional {
+        d.primitives.push(triangle([0.0, -r + 2.2], [0.0, -r], 1.3));
+    }
+    if variable {
+        d.primitives.extend(adjustable([0.0, 0.0], r + 1.0));
+    }
+    if drain {
+        d.primitives
+            .push(dashed(vec![[r * 0.7, r * 0.7], [r + 1.0, r * 0.7]]));
+        side_port(&mut d, "L", r + 1.0, r * 0.7, false);
+    }
+    vertical_ports(&mut d, "B", "A", r);
+    d
+}
+
+/// Pump from S (bottom) to P (top).
+fn pump(variable: bool) -> Drawing {
+    let mut d = Drawing::default();
+    let r = 5.0;
+    d.primitives.push(Primitive::Circle {
+        center: [0.0, 0.0],
+        radius: r,
+        filled: false,
+    });
+    // Pumps: the triangle points out, towards P.
+    d.primitives.push(triangle([0.0, -r], [0.0, -r + 2.2], 1.3));
+    if variable {
+        d.primitives.extend(adjustable([0.0, 0.0], r + 1.0));
+    }
+    vertical_ports(&mut d, "P", "S", r);
+    d
+}
+
+/// Box with a label, the first half of the ports on top and the rest at the bottom.
+fn labelled_box(label: &str, ports: &[String]) -> Drawing {
+    let mut d = Drawing::default();
+    let top = ports.len().div_ceil(2);
+    let per_side = top.max(1) as f32;
+    let w = (per_side * 6.0)
+        .max(ENVELOPE)
+        .max(label.chars().count() as f32 * LABEL * 0.6 + 2.0);
+    let h = ENVELOPE / 2.0;
+    d.primitives.push(rect(-w / 2.0, -h, w, ENVELOPE));
+    if !label.is_empty() {
+        d.primitives.push(text([0.0, 0.0], label, Align::Middle));
+    }
+    for (side, names) in [(-1.0, &ports[..top]), (1.0, &ports[top..])] {
+        let n = names.len() as f32;
+        for (i, name) in names.iter().enumerate() {
+            let x = -w / 2.0 + w * (i as f32 + 0.5) / n;
+            let (inner, edge) = (side * h, side * (h + STUB));
+            d.primitives.push(line([x, inner], [x, edge]));
+            d.primitives
+                .push(text([x + 1.0, edge - side * 1.0], name, Align::Start));
+            d.ports.push((name.clone(), [x, edge]));
+        }
+    }
+    d
 }
 
 /// Vertical two-port symbol: port lines from `inner` to the anchors above and below.
@@ -448,11 +657,9 @@ pub fn bounds(primitives: &[Primitive]) -> Option<(Point, Point)> {
 /// `None` when a valve's catalogue rows are missing; [`Circuit::validate`] reports those.
 pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) -> Option<Drawing> {
     let symbol = match &c.kind {
-        ComponentKind::Valve { valve_type } => match catalogue.symbol_of(valve_type) {
-            Some(def) => render_symbol(def),
-            None => return None,
-        },
+        ComponentKind::Valve(v) => render_symbol(v.symbol(catalogue)?),
         ComponentKind::Port { label } => port_marker(label),
+        ComponentKind::Item(item) => render_symbol(&item.symbol),
     };
     let at = |p: Point| {
         let [x, y] = rotate(p, place.rotation);
@@ -502,8 +709,8 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
             }
         });
     }
-    if matches!(c.kind, ComponentKind::Valve { .. })
-        && let Some((min, _)) = bounds(&d.primitives)
+    if !matches!(c.kind, ComponentKind::Port { .. })
+        && let Some((min, max)) = bounds(&d.primitives)
     {
         // Designator beside the symbol's top-left corner, clear of its port lines.
         d.primitives.push(text(
@@ -511,11 +718,55 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
             &c.id,
             Align::End,
         ));
+        let mut below = max[1] + LABEL;
+        if let ComponentKind::Item(item) = &c.kind
+            && let Some(label) = item.label.as_deref().filter(|l| !l.is_empty())
+        {
+            d.primitives
+                .push(text([(min[0] + max[0]) / 2.0, below], label, Align::Middle));
+            below += LABEL * 1.4;
+        }
+        if let Some(words) = status_words(c, catalogue) {
+            // A dashed frame and the status in words, so a black-and-white print shows it too.
+            let pad = 1.5;
+            d.primitives.push(Primitive::Polyline {
+                points: vec![
+                    [min[0] - pad, min[1] - pad],
+                    [max[0] + pad, min[1] - pad],
+                    [max[0] + pad, max[1] + pad],
+                    [min[0] - pad, max[1] + pad],
+                ],
+                closed: true,
+                dashed: true,
+                filled: false,
+            });
+            d.primitives.push(text(
+                [(min[0] + max[0]) / 2.0, below + pad],
+                &words,
+                Align::Middle,
+            ));
+        }
     }
     for (name, p) in symbol.ports {
         d.ports.push((name, at(p)));
     }
     Some(d)
+}
+
+/// What a valve that isn't normal shows in words, e.g. `MISSING DEMO-X` or
+/// `STAND-IN for DEMO-X`.
+pub fn status_words(c: &Component, catalogue: &Catalogue) -> Option<String> {
+    let status = c.valve_status(catalogue)?;
+    let code = c
+        .valve()
+        .and_then(|v| v.requested.as_ref())
+        .map(|r| r.code.trim())
+        .unwrap_or_default();
+    match status {
+        ValveStatus::Normal => None,
+        ValveStatus::StandIn => Some(format!("STAND-IN for {code}")),
+        s => Some(format!("{} {code}", s.words())),
+    }
 }
 
 /// Draw a whole circuit: every placed component, its designator, and its nets.

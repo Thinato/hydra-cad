@@ -6,8 +6,9 @@
 
 use eframe::egui::{self, Color32, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2};
 use hydra_core::{
-    Catalogue, CatalogueRef, Circuit, Command, Component, ComponentKind, Document, Layout,
-    Placement, PortRef, Rotation, SCHEMA_VERSION, Severity, SymbolDef, next_id,
+    Catalogue, CatalogueRef, Circuit, CircuitStatus, Command, Component, ComponentKind, Document,
+    Item, Layout, Placement, PortRef, Rotation, SCHEMA_VERSION, Severity, StandIn, SymbolDef,
+    ValveStatus, next_id, stand_ins,
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
 use hydra_symbols::{Drawing, bounds, render_circuit, render_component};
@@ -21,6 +22,25 @@ const GRID: f32 = 2.5;
 /// How close to a port anchor, in screen points, a press or release must be.
 const PORT_REACH: f32 = 8.0;
 const ACCENT: Color32 = Color32::from_rgb(0, 120, 215);
+
+/// Outline of a valve by status: red missing, amber part not listed, violet stand-in.
+fn status_color(s: ValveStatus) -> Color32 {
+    match s {
+        ValveStatus::Normal => Color32::TRANSPARENT,
+        ValveStatus::Missing => Color32::from_rgb(215, 40, 40),
+        ValveStatus::PartNotListed => Color32::from_rgb(230, 150, 0),
+        ValveStatus::StandIn => Color32::from_rgb(120, 80, 220),
+    }
+}
+
+/// A stand-in being swapped in, waiting for the engineer to confirm how its ports connect.
+#[derive(Clone)]
+struct Swap {
+    id: String,
+    stand_in: StandIn,
+    /// `(old port, new port or none)`, one row per port of the valve as it is now.
+    ports: Vec<(String, Option<String>)>,
+}
 
 /// Where the open circuit lives in the database.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,11 +111,18 @@ pub struct SchematicEditor {
     dialog: Option<Dialog>,
     /// The circuit as sent with a save that hasn't been answered yet.
     in_flight: Option<Circuit>,
+    /// That save is a copy: the editor moves to it once the save is answered.
+    copying: bool,
     /// Id of a circuit being opened or restored. Editing waits, since the reply replaces it.
     awaiting: Option<String>,
     /// The user agreed to close the window despite unsaved changes.
     allow_close: bool,
     status: Option<String>,
+    /// Valve statuses for (edit counter, catalogue loads), recomputed only when either moves.
+    valve_status: Option<(u64, u64, CircuitStatus)>,
+    /// How often `valve_status` was recomputed, for tests.
+    status_computed: usize,
+    swap: Option<Swap>,
 }
 
 impl SchematicEditor {
@@ -115,10 +142,48 @@ impl SchematicEditor {
             note: String::new(),
             dialog: None,
             in_flight: None,
+            copying: false,
             awaiting: None,
             allow_close: false,
             status: None,
+            valve_status: None,
+            status_computed: 0,
+            swap: None,
         }
+    }
+
+    /// Valve statuses of the document against the catalogue, computed once per change.
+    fn circuit_status(&mut self, shared: &Shared) -> CircuitStatus {
+        let key = (self.doc.generation(), shared.catalogue_loads);
+        match &self.valve_status {
+            Some((g, l, s)) if (*g, *l) == key => s.clone(),
+            _ => {
+                let s = CircuitStatus::compute(&self.doc.circuit, &shared.catalogue);
+                self.status_computed += 1;
+                self.valve_status = Some((key.0, key.1, s.clone()));
+                s
+            }
+        }
+    }
+
+    /// Imported by the assistant and not yet saved again by an engineer.
+    fn unchecked(&self) -> bool {
+        self.doc.circuit.import.is_some() && self.saved.as_ref().is_some_and(|s| s.revision == 1)
+    }
+
+    /// Save the imported circuit unchanged as checked, which ends its unchecked state.
+    fn mark_checked(&mut self, shared: &Shared) {
+        let (Some(db), Some(saved)) = (&shared.db, &self.saved) else {
+            return;
+        };
+        self.in_flight = Some(self.doc.circuit.clone());
+        db.send(Request::SaveCircuit {
+            id: Some(saved.id.clone()),
+            base: saved.revision,
+            document: self.doc.circuit.clone(),
+            project: saved.project.clone(),
+            message: Some("Checked".into()),
+        });
     }
 
     // ---- replies from the database worker ----
@@ -143,6 +208,16 @@ impl SchematicEditor {
         let Some(sent) = self.in_flight.take() else {
             return;
         };
+        if std::mem::take(&mut self.copying) {
+            // Now editing the copy. Edits made while saving stay, but not the original's undo
+            // history, which would bring back its name and import marks.
+            let mut current = self.doc.circuit.clone();
+            current.name = sent.name.clone();
+            current.import = None;
+            self.doc = Document::new(current);
+            self.valve_status = None;
+            self.name = sent.name.clone();
+        }
         self.doc.mark_saved_as(sent);
         let project = self.saved.take().and_then(|s| s.project);
         self.saved = Some(Saved {
@@ -155,6 +230,7 @@ impl SchematicEditor {
     }
 
     pub fn conflict(&mut self, current: i32) {
+        self.copying = false;
         if self.in_flight.take().is_some() {
             self.dialog = Some(Dialog::Conflict { current });
         } else if self.awaiting.take().is_some() {
@@ -165,6 +241,7 @@ impl SchematicEditor {
     /// A save failed: stop waiting on it and say why.
     pub fn save_failed(&mut self, message: String) {
         self.in_flight = None;
+        self.copying = false;
         self.status = Some(message);
     }
 
@@ -262,12 +339,8 @@ impl SchematicEditor {
     fn add(&mut self, kind: ComponentKind, catalogue: &Catalogue) {
         let prefix = match &kind {
             ComponentKind::Port { .. } => "X",
-            ComponentKind::Valve { valve_type } => match catalogue.symbol_of(valve_type) {
-                Some(SymbolDef::Check { .. }) => "K",
-                Some(SymbolDef::Relief { .. }) => "RV",
-                Some(SymbolDef::Orifice { .. }) => "O",
-                _ => "V",
-            },
+            ComponentKind::Valve(v) => v.symbol(catalogue).map_or("V", designator_prefix),
+            ComponentKind::Item(item) => designator_prefix(&item.symbol),
         };
         let id = next_id(
             self.doc.circuit.components.iter().map(|c| c.id.as_str()),
@@ -378,17 +451,21 @@ impl SchematicEditor {
         let Some(db) = &shared.db else {
             return;
         };
+        // A copy is sent as a new circuit; the open one stays as it is until the copy is saved.
+        // Only the original records its import.
+        let mut document = self.doc.circuit.clone();
         if as_copy {
-            let name = format!("{} (copy)", self.doc.circuit.name);
-            self.apply(Command::Rename { name });
+            document.name = format!("{} (copy)", document.name);
+            document.import = None;
         }
+        self.copying = as_copy;
         let target = self.saved.as_ref().filter(|_| !as_copy);
         let note = self.note.trim();
-        self.in_flight = Some(self.doc.circuit.clone());
+        self.in_flight = Some(document.clone());
         db.send(Request::SaveCircuit {
             id: target.map(|s| s.id.clone()),
             base: target.map_or(0, |s| s.revision),
-            document: self.doc.circuit.clone(),
+            document,
             project: self.saved.as_ref().and_then(|s| s.project.clone()),
             message: (!note.is_empty()).then(|| note.to_string()),
         });
@@ -401,20 +478,22 @@ impl SchematicEditor {
         if self.awaiting.is_none()
             && let Some(r) = shared.place.take()
         {
-            self.add(ComponentKind::Valve { valve_type: r }, &shared.catalogue);
+            self.add(ComponentKind::valve(r), &shared.catalogue);
         }
         // While a circuit is being opened or restored, its reply will replace the document.
         let locked = self.awaiting.is_some();
+        let status = self.circuit_status(shared);
         ui.add_enabled_ui(!locked, |ui| {
             self.toolbar(ui, shared);
-            self.selection_bar(ui);
-            self.validation(ui, &shared.catalogue);
+            self.import_banner(ui, shared);
+            self.selection_bar(ui, &shared.catalogue, &status);
+            self.validation(ui, &shared.catalogue, &status);
             ui.weak(
                 "Drag parts to move them. Drag from a valve port to another port to connect \
              (Shift-drag from an external port). Right-click a port to disconnect. \
              R rotates, Delete removes, double-click fits.",
             );
-            self.canvas(ui, &shared.catalogue);
+            self.canvas(ui, &shared.catalogue, &status);
         });
         if !locked {
             self.keys(ui, shared);
@@ -539,7 +618,7 @@ impl SchematicEditor {
                 .clicked()
                 && let Some(r) = self.place.clone()
             {
-                self.add(ComponentKind::Valve { valve_type: r }, catalogue);
+                self.add(ComponentKind::valve(r), catalogue);
             }
             if ui.button("Add port").clicked() {
                 self.add(
@@ -549,6 +628,34 @@ impl SchematicEditor {
                     catalogue,
                 );
             }
+            ui.menu_button("Add part", |ui| {
+                let parts = [
+                    ("Test point", SymbolDef::TestPoint),
+                    ("Fixed orifice", SymbolDef::Orifice { adjustable: false }),
+                    (
+                        "Hydraulic motor",
+                        SymbolDef::HydraulicMotor {
+                            bidirectional: false,
+                            variable: false,
+                            drain: false,
+                        },
+                    ),
+                    ("Pump", SymbolDef::Pump { variable: false }),
+                ];
+                for (label, symbol) in parts {
+                    if ui.button(label).clicked() {
+                        ui.close();
+                        let item = Item {
+                            symbol,
+                            label: None,
+                            code: None,
+                            description: None,
+                            position: None,
+                        };
+                        self.add(ComponentKind::Item(item), catalogue);
+                    }
+                }
+            });
             if let Some(s) = &self.status {
                 ui.weak(s);
             }
@@ -573,7 +680,47 @@ impl SchematicEditor {
         });
     }
 
-    fn selection_bar(&mut self, ui: &mut egui::Ui) {
+    /// For a circuit the assistant imported: say so until an engineer has checked it.
+    fn import_banner(&mut self, ui: &mut egui::Ui, shared: &Shared) {
+        if !self.unchecked() {
+            return;
+        }
+        let notes = self
+            .doc
+            .circuit
+            .import
+            .as_ref()
+            .map(|i| i.notes.clone())
+            .unwrap_or_default();
+        let ready = shared.db.is_some()
+            && self.in_flight.is_none()
+            && self.awaiting.is_none()
+            && !self.doc.is_dirty();
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "Imported by the AI assistant, unchecked",
+            );
+            let check = ui
+                .add_enabled(ready, egui::Button::new("Mark checked"))
+                .on_hover_text("Saves this revision as checked against the drawing")
+                .on_disabled_hover_text("Save or undo your changes first");
+            if check.clicked() {
+                self.mark_checked(shared);
+            }
+        });
+        if !notes.is_empty() {
+            egui::CollapsingHeader::new(format!("Import notes ({})", notes.len()))
+                .id_salt("import-notes")
+                .show(ui, |ui| {
+                    for n in &notes {
+                        ui.label(n);
+                    }
+                });
+        }
+    }
+
+    fn selection_bar(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue, status: &CircuitStatus) {
         let Some(c) = self
             .selected
             .as_ref()
@@ -585,10 +732,28 @@ impl SchematicEditor {
         ui.horizontal_wrapped(|ui| {
             ui.strong(&c.id);
             match &c.kind {
-                ComponentKind::Valve { valve_type } => {
-                    ui.monospace(valve_type.to_string());
+                ComponentKind::Valve(v) => {
+                    match &v.valve_type {
+                        Some(t) => ui.monospace(t.to_string()),
+                        None => ui.label("not in the catalogue"),
+                    };
+                    if let Some(p) = &v.part {
+                        ui.monospace(p);
+                    }
+                    if let Some(r) = &v.requested {
+                        let asked = ui.label(format!("requested {}", r.code));
+                        if !r.description.is_empty() {
+                            asked.on_hover_text(&r.description);
+                        }
+                    }
+                    if let Some(s) = status.status(&c.id).filter(|s| *s != ValveStatus::Normal) {
+                        ui.colored_label(status_color(s), s.words());
+                    }
                 }
-                ComponentKind::Port { label } => {
+                ComponentKind::Port { label }
+                | ComponentKind::Item(hydra_core::Item {
+                    label: Some(label), ..
+                }) => {
                     ui.label("Label");
                     let edit =
                         ui.add(egui::TextEdit::singleline(&mut self.label).desired_width(80.0));
@@ -605,6 +770,7 @@ impl SchematicEditor {
                         self.label = label.clone();
                     }
                 }
+                ComponentKind::Item(_) => {}
             }
             if ui.button("Rotate").clicked() {
                 self.rotate_selected();
@@ -613,9 +779,111 @@ impl SchematicEditor {
                 self.delete_selected();
             }
         });
+        if status
+            .status(&c.id)
+            .is_some_and(|s| s != ValveStatus::Normal)
+        {
+            self.stand_in_row(ui, &c, catalogue, status);
+        }
     }
 
-    fn validation(&self, ui: &mut egui::Ui, catalogue: &Catalogue) {
+    /// Catalogue valves that could replace the selected one, and the port mapping to confirm.
+    fn stand_in_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &Component,
+        catalogue: &Catalogue,
+        status: &CircuitStatus,
+    ) {
+        if let Some(mut swap) = self.swap.take().filter(|s| s.id == c.id) {
+            let new_ports: Vec<String> = catalogue
+                .symbol_of(&swap.stand_in.valve_type)
+                .map(|d| d.ports().into_iter().map(String::from).collect())
+                .unwrap_or_default();
+            let mut done = None;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!("Connect {}'s ports as:", c.id));
+                for (old, new) in &mut swap.ports {
+                    ui.label(format!("{old} →"));
+                    egui::ComboBox::from_id_salt(("port-map", old.as_str()))
+                        .selected_text(new.as_deref().unwrap_or("—"))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(new, None, "—");
+                            for p in &new_ports {
+                                ui.selectable_value(new, Some(p.clone()), p);
+                            }
+                        });
+                }
+                if ui.button("Swap").clicked() {
+                    done = Some(true);
+                }
+                if ui.button("Cancel").clicked() {
+                    done = Some(false);
+                }
+            });
+            match done {
+                Some(true) => self.apply(Command::Use {
+                    id: c.id.clone(),
+                    valve_type: swap.stand_in.valve_type.clone(),
+                    part: swap.stand_in.part.clone(),
+                    stand_in: !swap.stand_in.exact,
+                    port_map: swap
+                        .ports
+                        .into_iter()
+                        .filter_map(|(o, n)| Some((o, n?)))
+                        .collect(),
+                }),
+                Some(false) => {}
+                None => self.swap = Some(swap),
+            }
+            return;
+        }
+        let available = status.valves.get(&c.id).is_some_and(|(_, a)| a.is_some());
+        match stand_ins(&self.doc.circuit, &c.id, catalogue) {
+            Ok(list) => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Use instead:");
+                    for s in list.into_iter().take(8) {
+                        let name = catalogue
+                            .valve_type(&s.valve_type)
+                            .map_or(s.valve_type.to_string(), |v| {
+                                format!("{} {}", v.series, v.code)
+                            });
+                        let mut text = match &s.part {
+                            Some(p) => format!("{name} ({p})"),
+                            None => name,
+                        };
+                        if s.exact && available {
+                            text += ", now available";
+                        }
+                        if s.rewire {
+                            text += ", rewire";
+                        }
+                        if ui.button(text).clicked() {
+                            let old = c.ports(catalogue).unwrap_or_default();
+                            let ports = old
+                                .iter()
+                                .map(|o| {
+                                    let new = s.port_map.iter().find(|(p, _)| p == o);
+                                    (o.to_string(), new.map(|(_, n)| n.clone()))
+                                })
+                                .collect();
+                            self.swap = Some(Swap {
+                                id: c.id.clone(),
+                                stand_in: s.clone(),
+                                ports,
+                            });
+                        }
+                    }
+                });
+            }
+            Err(why) => {
+                ui.weak(why.to_string());
+            }
+        }
+    }
+
+    fn validation(&self, ui: &mut egui::Ui, catalogue: &Catalogue, status: &CircuitStatus) {
         let issues: Vec<(Severity, String)> = catalogue
             .problems()
             .into_iter()
@@ -625,6 +893,7 @@ impl SchematicEditor {
                     .circuit
                     .validate(catalogue)
                     .iter()
+                    .chain(&status.issues)
                     .map(|i| (i.severity(), i.to_string())),
             )
             .collect();
@@ -651,7 +920,7 @@ impl SchematicEditor {
             });
     }
 
-    fn canvas(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue) {
+    fn canvas(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue, status: &CircuitStatus) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.view = rect;
 
@@ -750,6 +1019,19 @@ impl SchematicEditor {
 
         let painter = ui.painter_at(rect);
         paint_sheet(&painter, rect, self.pan, self.zoom, &drawing.primitives);
+        for (id, part) in &parts {
+            if let Some(s) = status.status(id).filter(|s| *s != ValveStatus::Normal)
+                && let Some((min, max)) = bounds(&part.primitives)
+            {
+                let r = Rect::from_min_max(self.to_screen(min), self.to_screen(max)).expand(7.0);
+                painter.rect_stroke(
+                    r,
+                    3.0,
+                    Stroke::new(2.0, status_color(s)),
+                    egui::StrokeKind::Outside,
+                );
+            }
+        }
         let accent = Stroke::new(1.5, ACCENT);
         if let Some((_, part)) = self
             .selected
@@ -1053,6 +1335,22 @@ pub fn empty_circuit() -> Circuit {
         components: Vec::new(),
         nets: Vec::new(),
         layout: Layout::default(),
+        bom_extra: Vec::new(),
+        import: None,
+    }
+}
+
+/// Designator prefix for a new part drawn with `def`.
+fn designator_prefix(def: &SymbolDef) -> &'static str {
+    match def {
+        SymbolDef::Check { .. } | SymbolDef::PilotCheck { .. } => "K",
+        SymbolDef::Relief { .. } | SymbolDef::Counterbalance => "RV",
+        SymbolDef::Orifice { .. } => "O",
+        SymbolDef::FlowControl { .. } => "FC",
+        SymbolDef::TestPoint => "M",
+        SymbolDef::HydraulicMotor { .. } => "HM",
+        SymbolDef::Pump { .. } => "PU",
+        SymbolDef::DirectionalValve(_) | SymbolDef::Box { .. } => "V",
     }
 }
 
@@ -1364,7 +1662,7 @@ mod tests {
         assert!(export(Export::Pdf).starts_with(b"%PDF-"));
         let csv = String::from_utf8(export(Export::Bom)).unwrap();
         assert!(
-            csv.starts_with("\u{feff}Item,Quantity,Designators"),
+            csv.starts_with("\u{feff}Item,Position,Quantity,Designators"),
             "{csv}"
         );
         assert_eq!(csv.lines().count(), circuit.bom(&catalogue).len() + 1);
@@ -1716,5 +2014,220 @@ mod tests {
         e.conflict(4);
         assert!(matches!(e.dialog, Some(Dialog::Conflict { current: 4 })));
         assert!(e.in_flight.is_none());
+    }
+
+    fn import_harness(revision: Option<i32>, extra_tandem: bool) -> Harness<'static, State> {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/circuits/demo-import-manifold.json"
+        );
+        let circuit = Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut shared = shared();
+        if extra_tandem {
+            let mut other = shared
+                .catalogue
+                .valve_type(&CatalogueRef::new("vt-demo-4-3-tandem", 1))
+                .unwrap()
+                .clone();
+            other.key = "vt-demo-4-3-tandem-b".into();
+            other.code = "4-3-T-B".into();
+            shared.catalogue.valve_types.push(other);
+        }
+        shared.db = Some(crate::db::Db::connect(
+            "postgres://nobody@127.0.0.1:1/none".parse().unwrap(),
+            egui::Context::default(),
+        ));
+        let saved = revision.map(|revision| Saved {
+            id: "c1".into(),
+            revision,
+            project: None,
+        });
+        let mut h = Harness::builder()
+            .with_size(Vec2::new(1400.0, 900.0))
+            .build_ui_state(
+                |ui, (e, s): &mut State| e.ui(ui, s),
+                (SchematicEditor::new(circuit, saved), shared),
+            );
+        h.run_steps(4);
+        h
+    }
+
+    fn valve_type_of(h: &Harness<State>, id: &str) -> Option<String> {
+        let c = h.state().0.doc.circuit.component(id).unwrap();
+        c.valve()
+            .and_then(|v| v.valve_type.as_ref())
+            .map(ToString::to_string)
+    }
+
+    #[test]
+    fn an_amber_valve_offers_stand_ins_and_swaps_with_a_port_map() {
+        let mut h = import_harness(Some(1), true);
+        h.state_mut().0.selected = Some("5.1".into());
+        h.run_steps(2);
+        assert!(h.query_by_label("PART NOT LISTED").is_some());
+        h.get_by_label("DEMO-06 4-3-T-B").click();
+        h.run_steps(2);
+        assert!(h.query_by_label("Connect 5.1's ports as:").is_some());
+        h.get_by_label("Swap").click();
+        h.run_steps(2);
+        assert_eq!(
+            valve_type_of(&h, "5.1").as_deref(),
+            Some("vt-demo-4-3-tandem-b@1")
+        );
+        let v = h
+            .state()
+            .0
+            .doc
+            .circuit
+            .component("5.1")
+            .unwrap()
+            .valve()
+            .unwrap()
+            .clone();
+        assert!(v.stand_in);
+        assert_eq!(v.requested.unwrap().code, "DEMO-06-4-3-T-24DC");
+        // Same ports, so every connection stayed.
+        assert_eq!(
+            nets(&h)
+                .concat()
+                .iter()
+                .filter(|p| p.starts_with("5.1."))
+                .count(),
+            4
+        );
+        h.get_by_label("Undo").click();
+        h.run_steps(2);
+        assert_eq!(
+            valve_type_of(&h, "5.1").as_deref(),
+            Some("vt-demo-4-3-tandem@1")
+        );
+    }
+
+    #[test]
+    fn a_missing_valve_with_nothing_to_stand_in_says_what_it_needs() {
+        let mut h = import_harness(Some(1), false);
+        h.state_mut().0.selected = Some("5.2".into());
+        h.run_steps(2);
+        assert!(h.query_by_label("MISSING").is_some());
+        assert!(
+            h.query_by_label("no compatible stand-in: needs directional, ISO 4401-05")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn an_unchecked_import_is_marked_until_checked() {
+        let mut h = import_harness(Some(1), false);
+        assert!(
+            h.query_by_label("Imported by the AI assistant, unchecked")
+                .is_some()
+        );
+        assert!(h.query_by_label("Import notes (2)").is_some());
+        // Nothing changed, yet it can be saved as checked.
+        h.get_by_label("Mark checked").click();
+        h.run_steps(2);
+        let sent = h.state().0.in_flight.clone().expect("a save was sent");
+        assert_eq!(sent, h.state().0.doc.circuit);
+        h.state_mut().0.circuit_saved("c1".into(), 2);
+        h.run_steps(2);
+        assert!(
+            h.query_by_label("Imported by the AI assistant, unchecked")
+                .is_none()
+        );
+        // A later revision of an imported circuit isn't marked.
+        let h = import_harness(Some(3), false);
+        assert!(h.query_by_label("Mark checked").is_none());
+    }
+
+    #[test]
+    fn warnings_never_block_saving() {
+        let mut h = import_harness(Some(1), false);
+        let (e, s) = h.state();
+        assert!(
+            !CircuitStatus::compute(&e.doc.circuit, &s.catalogue)
+                .issues
+                .is_empty()
+        );
+        // A real change to a saved circuit full of warnings: Save is offered.
+        h.state_mut().0.selected = Some("6.1".into());
+        h.run_steps(2);
+        h.get_by_label("Rotate").click();
+        h.run_steps(2);
+        assert!(!h.get_by_label("Save").accesskit_node().is_disabled());
+        // Mark checked would also save the edit, so it waits.
+        assert!(
+            h.get_by_label("Mark checked")
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
+
+    #[test]
+    fn a_copy_of_an_import_is_unmarked_and_the_original_untouched_until_saved() {
+        let mut h = import_harness(Some(1), false);
+        let original = h.state().0.doc.circuit.clone();
+        h.get_by_label("Save as copy").click();
+        h.run_steps(2);
+        let sent = h.state().0.in_flight.clone().expect("a save was sent");
+        assert_eq!(sent.import, None);
+        assert!(sent.name.ends_with("(copy)"));
+        assert_eq!(
+            h.state().0.doc.circuit,
+            original,
+            "nothing changes before the reply"
+        );
+        // A failed save leaves the original as it was.
+        h.state_mut().0.save_failed("no".into());
+        h.run_steps(2);
+        assert_eq!(h.state().0.doc.circuit, original);
+
+        h.get_by_label("Save as copy").click();
+        h.run_steps(2);
+        h.state_mut().0.circuit_saved("c2".into(), 1);
+        h.run_steps(2);
+        let e = &h.state().0;
+        assert_eq!(e.doc.circuit.import, None);
+        assert!(e.doc.circuit.name.ends_with("(copy)"));
+        assert!(!e.doc.is_dirty() && e.doc.undo_label().is_none());
+        assert!(
+            h.query_by_label("Imported by the AI assistant, unchecked")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn statuses_are_computed_once_per_change() {
+        let mut h = import_harness(Some(1), false);
+        let before = h.state().0.status_computed;
+        h.run_steps(5);
+        assert_eq!(h.state().0.status_computed, before);
+        h.state_mut().0.selected = Some("6.1".into());
+        h.run_steps(2);
+        assert_eq!(
+            h.state().0.status_computed,
+            before,
+            "selecting isn't a change"
+        );
+        h.get_by_label("Rotate").click();
+        h.run_steps(3);
+        assert_eq!(h.state().0.status_computed, before + 1);
+    }
+
+    #[test]
+    fn generic_parts_are_placed_from_the_add_part_menu() {
+        let mut h = harness();
+        h.get_by_label("Add part").click();
+        h.run();
+        h.get_by_label("Test point").click();
+        h.run();
+        let c = &h.state().0.doc.circuit.components[0];
+        assert_eq!(c.id, "M1");
+        assert!(matches!(
+            &c.kind,
+            ComponentKind::Item(Item {
+                symbol: SymbolDef::TestPoint,
+                ..
+            })
+        ));
     }
 }

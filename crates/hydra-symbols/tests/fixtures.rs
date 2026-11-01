@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use hydra_core::{Catalogue, Circuit, Severity};
+use hydra_core::{Catalogue, Circuit, SCHEMA_VERSION, Severity};
 use hydra_symbols::{Align, Primitive, bounds, render_circuit, render_symbol, to_pdf, to_svg};
 
 fn fixtures() -> PathBuf {
@@ -52,8 +52,10 @@ fn golden_circuits_load_validate_round_trip_and_render() {
             circuit,
             "{name} round-trips"
         );
-        let file: serde_json::Value =
+        let mut file: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // Older documents are upgraded on load and saved as the current version.
+        file["schema"] = SCHEMA_VERSION.into();
         let saved: serde_json::Value = serde_json::from_str(&circuit.to_json()).unwrap();
         if let Err(at) = kept(&file, &saved, String::new()) {
             panic!("{name}: {at} is dropped or changed on save");
@@ -170,4 +172,71 @@ fn pdf_keeps_text_as_a_font() {
         text.contains("/FontFile") || text.contains("/Type0"),
         "no embedded font"
     );
+}
+
+#[test]
+fn generic_symbols_anchor_every_port_and_match_their_snapshots() {
+    let defs = [
+        ("test-point", r#"{"kind": "test_point"}"#),
+        ("hydraulic-motor", r#"{"kind": "hydraulic_motor"}"#),
+        (
+            "hydraulic-motor-reversible-variable-drain",
+            r#"{"kind": "hydraulic_motor", "bidirectional": true, "variable": true, "drain": true}"#,
+        ),
+        ("pump", r#"{"kind": "pump"}"#),
+        ("pump-variable", r#"{"kind": "pump", "variable": true}"#),
+        (
+            "box",
+            r#"{"kind": "box", "label": "PB10", "ports": ["1", "2", "3"]}"#,
+        ),
+        ("flow-control-manual", r#"{"kind": "flow_control"}"#),
+    ];
+    for (name, json) in defs {
+        let def: hydra_core::SymbolDef = serde_json::from_str(json).unwrap();
+        let drawing = render_symbol(&def);
+        let mut names: Vec<_> = drawing.ports.iter().map(|(n, _)| n.as_str()).collect();
+        let mut expected = def.ports();
+        names.sort();
+        expected.sort();
+        assert_eq!(names, expected, "{name} anchors every port");
+        insta::assert_snapshot!(format!("generic-{name}"), to_svg(&drawing.primitives));
+    }
+}
+
+#[test]
+fn statuses_and_item_labels_are_written_out() {
+    let json =
+        std::fs::read_to_string(fixtures().join("circuits/demo-import-manifold.json")).unwrap();
+    let circuit = Circuit::from_json(&json).unwrap();
+    let drawing = render_circuit(&circuit, &catalogue());
+    let svg = to_svg(&drawing.primitives);
+    for words in [
+        "MISSING DEMO-10-4-3-E-24DC",
+        "MISSING DEMO-PB10",
+        "PART NOT LISTED DEMO-06-4-3-T-24DC",
+        "STAND-IN for DEMO-CK10-05",
+        "X 0.5 mm",
+        "M SAE-04",
+    ] {
+        assert!(svg.contains(&format!(">{words}<")), "{words}");
+    }
+    // Normal valves carry no status words.
+    assert!(!svg.contains("DEMO-06-4-2-S-24DC<"));
+    let frames = drawing
+        .primitives
+        .iter()
+        .filter(|p| {
+            matches!(
+                p,
+                Primitive::Polyline {
+                    closed: true,
+                    dashed: true,
+                    ..
+                }
+            )
+        })
+        .count();
+    // 1.1 and 5.1 not listed, 4.1, 5.2 and 9.1 missing, 3.1 a stand-in.
+    assert_eq!(frames, 6);
+    assert!(to_pdf(&drawing.primitives).is_ok());
 }

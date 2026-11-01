@@ -27,6 +27,8 @@ pub struct Shared {
     pub notice: Option<String>,
     /// A valve type the user asked to place in the schematic.
     pub place: Option<CatalogueRef>,
+    /// Counts catalogue replacements, so anything derived from it can be cached per value.
+    pub catalogue_loads: u64,
 }
 
 impl Shared {
@@ -42,6 +44,7 @@ impl Shared {
             error: None,
             notice: None,
             place: None,
+            catalogue_loads: 0,
         }
     }
 }
@@ -598,6 +601,13 @@ fn kind_name(def: &SymbolDef) -> &'static str {
         SymbolDef::Check { .. } => "check",
         SymbolDef::Relief { .. } => "relief",
         SymbolDef::Orifice { .. } => "orifice",
+        SymbolDef::FlowControl { .. } => "flow control",
+        SymbolDef::PilotCheck { .. } => "pilot-operated check",
+        SymbolDef::Counterbalance => "counterbalance",
+        SymbolDef::TestPoint => "test point",
+        SymbolDef::HydraulicMotor { .. } => "hydraulic motor",
+        SymbolDef::Pump { .. } => "pump",
+        SymbolDef::Box { .. } => "box",
     }
 }
 
@@ -672,7 +682,7 @@ mod tests {
         ));
         assert!(matches!(
             dropped_file_request(Path::new("cat.json"), Ok(json.unwrap()), None),
-            Ok(Request::Import(c)) if c.valve_types.len() == 8
+            Ok(Request::Import(c)) if c.valve_types.len() == 12
         ));
         let circuit = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),

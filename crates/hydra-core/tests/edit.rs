@@ -40,6 +40,8 @@ fn doc(ids: &[&str]) -> Document {
         components: vec![],
         nets: vec![],
         layout: Layout::default(),
+        bom_extra: vec![],
+        import: None,
     });
     for (i, id) in ids.iter().enumerate() {
         d.apply(add(id, i as f32 * 10.0)).unwrap();
@@ -242,9 +244,7 @@ fn valve(id: &str) -> Command {
     Command::Add {
         component: Component {
             id: id.into(),
-            kind: ComponentKind::Valve {
-                valve_type: CatalogueRef::new("vt", 1),
-            },
+            kind: ComponentKind::valve(CatalogueRef::new("vt", 1)),
         },
         placement: Placement::default(),
     }

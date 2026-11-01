@@ -500,7 +500,7 @@ mod tests {
             "valve_type": {
                 "key": "vt-demo-new", "version": 0, "manufacturer": "demo",
                 "series": "DEMO-10", "code": "4-3-C", "symbol": "sym-4-3-closed-centre@1",
-                "mounting": "ISO 4401-05"
+                "mounting": "ISO 4401-05", "params": {"function": "directional"}
             },
             "parts": [{"part_number": "DEMO-10-4-3-C-24DC", "options": {"voltage": "24 V DC"}}],
             "notes": "Ordering code table on page 2."
@@ -559,7 +559,11 @@ mod tests {
         h.state_mut().0.params = "{not json".into();
         h.run();
         assert!(!approve_enabled(&h));
+        // A new valve type must say what it does.
         h.state_mut().0.params = r#"{"max_pressure_bar": 315}"#.into();
+        h.run();
+        assert!(!approve_enabled(&h));
+        h.state_mut().0.params = r#"{"function": "directional", "max_pressure_bar": 315}"#.into();
         h.state_mut().0.series = " DEMO-10X ".into();
         h.run();
 

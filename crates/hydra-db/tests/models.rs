@@ -52,7 +52,9 @@ fn owners() -> (ModelOwner, ModelOwner) {
 #[sqlx::test(migrator = "hydra_db::MIGRATOR")]
 #[ignore = "needs DATABASE_URL (Postgres)"]
 async fn blocks_import_and_load(pool: PgPool) {
-    let f = fixture();
+    let mut f = fixture();
+    // Only blk-demo@1, so the next version is free.
+    f.blocks.truncate(1);
     assert_eq!(import_catalogue(&pool, &f).await.unwrap().blocks_added, 1);
     let loaded = load_catalogue(&pool).await.unwrap().catalogue;
     assert_eq!(loaded.blocks, f.blocks);
@@ -200,13 +202,13 @@ async fn save_carries_models_forward(pool: PgPool) {
     let loaded = load_catalogue(&pool).await.unwrap();
     assert_eq!(loaded.valve_models.get(&v3.reference()), Some(&sha));
 
-    // So does a block's next version.
-    let (block, _) = owners();
+    // So does a block's next version (the fixture has blk-demo@1 and @2).
+    let block = ModelOwner::Block(CatalogueRef::new("blk-demo", 2));
     let block_sha = attach_model(&pool, &block, &block_glb(), None)
         .await
         .unwrap();
-    let mut b2 = more.blocks[0].clone();
-    b2.version = 2;
+    let mut b2 = more.blocks[1].clone();
+    b2.version = 3;
     b2.name = "Demo block, faces corrected".into();
     let blocks = Catalogue {
         blocks: vec![b2.clone()],
@@ -215,6 +217,105 @@ async fn save_carries_models_forward(pool: PgPool) {
     import_catalogue(&pool, &blocks).await.unwrap();
     let loaded = load_catalogue(&pool).await.unwrap();
     assert_eq!(loaded.block_models.get(&b2.reference()), Some(&block_sha));
+}
+
+/// Runs hydra-admin from the repository root, against `pool`'s database when given.
+async fn admin(pool: Option<&PgPool>, args: &[&str]) -> std::process::Output {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_hydra-admin"));
+    cmd.args(args)
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .env_remove("DATABASE_URL");
+    if let Some(pool) = pool {
+        let db: String = sqlx::query_scalar("SELECT current_database()")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let url = std::env::var("DATABASE_URL").unwrap();
+        let (server, _) = url.split('?').next().unwrap().rsplit_once('/').unwrap();
+        cmd.env("DATABASE_URL", format!("{server}/{db}"));
+    }
+    let out = cmd.output().unwrap();
+    assert!(
+        out.status.success(),
+        "hydra-admin {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
+/// The hash hydra-admin printed.
+fn printed(out: &std::process::Output) -> String {
+    String::from_utf8(out.stdout.clone()).unwrap().trim().into()
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn admin_stores_a_glb_as_is_unless_asked_to_move_it(pool: PgPool) {
+    import_catalogue(&pool, &fixture()).await.unwrap();
+    let glb = valve_glb();
+    let args = ["model", "valve", "vt-demo-4-2@1"];
+    let file = "fixtures/models/demo-valve-cetop3.glb";
+    let sha = printed(&admin(Some(&pool), &[&args[..], &[file]].concat()).await);
+    assert_eq!(sha, sha256_hex(&glb));
+    assert_eq!(asset_bytes(&pool, &sha).await.unwrap().unwrap(), glb);
+
+    // Moved: the display model is the aligned copy, the STEP its source.
+    let step_file = "fixtures/models/demo-valve-cetop3.step";
+    let flags = [file, "--source", step_file, "--offset", "0,0,5"];
+    let sha = printed(&admin(Some(&pool), &[&args[..], &flags].concat()).await);
+    let display = asset_bytes(&pool, &sha).await.unwrap().unwrap();
+    assert_ne!(display, glb);
+    let (lo, hi) = hydra_mesh::load_glb(&display).unwrap().bounds();
+    assert!(
+        (lo[2] - 5.0).abs() < 0.5 && (hi[2] - 57.0).abs() < 0.5,
+        "{lo:?}..{hi:?}"
+    );
+    let source: String = sqlx::query_scalar(
+        "SELECT a.sha256 FROM part_assets p JOIN assets a ON a.id = p.asset_id \
+         WHERE p.role = 'source'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        asset_bytes(&pool, &source).await.unwrap().unwrap(),
+        repo_file(step_file)
+    );
+}
+
+/// A preview with --align given needs no database.
+#[test]
+fn admin_previews_without_a_database() {
+    let out = std::env::temp_dir().join(format!("hydra-preview-{}.glb", std::process::id()));
+    let args = [
+        "model",
+        "block",
+        "blk-demo@2",
+        "fixtures/models/demo-block.glb",
+        "--align",
+        "none",
+        "--rotate",
+        "z:180",
+        "--preview",
+        out.to_str().unwrap(),
+    ];
+    let run = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(admin(None, &args));
+    let preview = std::fs::read(&out).unwrap();
+    std::fs::remove_file(&out).unwrap();
+    // The 130 x 110 block turned half a turn about z.
+    let (lo, hi) = hydra_mesh::load_glb(&preview).unwrap().bounds();
+    assert!(
+        (lo[0] + 130.0).abs() < 0.5 && hi[1].abs() < 0.5,
+        "{lo:?}..{hi:?}"
+    );
+    let report = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        report.contains("130.0 x 110.0 x 70.0 mm, z 0.0..70.0"),
+        "{report}"
+    );
 }
 
 /// Attaching to key@N while an import adds key@N+1 must not deadlock.

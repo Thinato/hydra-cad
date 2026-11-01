@@ -24,6 +24,8 @@ egui_kittest = "0.36"
 epaint_default_fonts = "0.36"
 glam = { version = "0.34", features = ["bytemuck"] }
 gltf = "1.4"
+# Renders datasheet pages for hydra-mcp; pure Rust.
+hayro = "0.8"
 hmac = "0.13"
 insta = "1"
 # Keychain: the platform stores on Windows and macOS; elsewhere a mock store, so it builds anywhere.

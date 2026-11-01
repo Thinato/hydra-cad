@@ -6,18 +6,25 @@ mod bom;
 mod catalogue;
 mod circuit;
 mod edit;
+mod import;
 mod proposal;
+mod status;
 mod symbol;
 
 pub use bom::{BomLine, bom_csv};
 pub use catalogue::{
-    Block, Catalogue, CatalogueRef, Manufacturer, MountFace, Part, SymbolDefRecord, ValveType,
-    key_problem,
+    Block, Catalogue, CatalogueRef, Manufacturer, MountFace, Part, Ratings, SymbolDefRecord,
+    ValveFunction, ValveType, key_problem,
 };
 pub use circuit::{
-    Assembly, Circuit, Component, ComponentKind, Issue, Layout, LoadError, Net, PORT_PIN,
-    Placement, PortRef, Rotation, SCHEMA_VERSION, Severity,
+    Assembly, Circuit, Component, ComponentKind, ExtraBomLine, Import, Issue, Item, Layout,
+    LoadError, Net, PORT_PIN, Placement, PortRef, Requested, Rotation, SCHEMA_VERSION, Severity,
+    Valve,
 };
 pub use edit::{Command, Document, next_id};
+pub use import::{
+    MAX_CIRCUIT_NAME, MAX_IMPORT_COMPONENTS, MAX_IMPORT_EXTRA_LINES, MAX_IMPORT_TEXT,
+};
 pub use proposal::{MAX_PROPOSAL_NOTES, MAX_PROPOSAL_PARTS, PartDraft, Proposal};
-pub use symbol::{Actuator, DirectionalValve, Port, Side, SpoolPosition, SymbolDef};
+pub use status::{Available, CircuitStatus, NoStandIn, StandIn, ValveStatus, stand_ins};
+pub use symbol::{Actuator, DirectionalValve, FlowActuator, Port, Side, SpoolPosition, SymbolDef};

@@ -562,7 +562,7 @@ mod tests {
             serde_json::from_value(serde_json::json!({
                 "valve_type": {
                     "key": key, "version": 0, "manufacturer": "demo", "series": "WORKER-TEST",
-                    "code": "1", "symbol": "sym-check@1"
+                    "code": "1", "symbol": "sym-check@1", "params": {"function": "check"}
                 }
             }))
             .unwrap()

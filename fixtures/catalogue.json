@@ -239,7 +239,10 @@
         "kind": "orifice",
         "adjustable": true
       }
-    }
+    },
+    {"key": "sym-pilot-check", "version": 1, "definition": {"kind": "pilot_check", "spring": true}},
+    {"key": "sym-counterbalance", "version": 1, "definition": {"kind": "counterbalance"}},
+    {"key": "sym-flow-control-prop", "version": 1, "definition": {"kind": "flow_control", "actuator": "proportional", "compensated": true, "bypass": true}}
   ],
   "valve_types": [
     {"key": "vt-rpe3-06-z11", "version": 1, "manufacturer": "argo-hytos", "series": "RPE3-06", "code": "Z11", "symbol": "sym-4-3-closed-centre@1", "mounting": "ISO 4401-03"},
@@ -249,12 +252,19 @@
     {"key": "vt-demo-check-free", "version": 1, "manufacturer": "demo", "series": "DEMO-CV", "code": "0", "symbol": "sym-check@1"},
     {"key": "vt-demo-relief", "version": 1, "manufacturer": "demo", "series": "DEMO-RV", "code": "210", "symbol": "sym-relief-adjustable@1"},
     {"key": "vt-demo-orifice", "version": 1, "manufacturer": "demo", "series": "DEMO-OR", "code": "0.8", "symbol": "sym-orifice@1"},
-    {"key": "vt-demo-throttle", "version": 1, "manufacturer": "demo", "series": "DEMO-TH", "code": "1", "symbol": "sym-orifice-adjustable@1"}
+    {"key": "vt-demo-throttle", "version": 1, "manufacturer": "demo", "series": "DEMO-TH", "code": "1", "symbol": "sym-orifice-adjustable@1"},
+    {"key": "vt-demo-cartridge-relief", "version": 1, "manufacturer": "demo", "series": "DEMO-CR10", "code": "R", "symbol": "sym-relief-adjustable@1", "mounting": "DEMO-C10-2", "params": {"function": "relief", "cavity": true, "setting_range_bar": [100, 250], "max_pressure_bar": 350, "max_flow_l_min": 40}},
+    {"key": "vt-demo-pilot-check", "version": 1, "manufacturer": "demo", "series": "DEMO-PC10", "code": "A", "symbol": "sym-pilot-check@1", "mounting": "DEMO-C10-3", "params": {"function": "pilot_operated_check", "cavity": true, "max_pressure_bar": 350, "max_flow_l_min": 40}},
+    {"key": "vt-demo-counterbalance", "version": 1, "manufacturer": "demo", "series": "DEMO-CB10", "code": "B", "symbol": "sym-counterbalance@1", "mounting": "DEMO-C10-3", "params": {"function": "counterbalance", "cavity": true, "max_pressure_bar": 420, "max_flow_l_min": 40}},
+    {"key": "vt-demo-flow-control-prop", "version": 1, "manufacturer": "demo", "series": "DEMO-PFC32", "code": "C3", "symbol": "sym-flow-control-prop@1", "mounting": "DEMO-C10-3", "params": {"function": "flow_control", "cavity": true, "max_pressure_bar": 250, "max_flow_l_min": 60}}
   ],
   "parts": [
     {"part_number": "DEMO-06-4-2-S-24DC", "valve_type": "vt-demo-4-2@1", "options": {"voltage": "24 V DC", "connector": "EN 175301-803"}},
     {"part_number": "DEMO-06-4-2-S-230AC", "valve_type": "vt-demo-4-2@1", "options": {"voltage": "230 V AC", "connector": "EN 175301-803"}},
-    {"part_number": "DEMO-RV-210", "valve_type": "vt-demo-relief@1", "options": {"setting_bar": 210}}
+    {"part_number": "DEMO-RV-210", "valve_type": "vt-demo-relief@1", "options": {"setting_bar": 210}},
+    {"part_number": "DEMO-CR10-210", "valve_type": "vt-demo-cartridge-relief@1", "options": {"setting_bar": 210}},
+    {"part_number": "DEMO-CB10-21", "valve_type": "vt-demo-counterbalance@1", "options": {"setting_range_bar": [175, 210]}},
+    {"part_number": "DEMO-CB10-32", "valve_type": "vt-demo-counterbalance@1", "options": {"setting_range_bar": [265, 320]}}
   ],
   "blocks": [
     {
@@ -265,6 +275,17 @@
         {"name": "F1", "pattern": "ISO 4401-03", "origin": [45, 10, 70], "normal": [0, 0, 1], "x_axis": [1, 0, 0]},
         {"name": "F2", "pattern": "ISO 4401-03", "origin": [45, 62, 70], "normal": [0, 0, 1], "x_axis": [1, 0, 0]},
         {"name": "F3", "pattern": "ISO 4401-05", "origin": [30, 0, 15], "normal": [0, -1, 0], "x_axis": [1, 0, 0]}
+      ]
+    },
+    {
+      "key": "blk-demo",
+      "version": 2,
+      "name": "Demo manifold block with cartridge cavity C1 (fixture data, matches fixtures/models/demo-block.step)",
+      "mount_faces": [
+        {"name": "F1", "pattern": "ISO 4401-03", "origin": [45, 10, 70], "normal": [0, 0, 1], "x_axis": [1, 0, 0]},
+        {"name": "F2", "pattern": "ISO 4401-03", "origin": [45, 62, 70], "normal": [0, 0, 1], "x_axis": [1, 0, 0]},
+        {"name": "F3", "pattern": "ISO 4401-05", "origin": [30, 0, 15], "normal": [0, -1, 0], "x_axis": [1, 0, 0]},
+        {"name": "C1", "pattern": "DEMO-C10-2", "origin": [130, 55, 35], "normal": [1, 0, 0], "x_axis": [0, 1, 0]}
       ]
     }
   ]

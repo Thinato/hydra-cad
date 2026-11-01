@@ -3,6 +3,8 @@
 
 use crate::{Assembly, CatalogueRef, Circuit, Component, ComponentKind, Net, Placement, PortRef};
 
+// Commands are few and short-lived; boxing `Add` would only add noise at every call site.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Add {
@@ -17,7 +19,7 @@ pub enum Command {
     Connect { a: PortRef, b: PortRef },
     /// Take a port off its net.
     Disconnect { port: PortRef },
-    /// Rename an external connection such as a manifold port.
+    /// Rename an external connection such as a manifold port, or relabel an item.
     SetLabel { id: String, label: String },
     /// Rename the circuit.
     Rename { name: String },
@@ -30,6 +32,18 @@ pub enum Command {
         component: String,
         face: Option<String>,
     },
+    /// Use a catalogue valve type (and part) for a valve, keeping what the drawing requested.
+    /// `port_map` lists `(old, new)` for every port that stays connected; the valve's other
+    /// ports come off their nets.
+    Use {
+        id: String,
+        valve_type: CatalogueRef,
+        part: Option<String>,
+        stand_in: bool,
+        port_map: Vec<(String, String)>,
+    },
+    /// Forget that the circuit was imported, e.g. for a copy.
+    ClearImport,
 }
 
 impl Command {
@@ -53,7 +67,36 @@ impl Command {
                 component,
                 face: None,
             } => format!("Unmount {component}"),
+            Command::Use {
+                id,
+                valve_type,
+                stand_in: true,
+                ..
+            } => format!("Use {valve_type} as a stand-in for {id}"),
+            Command::Use { id, valve_type, .. } => format!("Use {valve_type} for {id}"),
+            Command::ClearImport => "Clear the import marks".into(),
         }
+    }
+
+    /// Port mapping for [`Command::Use`]: same names first, then the rest in order when the
+    /// counts left over match.
+    pub fn default_port_map(old: &[&str], new: &[&str]) -> Vec<(String, String)> {
+        let mut map: Vec<(String, String)> = old
+            .iter()
+            .filter(|p| new.contains(p))
+            .map(|p| (p.to_string(), p.to_string()))
+            .collect();
+        let old_rest: Vec<_> = old.iter().filter(|p| !new.contains(p)).collect();
+        let new_rest: Vec<_> = new.iter().filter(|p| !old.contains(p)).collect();
+        if old_rest.len() == new_rest.len() {
+            map.extend(
+                old_rest
+                    .into_iter()
+                    .zip(new_rest)
+                    .map(|(o, n)| (o.to_string(), n.to_string())),
+            );
+        }
+        map
     }
 
     /// Apply to `circuit`, or explain why not. A refused command leaves the circuit unchanged.
@@ -152,7 +195,10 @@ impl Command {
                     .ok_or_else(|| format!("{id} is not in the circuit"))?;
                 match &mut c.kind {
                     ComponentKind::Port { label: l } => *l = label.clone(),
-                    ComponentKind::Valve { .. } => {
+                    ComponentKind::Item(item) => {
+                        item.label = Some(label.clone()).filter(|l| !l.trim().is_empty());
+                    }
+                    ComponentKind::Valve(_) => {
                         return Err(format!("{id} is a valve, not a port"));
                     }
                 }
@@ -180,7 +226,7 @@ impl Command {
             Command::Mount { component, face } => {
                 let is_valve = circuit
                     .component(component)
-                    .map(|c| matches!(c.kind, ComponentKind::Valve { .. }));
+                    .map(|c| matches!(c.kind, ComponentKind::Valve(_)));
                 match is_valve {
                     None => return Err(format!("{component} is not in the circuit")),
                     Some(false) => return Err(format!("{component} is not a valve")),
@@ -204,6 +250,58 @@ impl Command {
                             return Err(format!("{component} is not mounted"));
                         }
                     }
+                }
+            }
+            Command::Use {
+                id,
+                valve_type,
+                part,
+                stand_in,
+                port_map,
+            } => {
+                for (i, (_, new)) in port_map.iter().enumerate() {
+                    if port_map[..i].iter().any(|(_, n)| n == new) {
+                        return Err(format!("two ports would both become {new}"));
+                    }
+                }
+                let Some(ComponentKind::Valve(v)) = circuit
+                    .components
+                    .iter_mut()
+                    .find(|c| &c.id == id)
+                    .map(|c| &mut c.kind)
+                else {
+                    return Err(format!("{id} is not a valve in the circuit"));
+                };
+                let unchanged = v.valve_type.as_ref() == Some(valve_type)
+                    && &v.part == part
+                    && v.stand_in == *stand_in
+                    && port_map.iter().all(|(o, n)| o == n);
+                if unchanged {
+                    return Err(format!("{id} already uses {valve_type}"));
+                }
+                v.valve_type = Some(valve_type.clone());
+                v.part = part.clone();
+                v.stand_in = *stand_in;
+                let touched = nets_of(circuit, id);
+                for net in &mut circuit.nets {
+                    net.ports.retain_mut(|p| {
+                        if &p.component != id {
+                            return true;
+                        }
+                        match port_map.iter().find(|(old, _)| *old == p.port) {
+                            Some((_, new)) => {
+                                p.port = new.clone();
+                                true
+                            }
+                            None => false,
+                        }
+                    });
+                }
+                forget(circuit, &touched);
+            }
+            Command::ClearImport => {
+                if circuit.import.take().is_none() {
+                    return Err("the circuit was not imported".into());
                 }
             }
         }
@@ -254,6 +352,7 @@ pub struct Document {
     undo: Vec<(String, Circuit)>,
     redo: Vec<(String, Circuit)>,
     saved: Circuit,
+    generation: u64,
 }
 
 impl Document {
@@ -263,7 +362,13 @@ impl Document {
             circuit,
             undo: Vec::new(),
             redo: Vec::new(),
+            generation: 0,
         }
+    }
+
+    /// Counts changes to the circuit, so anything derived from it can be cached per value.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn apply(&mut self, command: Command) -> Result<(), String> {
@@ -271,6 +376,7 @@ impl Document {
         command.apply(&mut self.circuit)?;
         self.undo.push((command.describe(), before));
         self.redo.clear();
+        self.generation += 1;
         Ok(())
     }
 
@@ -279,6 +385,7 @@ impl Document {
         let (what, before) = self.undo.pop()?;
         let after = std::mem::replace(&mut self.circuit, before);
         self.redo.push((what.clone(), after));
+        self.generation += 1;
         Some(what)
     }
 
@@ -287,6 +394,7 @@ impl Document {
         let (what, after) = self.redo.pop()?;
         let before = std::mem::replace(&mut self.circuit, after);
         self.undo.push((what.clone(), before));
+        self.generation += 1;
         Some(what)
     }
 

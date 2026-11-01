@@ -43,3 +43,4 @@ is moved, so model your part where Hydra expects it:
     docker run --rm -v "$PWD:/w" -w /w --entrypoint make_fixtures step2gltf fixtures/models
     docker run --rm -v "$PWD:/w" -w /w step2gltf fixtures/models/demo-valve-cetop3.step fixtures/models/demo-valve-cetop3.glb
     docker run --rm -v "$PWD:/w" -w /w step2gltf fixtures/models/demo-block.step fixtures/models/demo-block.glb
+    docker run --rm -v "$PWD:/w" -w /w step2gltf fixtures/models/demo-cartridge.step fixtures/models/demo-cartridge.glb

@@ -88,9 +88,7 @@ fn net(id: &str, ports: &[(&str, &str)]) -> Net {
 fn valve(id: &str, valve_type: &str) -> Component {
     Component {
         id: id.into(),
-        kind: ComponentKind::Valve {
-            valve_type: valve_type.to_string().try_into().unwrap(),
-        },
+        kind: ComponentKind::valve(valve_type.to_string().try_into().unwrap()),
     }
 }
 
@@ -123,6 +121,8 @@ fn circuit() -> Circuit {
             net("n-b", &[("V1", "B"), ("B1", PORT_PIN)]),
         ],
         layout: Layout::default(),
+        bom_extra: vec![],
+        import: None,
     }
 }
 

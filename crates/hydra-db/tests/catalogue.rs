@@ -361,3 +361,69 @@ async fn old_problems_dont_block_new_imports(pool: PgPool) {
     let r = import_catalogue(&pool, &fixture()).await.unwrap();
     assert!(r.symbol_defs_added > 0);
 }
+
+const UNREADABLE: &str = "stored symbol sym-future@1 can't be read by this build; update the app";
+
+/// A symbol row from a newer build (unknown kind) plus a valve type using it.
+async fn insert_future_symbol_and_valve(pool: &PgPool) {
+    import_catalogue(pool, &fixture()).await.unwrap();
+    sqlx::query(
+        "INSERT INTO symbol_defs (key, version, kind, definition) \
+         VALUES ('sym-future', 1, 'future_kind', '{\"kind\":\"future_kind\"}')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO valve_types (key, version, manufacturer_id, series, code, symbol_def_id) \
+         VALUES ('vt-future', 1, (SELECT id FROM manufacturers LIMIT 1), 'F', 'F-1', \
+                 (SELECT id FROM symbol_defs WHERE key = 'sym-future'))",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn unreadable_symbol_is_skipped_not_fatal(pool: PgPool) {
+    insert_future_symbol_and_valve(&pool).await;
+    let loaded = load_catalogue(&pool).await.unwrap();
+    let sym = CatalogueRef::new("sym-future", 1);
+    assert_eq!(loaded.skipped_symbols, vec![sym.clone()]);
+    assert!(loaded.catalogue.symbol_def(&sym).is_none());
+    let vt = loaded
+        .catalogue
+        .valve_type(&CatalogueRef::new("vt-future", 1))
+        .unwrap();
+    assert_eq!(vt.symbol, Some(sym.clone()));
+    assert!(loaded.catalogue.symbol_of(&vt.reference()).is_none());
+    assert_eq!(
+        loaded.catalogue.symbol_defs.len(),
+        fixture().symbol_defs.len()
+    );
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn import_refuses_a_skipped_symbol_ref_and_its_users(pool: PgPool) {
+    insert_future_symbol_and_valve(&pool).await;
+    let mut s = fixture().symbol_defs[0].clone();
+    s.key = "sym-future".into();
+    let f = Catalogue {
+        symbol_defs: vec![s],
+        ..Default::default()
+    };
+    assert_eq!(invalid(import_catalogue(&pool, &f).await), vec![UNREADABLE]);
+
+    // A new valve type that uses the unreadable symbol.
+    let mut v = fixture().valve_types[0].clone();
+    v.key = "vt-new-user".into();
+    v.symbol = Some(CatalogueRef::new("sym-future", 1));
+    let f = Catalogue {
+        valve_types: vec![v],
+        ..Default::default()
+    };
+    // The generic "unknown symbol" problem follows the specific refusal.
+    assert_eq!(invalid(import_catalogue(&pool, &f).await)[0], UNREADABLE);
+}

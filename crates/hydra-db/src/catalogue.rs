@@ -24,6 +24,8 @@ pub struct LoadedCatalogue {
     pub valve_models: HashMap<CatalogueRef, String>,
     /// sha256 hex of each block's display model (glb)
     pub block_models: HashMap<CatalogueRef, String>,
+    /// Symbol rows this build can't read (written by a newer build); left out of `catalogue`.
+    pub skipped_symbols: Vec<CatalogueRef>,
 }
 
 /// The catalogue row a 3D model belongs to.
@@ -78,6 +80,14 @@ fn unique_violation<E: Into<Error>>(msg: impl FnOnce() -> String) -> impl FnOnce
     }
 }
 
+/// The refusal for writing a symbol that is, or a valve type that uses, a stored symbol this
+/// build can't read.
+pub(crate) fn unreadable_symbol(skipped: &[CatalogueRef], r: &CatalogueRef) -> Option<String> {
+    skipped
+        .contains(r)
+        .then(|| format!("stored symbol {r} can't be read by this build; update the app"))
+}
+
 /// SQL NULL for `null`, so it reads back as `Value::Null`.
 fn json_or_null(v: &Value) -> Option<Json<&Value>> {
     (!v.is_null()).then_some(Json(v))
@@ -89,7 +99,7 @@ pub(crate) async fn load(conn: &mut PgConnection) -> Result<LoadedCatalogue, Err
         sqlx::query_as("SELECT key, name FROM manufacturers ORDER BY key COLLATE \"C\"")
             .fetch_all(&mut *conn)
             .await?;
-    let symbol_defs: Vec<(String, i32, Json<SymbolDef>)> = sqlx::query_as(
+    let symbol_defs: Vec<(String, i32, Json<Value>)> = sqlx::query_as(
         "SELECT key, version, definition FROM symbol_defs ORDER BY key COLLATE \"C\", version",
     )
     .fetch_all(&mut *conn)
@@ -155,14 +165,21 @@ pub(crate) async fn load(conn: &mut PgConnection) -> Result<LoadedCatalogue, Err
         .into_iter()
         .map(|(key, name)| Manufacturer { key, name })
         .collect();
-    c.symbol_defs = symbol_defs
-        .into_iter()
-        .map(|(key, version, Json(definition))| SymbolDefRecord {
-            key,
-            version: version as u32,
-            definition,
-        })
-        .collect();
+    for (key, version, Json(definition)) in symbol_defs {
+        let version = version as u32;
+        match serde_json::from_value::<SymbolDef>(definition) {
+            Ok(definition) => c.symbol_defs.push(SymbolDefRecord {
+                key,
+                version,
+                definition,
+            }),
+            Err(e) => {
+                let r = CatalogueRef::new(key, version);
+                tracing::warn!("skipping symbol {r}: {e}");
+                loaded.skipped_symbols.push(r);
+            }
+        }
+    }
     for (key, version, manufacturer, series, code, sym_key, sym_version, mounting, params, sha) in
         valve_types
     {
@@ -331,7 +348,9 @@ pub async fn import_catalogue(pool: &PgPool, incoming: &Catalogue) -> Result<Imp
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
         .await?;
     lock_catalogue(&mut tx).await?;
-    let mut merged = load(&mut tx).await?.catalogue;
+    let loaded = load(&mut tx).await?;
+    let skipped = loaded.skipped_symbols;
+    let mut merged = loaded.catalogue;
     // Rows already stored stay importable alongside, even if a later build checks harder.
     let before = merged.problems();
     let mut report = ImportReport::default();
@@ -351,6 +370,10 @@ pub async fn import_catalogue(pool: &PgPool, incoming: &Catalogue) -> Result<Imp
     }
     for s in &incoming.symbol_defs {
         let r = s.reference();
+        if let Some(e) = unreadable_symbol(&skipped, &r) {
+            errors.push(e);
+            continue;
+        }
         match merged.symbol_defs.iter().find(|e| e.reference() == r) {
             Some(e) if e == s => report.unchanged += 1,
             Some(_) => errors.push(format!(
@@ -368,7 +391,14 @@ pub async fn import_catalogue(pool: &PgPool, incoming: &Catalogue) -> Result<Imp
                 "valve type {r} already exists with different content; import it as version {}",
                 r.version + 1
             )),
-            None => new_v.push(v),
+            None => {
+                errors.extend(
+                    v.symbol
+                        .iter()
+                        .filter_map(|s| unreadable_symbol(&skipped, s)),
+                );
+                new_v.push(v);
+            }
         }
     }
     for p in &incoming.parts {

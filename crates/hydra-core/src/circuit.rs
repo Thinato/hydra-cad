@@ -5,10 +5,11 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Catalogue, CatalogueRef};
+use crate::{Catalogue, CatalogueRef, SymbolDef, ValveFunction};
 
-/// Circuit JSON version this build writes. It also reads version 1, which had no assembly.
-pub const SCHEMA_VERSION: u32 = 2;
+/// Circuit JSON version this build writes. It also reads version 1, which had no assembly, and
+/// version 2, which had only catalogue valves and no import data.
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Circuit {
@@ -21,6 +22,33 @@ pub struct Circuit {
     pub layout: Layout,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assembly: Option<Assembly>,
+    /// Bill-of-materials lines that aren't components, such as plugs, seals and the block.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bom_extra: Vec<ExtraBomLine>,
+    /// Set when the AI assistant created the circuit from a drawing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<Import>,
+}
+
+/// One extra bill-of-materials line, as printed in a drawing's parts table.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtraBomLine {
+    /// Position number in the drawing's parts table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+    pub quantity: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// How an imported circuit came about.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Import {
+    /// What the assistant couldn't read or wasn't sure of.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 /// The manifold block a circuit is built on, and which valve sits on which of its faces.
@@ -43,10 +71,95 @@ pub struct Component {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComponentKind {
-    /// One version of a catalogue valve type.
-    Valve { valve_type: CatalogueRef },
+    Valve(Valve),
     /// An external connection such as a manifold port `P` or `A1`. Its single port is [`PORT_PIN`].
-    Port { label: String },
+    Port {
+        label: String,
+    },
+    /// A part of the circuit that isn't a catalogue valve, e.g. a test point, a fixed orifice or a
+    /// motor.
+    Item(Item),
+}
+
+impl ComponentKind {
+    /// A valve that uses one version of a catalogue valve type.
+    pub fn valve(valve_type: CatalogueRef) -> ComponentKind {
+        ComponentKind::Valve(Valve {
+            valve_type: Some(valve_type),
+            ..Valve::default()
+        })
+    }
+}
+
+/// A valve: what the drawing asked for, and the catalogue valve type used for it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Valve {
+    /// The valve type used, `None` while nothing in the catalogue is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valve_type: Option<CatalogueRef>,
+    /// The part number used, when one was chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<String>,
+    /// What the drawing asked for, kept for good so the valve can be swapped back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested: Option<Requested>,
+    /// `valve_type` is a temporary replacement an engineer chose for the requested valve.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stand_in: bool,
+    /// Look-alike symbol drawn while the catalogue has no symbol for this valve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<SymbolDef>,
+}
+
+impl Valve {
+    /// The symbol drawn: the catalogue's, or else the look-alike.
+    pub fn symbol<'a>(&'a self, catalogue: &'a Catalogue) -> Option<&'a SymbolDef> {
+        self.valve_type
+            .as_ref()
+            .and_then(|v| catalogue.symbol_of(v))
+            .or(self.display.as_ref())
+    }
+}
+
+/// A valve as a drawing's parts table names it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Requested {
+    /// Part number or ordering code exactly as printed.
+    pub code: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Key of the catalogue valve type this is, when known or proposed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<ValveFunction>,
+    /// Subplate pattern or cartridge cavity, e.g. `ISO 4401-03` or `BP3 (C-10-3S)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mounting: Option<String>,
+    /// Pressure the valve is set to, for relief and similar valves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setting_bar: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_pressure_bar: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_flow_l_min: Option<f64>,
+}
+
+/// A generic circuit part drawn with a symbol, not taken from the catalogue.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Item {
+    pub symbol: SymbolDef,
+    /// Text drawn beside the symbol, e.g. `X 0.5 mm`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Part number; items with one appear in the bill of materials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Position number in the drawing's parts table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
 }
 
 /// Name of the one port an external-connection component has.
@@ -165,17 +278,24 @@ impl Circuit {
             if self.components[..i].iter().any(|o| o.id == c.id) {
                 issues.push(Issue::DuplicateComponent(c.id.clone()));
             }
-            if let ComponentKind::Valve { valve_type } = &c.kind {
-                if catalogue.valve_type(valve_type).is_none() {
-                    issues.push(Issue::UnknownValveType {
-                        component: c.id.clone(),
-                        valve_type: valve_type.clone(),
-                    });
-                } else if catalogue.symbol_of(valve_type).is_none() {
-                    issues.push(Issue::MissingSymbol {
-                        component: c.id.clone(),
-                        valve_type: valve_type.clone(),
-                    });
+            if let ComponentKind::Valve(v) = &c.kind {
+                match &v.valve_type {
+                    Some(t) if catalogue.valve_type(t).is_none() => {
+                        issues.push(Issue::UnknownValveType {
+                            component: c.id.clone(),
+                            valve_type: t.clone(),
+                        });
+                    }
+                    Some(t) if v.symbol(catalogue).is_none() => {
+                        issues.push(Issue::MissingSymbol {
+                            component: c.id.clone(),
+                            valve_type: t.clone(),
+                        });
+                    }
+                    None if v.display.is_none() => {
+                        issues.push(Issue::NoDisplaySymbol(c.id.clone()));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -250,11 +370,11 @@ impl Circuit {
                     });
                     continue;
                 }
-                Some(ComponentKind::Port { .. }) => {
+                Some(ComponentKind::Port { .. } | ComponentKind::Item(_)) => {
                     issues.push(Issue::MountedPort(component.clone()));
                     continue;
                 }
-                Some(ComponentKind::Valve { valve_type }) => valve_type,
+                Some(ComponentKind::Valve(v)) => v.valve_type.as_ref(),
             };
             if let Some(other) = holders.insert(face, component) {
                 issues.push(Issue::FaceTaken {
@@ -270,7 +390,8 @@ impl Circuit {
                 });
                 continue;
             };
-            if let Some(v) = catalogue.valve_type(valve_type)
+            // A valve missing from the catalogue has no mounting to check yet.
+            if let Some(v) = valve_type.and_then(|t| catalogue.valve_type(t))
                 && v.mounting.as_deref() != Some(mount_face.pattern.as_str())
             {
                 issues.push(Issue::PatternMismatch {
@@ -282,7 +403,10 @@ impl Circuit {
             }
         }
         for c in &self.components {
-            if let ComponentKind::Valve { valve_type } = &c.kind
+            if let ComponentKind::Valve(Valve {
+                valve_type: Some(valve_type),
+                ..
+            }) = &c.kind
                 && catalogue
                     .valve_type(valve_type)
                     .is_some_and(|v| v.mounting.is_some())
@@ -295,11 +419,19 @@ impl Circuit {
 }
 
 impl Component {
-    /// Port names of this component, or `None` if its catalogue rows are missing.
-    pub fn ports<'a>(&self, catalogue: &'a Catalogue) -> Option<Vec<&'a str>> {
+    /// Port names of this component, or `None` if a valve has no symbol to draw.
+    pub fn ports<'a>(&'a self, catalogue: &'a Catalogue) -> Option<Vec<&'a str>> {
         match &self.kind {
-            ComponentKind::Valve { valve_type } => Some(catalogue.symbol_of(valve_type)?.ports()),
+            ComponentKind::Valve(v) => Some(v.symbol(catalogue)?.ports()),
             ComponentKind::Port { .. } => Some(vec![PORT_PIN]),
+            ComponentKind::Item(item) => Some(item.symbol.ports()),
+        }
+    }
+
+    pub fn valve(&self) -> Option<&Valve> {
+        match &self.kind {
+            ComponentKind::Valve(v) => Some(v),
+            _ => None,
         }
     }
 }
@@ -327,6 +459,8 @@ pub enum Issue {
         component: String,
         valve_type: CatalogueRef,
     },
+    #[error("valve {0} is not in the catalogue and has no look-alike symbol to draw")]
+    NoDisplaySymbol(String),
     #[error("net {net} refers to component {component}, which is not in the circuit")]
     UnknownComponent { net: String, component: String },
     #[error("net {net} refers to port {port}, which that component does not have")]
@@ -339,7 +473,7 @@ pub enum Issue {
     UnknownBlock(CatalogueRef),
     #[error("face {face} holds component {component}, which is not in the circuit")]
     MountedUnknownComponent { component: String, face: String },
-    #[error("{0} is an external connection; only valves mount on the block")]
+    #[error("{0} is not a valve; only valves mount on the block")]
     MountedPort(String),
     #[error("{component} is mounted on face {face}, which the block does not have")]
     UnknownFace { component: String, face: String },
@@ -350,7 +484,7 @@ pub enum Issue {
     },
     #[error("{component} {}, but face {face} takes {face_pattern}", match mounting {
         Some(m) => format!("needs a {m} face"),
-        None => "is not a subplate valve".into(),
+        None => "has no mounting or cavity".into(),
     })]
     PatternMismatch {
         component: String,
@@ -360,6 +494,18 @@ pub enum Issue {
     },
     #[error("{0} is not mounted on the block")]
     Unmounted(String),
+    #[error("{component} ({code}) is missing from the catalogue")]
+    ValveMissing { component: String, code: String },
+    #[error("{component}: part {code} is not listed for its valve type")]
+    PartNotListed { component: String, code: String },
+    #[error("{component} is a stand-in for {code}")]
+    StandIn { component: String, code: String },
+    #[error("{component}: the requested valve {code} is now available as {valve_type}")]
+    RequestedNowAvailable {
+        component: String,
+        code: String,
+        valve_type: CatalogueRef,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -371,7 +517,12 @@ pub enum Severity {
 impl Issue {
     pub fn severity(&self) -> Severity {
         match self {
-            Issue::Unconnected(_) | Issue::Unmounted(_) => Severity::Warning,
+            Issue::Unconnected(_)
+            | Issue::Unmounted(_)
+            | Issue::ValveMissing { .. }
+            | Issue::PartNotListed { .. }
+            | Issue::StandIn { .. }
+            | Issue::RequestedNowAvailable { .. } => Severity::Warning,
             _ => Severity::Error,
         }
     }

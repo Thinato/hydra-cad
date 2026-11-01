@@ -3,7 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Catalogue, CatalogueRef, Part, SymbolDefRecord, ValveType, key_problem};
+use crate::{
+    Catalogue, CatalogueRef, Part, Ratings, SymbolDefRecord, ValveFunction, ValveType, key_problem,
+};
 
 /// Most parts one proposal may list; more is not a datasheet, and checks are quadratic.
 pub const MAX_PROPOSAL_PARTS: usize = 500;
@@ -144,6 +146,12 @@ impl Proposal {
                 "mounting is empty; leave it out if the valve has no subplate pattern".into(),
             );
         }
+        params_problems(v, &mut problems);
+        for p in &self.parts {
+            let what = format!("part {}", p.part_number);
+            number_problems(&what, &p.options, &mut problems);
+            setting_range_problems(&what, &p.options, &mut problems);
+        }
         if !catalogue
             .manufacturers
             .iter()
@@ -194,6 +202,13 @@ impl Proposal {
             for p in new.definition.problems() {
                 problems.push(format!("new_symbol {}: {p}", new.reference()));
             }
+            if !new.definition.is_valve() {
+                problems.push(format!(
+                    "new_symbol {} is not a valve symbol; test points, motors, pumps and boxes \
+                     belong in circuits, not the catalogue",
+                    new.reference()
+                ));
+            }
         }
         for (i, p) in self.parts.iter().enumerate() {
             if self.parts[..i]
@@ -236,5 +251,67 @@ impl Proposal {
                 .filter(|p| !before.contains(p)),
         );
         problems
+    }
+}
+
+/// Function, ratings and cavity in `params`: what stand-in suggestions rely on.
+fn params_problems(v: &ValveType, problems: &mut Vec<String>) {
+    let functions = || {
+        ValveFunction::ALL
+            .iter()
+            .map(|f| f.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match v.params.get("function") {
+        None if v.version == 0 => problems.push(format!(
+            "params.function is missing; say what the valve does, one of: {}",
+            functions()
+        )),
+        Some(f) if f.as_str().and_then(ValveFunction::from_name).is_none() => {
+            problems.push(format!(
+                "params.function {f} is not one of: {}",
+                functions()
+            ));
+        }
+        _ => {}
+    }
+    number_problems("params", &v.params, problems);
+    match v.params.get("cavity") {
+        None => {}
+        Some(serde_json::Value::Bool(true)) if v.mounting.is_none() => problems.push(
+            "params.cavity is true but mounting is missing; give the cavity, e.g. \"BP3 (C-10-3S)\""
+                .into(),
+        ),
+        Some(serde_json::Value::Bool(_)) => {}
+        Some(x) => problems.push(format!("params.cavity must be true or false, not {x}")),
+    }
+    setting_range_problems("params", &v.params, problems);
+}
+
+fn number_problems(what: &str, v: &serde_json::Value, problems: &mut Vec<String>) {
+    for key in ["max_pressure_bar", "max_flow_l_min"] {
+        if let Some(x) = v.get(key)
+            && !x.as_f64().is_some_and(|x| x > 0.0 && x.is_finite())
+        {
+            problems.push(format!(
+                "{what}: {key} must be a positive number without units, not {x}"
+            ));
+        }
+    }
+}
+
+fn setting_range_problems(what: &str, v: &serde_json::Value, problems: &mut Vec<String>) {
+    let Some(range) = v.get("setting_range_bar") else {
+        return;
+    };
+    let ok = matches!(
+        Ratings::from_json(v).setting_range_bar,
+        Some([lo, hi]) if lo > 0.0 && lo <= hi && hi.is_finite()
+    );
+    if !ok {
+        problems.push(format!(
+            "{what}: setting_range_bar must be [min, max] in bar with 0 < min <= max, not {range}"
+        ));
     }
 }

@@ -27,15 +27,21 @@ Symbol definitions and valve types are never edited in place. Every change adds 
 
 A block's mount faces are in the catalogue JSON: each has a name, a mounting pattern such as `ISO 4401-03`, and a frame in block coordinates (millimetres, Z up): `origin` at the pattern's datum, `normal` out of the block, and `x_axis` along the pattern. A valve model is drawn with its pattern datum at the origin, its mounting face at z = 0 and its body in +z, so a valve on a face is the face frame applied to the valve model. A valve fits a face when its valve type's `mounting` equals the face's pattern.
 
+Screw-in cartridge cavities are faces too: the pattern is the cavity standard (e.g. `BP3 (C-10-3S)`), `origin` is on the seating plane and `normal` points out of the cavity. A cartridge model has its axis on +Z and its seating face at z = 0, so its thread goes into the block. Cartridge valve types have `"cavity": true` in their params and the cavity in `mounting`.
+
 Models are stored in Postgres and attached with `hydra-admin`:
 
 ```sh
 hydra-admin model block blk-demo@1 demo-block.step          # converts with step2gltf, keeps the STEP as source
 hydra-admin model valve vt-rpe3-06-z11@1 valve.glb --source valve.step
+hydra-admin model valve vt-sr1a-a2@1 StepFile_sr1a_a2.zip --preview sr1a.glb   # look before attaching
+hydra-admin model valve vt-sr1a-a2@1 StepFile_sr1a_a2.zip --rotate x:180 --offset 0,0,-2
 hydra-admin models                                           # 3D smoke test of every stored model
 ```
 
-STEP files go through the converter named by `HYDRA_STEP2GLTF` (default `step2gltf` on the PATH); `--linear <mm>` sets the meshing tolerance. Every model is checked when attached and refused if it doesn't load or is empty or flat.
+STEP files go through the converter named by `HYDRA_STEP2GLTF` (default `step2gltf` on the PATH); `--linear <mm>` sets the meshing tolerance. A manufacturer's zip with one STEP file in it works too. Every model is checked when attached and refused if it doesn't load or is empty or flat.
+
+Manufacturers put a model's origin and axes anywhere. For a cartridge (STEP or zip, valve type with `"cavity": true`), `hydra-admin` guesses the alignment by default: the main axis on +Z, the wider end up, the seating shoulder at z = 0. Correct it with `--rotate x|y|z:<degrees>` (repeatable) and `--offset x,y,z` (mm), or turn it off with `--align none`; `--align auto` forces the guess for anything else. Everything else, and every `.glb`, is stored as given. `--preview out.glb` writes the aligned model and prints its size without attaching it, and the Models tab's "Preview a model file…" shows it on its own. The applied alignment is recorded in the model, and the original STEP is kept as its source.
 
 ## Datasheet import with an AI assistant
 
@@ -57,7 +63,24 @@ Claude Desktop: add to `claude_desktop_config.json` (macOS `~/Library/Applicatio
   "env": {"HYDRA_DATABASE_URL": "postgres://user:password@server:5433/hydra"}}}}
 ```
 
-Any other MCP client works the same way. Its tools are `list_valve_types`, `get_valve_type`, `read_datasheet`, `symbol_format`, `submit_proposal` and `proposal_status`.
+Any other MCP client works the same way. Its tools are `list_valve_types`, `get_valve_type`, `read_datasheet`, `symbol_format`, `submit_proposal`, `proposal_status` and `import_circuit`.
+
+`read_datasheet` gives the assistant the datasheet's pages as images (two per call by default, up to four), with their text, so tables, symbols and ordering codes are read as printed whatever the layout. Pages are rendered in a separate `hydra-mcp` process with a time limit, so a broken PDF can't hang the server. Valve types record what they do (`function`), their ratings (`max_pressure_bar`, `max_flow_l_min`, `setting_range_bar`) and, for cartridges, their cavity; the reviewer can correct these in the Proposals tab.
+
+**Update the app and `hydra-mcp` together.** This release adds symbol kinds (pilot-operated check, counterbalance, flow control, test point, hydraulic motor, pump, box) that older builds can't read, so migration 0007 makes older builds refuse to connect with "update the app".
+
+## Circuit import with an AI assistant
+
+1. Give the assistant photos or PDFs of a circuit drawing. A photo of a whole A3 sheet is too small to read once scaled down, so crop the parts table and the schematic into separate images.
+2. Ask it to import the circuit. It reads the drawing, matches every part against the catalogue and calls `import_circuit`, which checks the circuit and saves it as a new circuit named after the drawing number, marked "imported by the AI assistant, unchecked". The tool replies with every warning, such as unconnected ports, for the assistant to double-check.
+3. Open it in the Schematic tab, check it against the drawing and press **Mark checked** (any save does the same).
+
+Every valve keeps what the drawing asked for (the code as printed) next to what the circuit uses:
+- **red**: the valve isn't in the catalogue; it is drawn with a look-alike symbol;
+- **amber**: the valve type is in the catalogue but not the exact part;
+- **violet**: a temporary stand-in an engineer chose.
+
+Select one to see catalogue valves that could stand in: the same function, the same mounting or cavity, and ratings that cover what the drawing asks for (a relief valve's setting must lie in the candidate's setting range). Pick one, confirm how its ports connect, and it is swapped in (undo works). When the requested valve is added to the catalogue later, the circuit says it is now available. Missing valves are warnings, never errors: the circuit saves and exports, and the PDF and the bill of materials say MISSING or STAND-IN in words. Test points, fixed orifices, motors and pumps are drawn as generic parts, and parts-table rows such as the block, plugs and coils go into the bill of materials as extra lines.
 
 ## Installing and configuring
 
@@ -126,7 +149,7 @@ In the Schematic tab:
 - Undo and redo with Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z (or the buttons). Validation problems are listed above the sheet.
 - Drag the empty sheet to pan, scroll to zoom, double-click to fit.
 - Save writes a new revision; nothing is overwritten. If someone else saved first, you're offered a reload or a save as copy. History lists every revision with a preview, and Restore makes an old revision the newest one, so a restore can itself be undone.
-- Export writes the circuit as it is on screen, unsaved changes included, as SVG, PDF, or a bill of materials in CSV (one line per valve type version plus the block, with designators and the part number when the valve type has exactly one).
+- Export writes the circuit as it is on screen, unsaved changes included, as SVG, PDF, or a bill of materials in CSV (one line per valve type version, part and status, then coded parts, the block and the extra lines, with designators, the part number used or the valve type's only one, and what the drawing requested).
 
 In the 3D tab, choose the circuit's block and which valve sits on each face; only valves whose mounting pattern fits a face are offered. The view shows the block with its valves mounted, the valve selected in the schematic highlighted. Without a block it shows the selected valve alone. Drag to orbit, scroll to zoom, double-click to see everything. Models download once and are cached locally by hash; offline there are none.
 

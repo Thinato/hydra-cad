@@ -4,6 +4,7 @@
 //! Symbol definitions, valve types and blocks are versioned: a change adds a row with the same key and
 //! the next version, and documents point at one exact version through a [`CatalogueRef`].
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -186,6 +187,121 @@ impl ValveType {
     pub fn reference(&self) -> CatalogueRef {
         CatalogueRef::new(&self.key, self.version)
     }
+
+    /// Ratings from `params`; values that aren't numbers read as unknown.
+    pub fn ratings(&self) -> Ratings {
+        Ratings::from_json(&self.params)
+    }
+
+    /// A screw-in cartridge: `mounting` names a cavity, not a subplate pattern.
+    pub fn is_cartridge(&self) -> bool {
+        self.params.get("cavity").and_then(|c| c.as_bool()) == Some(true)
+    }
+}
+
+/// What a valve does. Stand-ins must do the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValveFunction {
+    Directional,
+    Check,
+    PilotOperatedCheck,
+    Relief,
+    Counterbalance,
+    FlowControl,
+    PressureReducing,
+    Sequence,
+    /// Anything else; never matches another valve.
+    Other,
+}
+
+impl ValveFunction {
+    pub const ALL: [ValveFunction; 9] = [
+        ValveFunction::Directional,
+        ValveFunction::Check,
+        ValveFunction::PilotOperatedCheck,
+        ValveFunction::Relief,
+        ValveFunction::Counterbalance,
+        ValveFunction::FlowControl,
+        ValveFunction::PressureReducing,
+        ValveFunction::Sequence,
+        ValveFunction::Other,
+    ];
+
+    /// The name used in JSON, e.g. `pilot_operated_check`.
+    pub fn name(self) -> &'static str {
+        match self {
+            ValveFunction::Directional => "directional",
+            ValveFunction::Check => "check",
+            ValveFunction::PilotOperatedCheck => "pilot_operated_check",
+            ValveFunction::Relief => "relief",
+            ValveFunction::Counterbalance => "counterbalance",
+            ValveFunction::FlowControl => "flow_control",
+            ValveFunction::PressureReducing => "pressure_reducing",
+            ValveFunction::Sequence => "sequence",
+            ValveFunction::Other => "other",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<ValveFunction> {
+        Self::ALL.into_iter().find(|f| f.name() == name)
+    }
+
+    /// Valves set to a pressure: they are compared by setting range, not maximum pressure.
+    pub fn is_pressure_setting(self) -> bool {
+        matches!(
+            self,
+            ValveFunction::Relief
+                | ValveFunction::Counterbalance
+                | ValveFunction::PressureReducing
+                | ValveFunction::Sequence
+        )
+    }
+}
+
+impl fmt::Display for ValveFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// Rated limits of a valve type or part, read from `params` or a part's `options`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Ratings {
+    pub max_pressure_bar: Option<f64>,
+    pub max_flow_l_min: Option<f64>,
+    /// Range the valve can be set to, `[min, max]`.
+    pub setting_range_bar: Option<[f64; 2]>,
+}
+
+impl Ratings {
+    /// Keys under which ratings are stored.
+    pub const KEYS: [&'static str; 3] = ["max_pressure_bar", "max_flow_l_min", "setting_range_bar"];
+
+    pub fn from_json(v: &serde_json::Value) -> Ratings {
+        let num = |k: &str| v.get(k).and_then(|x| x.as_f64()).filter(|x| x.is_finite());
+        let range = v.get("setting_range_bar").and_then(|r| {
+            let r = r.as_array()?;
+            match r.as_slice() {
+                [a, b] => Some([a.as_f64()?, b.as_f64()?]),
+                _ => None,
+            }
+        });
+        Ratings {
+            max_pressure_bar: num("max_pressure_bar"),
+            max_flow_l_min: num("max_flow_l_min"),
+            setting_range_bar: range,
+        }
+    }
+
+    /// `self` with each value `over` knows replaced by it.
+    pub fn overridden_by(self, over: Ratings) -> Ratings {
+        Ratings {
+            max_pressure_bar: over.max_pressure_bar.or(self.max_pressure_bar),
+            max_flow_l_min: over.max_flow_l_min.or(self.max_flow_l_min),
+            setting_range_bar: over.setting_range_bar.or(self.setting_range_bar),
+        }
+    }
 }
 
 /// The catalogue rows a circuit is checked and drawn against.
@@ -226,6 +342,41 @@ impl Catalogue {
     /// Symbol of a valve type, if the valve type has one and both rows exist.
     pub fn symbol_of(&self, valve_type: &CatalogueRef) -> Option<&SymbolDef> {
         self.symbol_def(self.valve_type(valve_type)?.symbol.as_ref()?)
+    }
+
+    /// What a valve type does: `params.function`, or else what its symbol shows.
+    pub fn function_of(&self, valve_type: &CatalogueRef) -> Option<ValveFunction> {
+        let v = self.valve_type(valve_type)?;
+        v.params
+            .get("function")
+            .and_then(|f| f.as_str())
+            .and_then(ValveFunction::from_name)
+            .or_else(|| self.symbol_of(valve_type)?.function())
+    }
+
+    /// Ratings of a valve type, with those a part states in its options taking precedence.
+    pub fn ratings_of(&self, valve_type: &CatalogueRef, part: Option<&str>) -> Ratings {
+        let base = self
+            .valve_type(valve_type)
+            .map(ValveType::ratings)
+            .unwrap_or_default();
+        let part = part.and_then(|n| self.parts_of(valve_type).find(|p| p.part_number == n));
+        match part {
+            Some(p) => base.overridden_by(Ratings::from_json(&p.options)),
+            None => base,
+        }
+    }
+
+    /// The highest version of every valve type key.
+    pub fn latest_valve_types(&self) -> BTreeMap<&str, &ValveType> {
+        let mut latest: BTreeMap<&str, &ValveType> = BTreeMap::new();
+        for v in &self.valve_types {
+            let slot = latest.entry(v.key.as_str()).or_insert(v);
+            if v.version > slot.version {
+                *slot = v;
+            }
+        }
+        latest
     }
 
     /// Parts orderable for one valve type version.

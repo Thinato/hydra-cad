@@ -10,8 +10,8 @@ pub use catalogue::{
     import_catalogue, load_catalogue, save_valve_type,
 };
 pub use circuits::{
-    CircuitSummary, OpenedCircuit, RevisionSummary, create_circuit, list_circuits, list_revisions,
-    open_circuit, open_revision, restore_revision, save_revision,
+    CircuitSummary, OpenedCircuit, RevisionSummary, create_circuit, create_circuit_once,
+    list_circuits, list_revisions, open_circuit, open_revision, restore_revision, save_revision,
 };
 pub use proposals::{
     MAX_PROPOSAL_BYTES, ProposalRecord, ProposalStatus, approve_proposal, get_proposal,

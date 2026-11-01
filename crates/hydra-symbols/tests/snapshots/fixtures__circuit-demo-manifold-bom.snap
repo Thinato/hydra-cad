@@ -2,10 +2,10 @@
 source: crates/hydra-symbols/tests/fixtures.rs
 expression: "hydra_core::bom_csv(&circuit.bom(&catalogue))"
 ---
-﻿Item,Quantity,Designators,Manufacturer,Description,Part number,Catalogue
-1,1,K1,"Demo (fixture data, not a real product)",DEMO-CV 1,,vt-demo-check@1
-2,1,O1,"Demo (fixture data, not a real product)",DEMO-OR 0.8,,vt-demo-orifice@1
-3,1,RV1,"Demo (fixture data, not a real product)",DEMO-RV 210,DEMO-RV-210,vt-demo-relief@1
-4,1,V1,Argo-Hytos,RPE3-06 Z11,,vt-rpe3-06-z11@1
-5,1,V2,"Demo (fixture data, not a real product)",DEMO-06 4-2-S,,vt-demo-4-2@1
-6,1,,,"Demo manifold block (fixture data, matches fixtures/models/demo-block.step)",,blk-demo@1
+﻿Item,Position,Quantity,Designators,Manufacturer,Description,Part number,Catalogue,Status,Requested
+1,,1,K1,"Demo (fixture data, not a real product)",DEMO-CV 1,,vt-demo-check@1,,
+2,,1,O1,"Demo (fixture data, not a real product)",DEMO-OR 0.8,,vt-demo-orifice@1,,
+3,,1,RV1,"Demo (fixture data, not a real product)",DEMO-RV 210,DEMO-RV-210,vt-demo-relief@1,,
+4,,1,V1,Argo-Hytos,RPE3-06 Z11,,vt-rpe3-06-z11@1,,
+5,,1,V2,"Demo (fixture data, not a real product)",DEMO-06 4-2-S,,vt-demo-4-2@1,,
+6,,1,,,"Demo manifold block (fixture data, matches fixtures/models/demo-block.step)",,blk-demo@1,,

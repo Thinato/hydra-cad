@@ -7,16 +7,25 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+base64 = "0.22"
+hayro.workspace = true
 hydra-core.workspace = true
 hydra-db.workspace = true
 pdf-extract.workspace = true
+png = "0.18"
 rmcp.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_path_to_error.workspace = true
-tokio = { workspace = true, features = ["io-std", "time"] }
+tokio = { workspace = true, features = ["io-std", "io-util", "process", "time"] }
+tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
+# Builds a test PDF; the version pdf-extract already uses.
+lopdf = { version = "0.42", default-features = false }
 sqlx.workspace = true

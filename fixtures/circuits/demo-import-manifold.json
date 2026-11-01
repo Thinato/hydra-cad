@@ -1,0 +1,65 @@
+{
+  "schema": 3,
+  "name": "DEMO-450 front manifold (made-up fixture shaped like an imported drawing)",
+  "components": [
+    {"id": "P", "kind": "port", "label": "P"},
+    {"id": "T", "kind": "port", "label": "T"},
+    {"id": "A1", "kind": "port", "label": "A1"},
+    {"id": "B1", "kind": "port", "label": "B1"},
+    {"id": "A2", "kind": "port", "label": "A2"},
+    {"id": "B2", "kind": "port", "label": "B2"},
+    {"id": "1.1", "kind": "valve", "valve_type": "vt-demo-pilot-check@1", "requested": {"code": "DEMO-PC10-A-350", "description": "Pilot-operated check cartridge", "function": "pilot_operated_check", "mounting": "DEMO-C10-3"}},
+    {"id": "2.1", "kind": "valve", "valve_type": "vt-demo-counterbalance@1", "part": "DEMO-CB10-21", "requested": {"code": "DEMO-CB10-21", "description": "Counterbalance cartridge", "function": "counterbalance", "mounting": "DEMO-C10-3", "setting_bar": 180}},
+    {"id": "3.1", "kind": "valve", "valve_type": "vt-demo-check@1", "stand_in": true, "requested": {"code": "DEMO-CK10-05", "description": "Check cartridge 0.5 bar", "function": "check", "mounting": "DEMO-C10-2"}},
+    {"id": "4.1", "kind": "valve", "requested": {"code": "DEMO-PS10-2N-24DC", "description": "2/2 poppet solenoid cartridge, normally closed", "function": "directional", "mounting": "DEMO-C10-2"}, "display": {"kind": "directional_valve", "ports": [{"name": "A", "side": "top"}, {"name": "P", "side": "bottom"}], "positions": [{"flows": [["P", "A"]]}, {"blocked": ["A", "P"]}], "normal_position": 1, "left": ["solenoid"], "right": ["spring"]}},
+    {"id": "5.1", "kind": "valve", "valve_type": "vt-demo-4-3-tandem@1", "requested": {"code": "DEMO-06-4-3-T-24DC", "description": "Directional valve CETOP 3, tandem centre", "function": "directional", "mounting": "ISO 4401-03"}},
+    {"id": "5.2", "kind": "valve", "requested": {"code": "DEMO-10-4-3-E-24DC", "description": "Directional valve CETOP 5, closed centre", "function": "directional", "mounting": "ISO 4401-05", "key": "vt-demo-10-4-3"}, "display": {"kind": "directional_valve", "ports": [{"name": "A", "side": "top"}, {"name": "B", "side": "top"}, {"name": "P", "side": "bottom"}, {"name": "T", "side": "bottom"}], "positions": [{"flows": [["P", "A"], ["B", "T"]]}, {"blocked": ["A", "B", "P", "T"]}, {"flows": [["P", "B"], ["A", "T"]]}], "normal_position": 1, "left": ["solenoid", "spring"], "right": ["solenoid", "spring"]}},
+    {"id": "6.1", "kind": "valve", "valve_type": "vt-demo-4-2@1", "part": "DEMO-06-4-2-S-24DC", "requested": {"code": "DEMO-06-4-2-S-24DC", "description": "Directional valve CETOP 3, 4/2", "function": "directional", "mounting": "ISO 4401-03"}},
+    {"id": "7.1", "kind": "valve", "valve_type": "vt-demo-cartridge-relief@1", "part": "DEMO-CR10-210", "requested": {"code": "DEMO-CR10-210", "description": "Relief cartridge 210 bar", "function": "relief", "mounting": "DEMO-C10-2", "setting_bar": 210}},
+    {"id": "9.1", "kind": "valve", "requested": {"code": "DEMO-PB10", "description": "Pressure compensator, 3 ports", "function": "other", "mounting": "DEMO-C10-3"}, "display": {"kind": "box", "label": "PB10", "ports": ["1", "2", "3"]}},
+    {"id": "X1", "kind": "item", "symbol": {"kind": "orifice"}, "label": "X 0.5 mm"},
+    {"id": "X2", "kind": "item", "symbol": {"kind": "orifice"}, "label": "X 1.0 mm", "code": "DEMO-GIC-10", "description": "Orifice plug 1.0 mm", "position": "10"},
+    {"id": "M1", "kind": "item", "symbol": {"kind": "test_point"}, "label": "M SAE-04", "code": "DEMO-MP-04", "description": "Test point SAE-04", "position": "14"}
+  ],
+  "nets": [
+    {"id": "n-p", "ports": [{"component": "P", "port": "port"}, {"component": "6.1", "port": "P"}, {"component": "5.1", "port": "P"}, {"component": "5.2", "port": "P"}, {"component": "7.1", "port": "P"}, {"component": "M1", "port": "M"}, {"component": "4.1", "port": "P"}, {"component": "9.1", "port": "1"}]},
+    {"id": "n-t", "ports": [{"component": "T", "port": "port"}, {"component": "6.1", "port": "T"}, {"component": "5.1", "port": "T"}, {"component": "5.2", "port": "T"}, {"component": "7.1", "port": "T"}, {"component": "X2", "port": "B"}, {"component": "9.1", "port": "3"}]},
+    {"id": "n-a1", "ports": [{"component": "6.1", "port": "A"}, {"component": "1.1", "port": "A"}]},
+    {"id": "n-a1-out", "ports": [{"component": "1.1", "port": "B"}, {"component": "A1", "port": "port"}]},
+    {"id": "n-b1", "ports": [{"component": "6.1", "port": "B"}, {"component": "B1", "port": "port"}, {"component": "1.1", "port": "X"}]},
+    {"id": "n-a2", "ports": [{"component": "5.1", "port": "A"}, {"component": "2.1", "port": "V"}]},
+    {"id": "n-a2-out", "ports": [{"component": "2.1", "port": "C"}, {"component": "A2", "port": "port"}]},
+    {"id": "n-b2", "ports": [{"component": "5.1", "port": "B"}, {"component": "B2", "port": "port"}, {"component": "X1", "port": "A"}]},
+    {"id": "n-pilot", "ports": [{"component": "X1", "port": "B"}, {"component": "2.1", "port": "X"}]},
+    {"id": "n-52a", "ports": [{"component": "5.2", "port": "A"}, {"component": "3.1", "port": "A"}]},
+    {"id": "n-52b", "ports": [{"component": "5.2", "port": "B"}, {"component": "4.1", "port": "A"}]},
+    {"id": "n-31", "ports": [{"component": "3.1", "port": "B"}, {"component": "X2", "port": "A"}, {"component": "9.1", "port": "2"}]}
+  ],
+  "layout": {
+    "components": {
+      "P": {"x": 0, "y": 120},
+      "T": {"x": 20, "y": 120},
+      "A1": {"x": 0, "y": 0},
+      "B1": {"x": 20, "y": 0},
+      "A2": {"x": 60, "y": 0},
+      "B2": {"x": 80, "y": 0},
+      "1.1": {"x": 0, "y": 30},
+      "2.1": {"x": 60, "y": 30},
+      "6.1": {"x": 15, "y": 70},
+      "5.1": {"x": 75, "y": 70},
+      "5.2": {"x": 135, "y": 70},
+      "3.1": {"x": 125, "y": 30},
+      "4.1": {"x": 175, "y": 30},
+      "7.1": {"x": 230, "y": 90},
+      "9.1": {"x": 225, "y": 40},
+      "X1": {"x": 90, "y": 30},
+      "X2": {"x": 195, "y": 95},
+      "M1": {"x": 260, "y": 110}
+    }
+  },
+  "bom_extra": [
+    {"position": "1", "quantity": 1, "code": "DEMO-BLOCK-450", "description": "Manifold block"},
+    {"position": "20", "quantity": 4, "code": "DEMO-PLUG-G1/4", "description": "Plug G1/4"}
+  ],
+  "import": {"notes": ["Made-up fixture: no real drawing behind it.", "Row 12 of the parts table is illegible (demo)."]}
+}

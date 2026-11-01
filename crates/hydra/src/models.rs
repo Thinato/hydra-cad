@@ -44,7 +44,11 @@ pub fn scene(
     let catalogue = &shared.catalogue;
     let (mut placed, mut notes) = (Vec::new(), Vec::new());
     let valve_model = |component: &str, notes: &mut Vec<String>| {
-        let ComponentKind::Valve { valve_type } = &circuit.component(component)?.kind else {
+        let ComponentKind::Valve(v) = &circuit.component(component)?.kind else {
+            return None;
+        };
+        let Some(valve_type) = &v.valve_type else {
+            notes.push(format!("{component} is missing from the catalogue."));
             return None;
         };
         let model = shared.valve_models.get(valve_type).cloned();
@@ -118,6 +122,37 @@ fn is_assembly_issue(issue: &Issue) -> bool {
     )
 }
 
+/// A model file shown on its own instead of the circuit.
+struct Preview {
+    name: String,
+    /// "W x D x H mm, z a..b".
+    size: String,
+    mesh: Arc<Mesh>,
+    /// For the viewer's mesh cache.
+    key: String,
+}
+
+impl Preview {
+    fn load(name: String, bytes: &[u8]) -> Result<Self, String> {
+        let mesh = hydra_mesh::load_glb(bytes)?;
+        let (lo, hi) = mesh.bounds();
+        let size = format!(
+            "{:.1} x {:.1} x {:.1} mm, z {:.1}..{:.1}",
+            hi[0] - lo[0],
+            hi[1] - lo[1],
+            hi[2] - lo[2],
+            lo[2],
+            hi[2]
+        );
+        Ok(Self {
+            name,
+            size,
+            mesh: Arc::new(mesh),
+            key: format!("preview:{}", hydra_db::sha256_hex(bytes)),
+        })
+    }
+}
+
 enum Model {
     Loading,
     Ready(Arc<Mesh>),
@@ -129,6 +164,7 @@ pub struct ModelPanel {
     viewer: Option<Viewer3d>,
     models: HashMap<String, Model>,
     status: Option<String>,
+    preview: Option<Preview>,
 }
 
 impl ModelPanel {
@@ -137,6 +173,7 @@ impl ModelPanel {
             viewer,
             models: HashMap::new(),
             status: None,
+            preview: None,
         }
     }
 
@@ -155,6 +192,30 @@ impl ModelPanel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, shared: &Shared, editor: &mut SchematicEditor) {
+        if let Some(p) = &self.preview {
+            let mut close = false;
+            ui.horizontal(|ui| {
+                close = ui.button("Close preview").clicked();
+                ui.strong(&p.name);
+                ui.label(&p.size);
+            });
+            let scene = [Instance {
+                key: p.key.clone(),
+                mesh: p.mesh.clone(),
+                transform: Mat4::IDENTITY,
+                color: VALVE_COLOUR,
+            }];
+            match &mut self.viewer {
+                Some(viewer) => viewer.ui(ui, &scene),
+                None => {
+                    ui.label("3D needs the wgpu renderer.");
+                }
+            }
+            if close {
+                self.preview = None;
+            }
+            return;
+        }
         let (placed, mut notes) = scene(editor.circuit(), editor.selected(), shared);
         if let Some(db) = &shared.db {
             for p in &placed {
@@ -281,7 +342,10 @@ impl ModelPanel {
                             ui.selectable_value(&mut choice, None, "—");
                             // Only valves whose mounting pattern fits this face.
                             for c in &circuit.components {
-                                let ComponentKind::Valve { valve_type } = &c.kind else {
+                                // Red valves and items have no mounting to fit.
+                                let Some(valve_type) =
+                                    c.valve().and_then(|v| v.valve_type.as_ref())
+                                else {
                                     continue;
                                 };
                                 let fits = catalogue.valve_type(valve_type).is_some_and(|v| {
@@ -332,6 +396,33 @@ impl ModelPanel {
         }
         if let Some(s) = &self.status {
             ui.colored_label(ui.visuals().warn_fg_color, s);
+        }
+        ui.add_space(6.0);
+        if ui
+            .button("Preview a model file…")
+            .on_hover_text("Show a .glb file on its own, with its size, before attaching it")
+            .clicked()
+        {
+            self.pick_preview();
+        }
+    }
+
+    fn pick_preview(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("glTF model", &["glb"])
+            .pick_file()
+        else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .map_or(String::new(), |n| n.to_string_lossy().into());
+        match std::fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| Preview::load(name, &bytes))
+        {
+            Ok(p) => self.preview = Some(p),
+            Err(e) => self.status = Some(format!("Could not preview {}: {e}", path.display())),
         }
     }
 }
@@ -447,11 +538,7 @@ mod tests {
         let mut loose = demo();
         loose.assembly = None;
         let mut h = harness(loose);
-        choose(
-            &mut h,
-            0,
-            "Demo manifold block (fixture data, matches fixtures/models/demo-block.step) (v1)",
-        );
+        choose(&mut h, 0, BLOCK_V2);
         assert_eq!(mounts(&h), []);
         assert!(h.query_by_label("V1 is not mounted on the block").is_some());
 
@@ -486,5 +573,66 @@ mod tests {
         assert_eq!(mounts(&h), []);
         choose(&mut h, 0, "None");
         assert_eq!(h.state().2.circuit().assembly, None);
+    }
+
+    const BLOCK_V2: &str = "Demo manifold block with cartridge cavity C1 (fixture data, matches fixtures/models/demo-block.step) (v2)";
+
+    #[test]
+    fn faces_never_offer_missing_valves_or_items() {
+        let path = format!("{ROOT}/fixtures/circuits/demo-import-manifold.json");
+        let c = Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut h = harness(c);
+        choose(&mut h, 0, BLOCK_V2);
+        // F3 is CETOP 5: 5.2 asks for one but is missing from the catalogue.
+        h.get_all_by_role(egui::accesskit::Role::ComboBox)
+            .nth(3)
+            .unwrap()
+            .click();
+        h.run();
+        assert!(h.query_by_label("5.2").is_none());
+        h.key_press(egui::Key::Escape);
+        h.run();
+        // C1 takes the relief cartridge, not the missing 2/2 cartridge or the orifices.
+        h.get_all_by_role(egui::accesskit::Role::ComboBox)
+            .nth(4)
+            .unwrap()
+            .click();
+        h.run();
+        assert!(h.query_by_label("7.1").is_some());
+        for absent in ["4.1", "X1", "X2", "M1"] {
+            assert!(h.query_by_label(absent).is_none(), "{absent}");
+        }
+        h.get_by_label("7.1").click();
+        h.run();
+        assert_eq!(mounts(&h), [("7.1".into(), "C1".into())]);
+    }
+
+    #[test]
+    fn a_preview_shows_the_file_alone_with_its_size() {
+        let bytes = std::fs::read(format!("{ROOT}/fixtures/models/demo-valve-cetop3.glb")).unwrap();
+        let mut h = harness(demo());
+        h.state_mut().0.preview = Some(Preview::load("valve.glb".into(), &bytes).unwrap());
+        h.run();
+        assert!(
+            h.query_by_label("139.5 x 44.0 x 52.0 mm, z 0.0..52.0")
+                .is_some()
+        );
+        // The circuit's block is out of the way.
+        assert!(h.query_by_label("Block").is_none());
+        h.get_by_label("Close preview").click();
+        h.run();
+        assert!(h.state().0.preview.is_none());
+        assert!(h.query_by_label("Block").is_some());
+        assert!(Preview::load("x".into(), b"not a model").is_err());
+    }
+
+    #[test]
+    fn a_missing_valve_has_no_model() {
+        let path = format!("{ROOT}/fixtures/circuits/demo-import-manifold.json");
+        let c = Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let (placed, notes) = scene(&c, Some("5.2"), &shared());
+        assert_eq!(placed, []);
+        assert_eq!(notes, ["5.2 is missing from the catalogue."]);
+        assert_eq!(scene(&c, Some("X1"), &shared()).0, []);
     }
 }

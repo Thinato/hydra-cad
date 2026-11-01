@@ -1,0 +1,18 @@
+---
+source: crates/hydra-symbols/tests/fixtures.rs
+expression: "hydra_core::bom_csv(&circuit.bom(&catalogue))"
+---
+﻿Item,Position,Quantity,Designators,Manufacturer,Description,Part number,Catalogue,Status,Requested
+1,,1,1.1,"Demo (fixture data, not a real product)",DEMO-PC10 A,,vt-demo-pilot-check@1,PART NOT LISTED,DEMO-PC10-A-350
+2,,1,2.1,"Demo (fixture data, not a real product)",DEMO-CB10 B,DEMO-CB10-21,vt-demo-counterbalance@1,,
+3,,1,3.1,"Demo (fixture data, not a real product)",DEMO-CV 1,,vt-demo-check@1,STAND-IN,DEMO-CK10-05
+4,,1,4.1,,"2/2 poppet solenoid cartridge, normally closed",,,MISSING,DEMO-PS10-2N-24DC
+5,,1,5.1,"Demo (fixture data, not a real product)",DEMO-06 4-3-T,,vt-demo-4-3-tandem@1,PART NOT LISTED,DEMO-06-4-3-T-24DC
+6,,1,5.2,,"Directional valve CETOP 5, closed centre",,,MISSING,DEMO-10-4-3-E-24DC
+7,,1,6.1,"Demo (fixture data, not a real product)",DEMO-06 4-2-S,DEMO-06-4-2-S-24DC,vt-demo-4-2@1,,
+8,,1,7.1,"Demo (fixture data, not a real product)",DEMO-CR10 R,DEMO-CR10-210,vt-demo-cartridge-relief@1,,
+9,,1,9.1,,"Pressure compensator, 3 ports",,,MISSING,DEMO-PB10
+10,14,1,M1,,Test point SAE-04,DEMO-MP-04,,,
+11,10,1,X2,,Orifice plug 1.0 mm,DEMO-GIC-10,,,
+12,1,1,,,Manifold block,DEMO-BLOCK-450,,,
+13,20,4,,,Plug G1/4,DEMO-PLUG-G1/4,,,

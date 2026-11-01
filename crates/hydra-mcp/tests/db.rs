@@ -3,12 +3,14 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
-use hydra_core::{Catalogue, CatalogueRef, Proposal, ValveType};
+use hydra_core::{Catalogue, CatalogueRef, Circuit, Proposal, ValveType};
 use hydra_db::{
-    ProposalStatus, approve_proposal, attach_datasheet, import_catalogue, list_proposals,
-    reject_proposal, save_valve_type,
+    ProposalStatus, approve_proposal, attach_datasheet, import_catalogue, list_circuits,
+    list_proposals, list_revisions, open_circuit, reject_proposal, save_valve_type,
 };
-use hydra_mcp::{DatasheetParams, HydraMcp, IdParams, KeyParams, ProposalParams, SearchParams};
+use hydra_mcp::{
+    CircuitParams, DatasheetParams, HydraMcp, IdParams, KeyParams, ProposalParams, SearchParams,
+};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -38,7 +40,7 @@ async fn setup(pool: &PgPool) -> HydraMcp {
     attach_datasheet(pool, &r, &std::fs::read(PDF).unwrap())
         .await
         .unwrap();
-    HydraMcp::new(pool.clone())
+    HydraMcp::new(pool.clone(), env!("CARGO_BIN_EXE_hydra-mcp").into())
 }
 
 /// What an assistant would submit for the demo draft after reading its datasheet.
@@ -66,7 +68,13 @@ fn datasheet(k: &str, first: Option<u32>, last: Option<u32>) -> Parameters<Datas
         key: k.into(),
         first_page: first,
         last_page: last,
+        max_pages: None,
     })
+}
+
+/// The text of a read_datasheet reply; the page images follow it.
+fn text_of(r: rmcp::model::CallToolResult) -> String {
+    r.content[0].as_text().unwrap().text.clone()
 }
 
 fn submit(proposal: Value) -> Parameters<ProposalParams> {
@@ -88,7 +96,7 @@ async fn the_catalogue_and_the_datasheet_can_be_read(pool: PgPool) {
         draft_line.contains("symbol: none (draft)  datasheet: yes  <- draft with a datasheet"),
         "{draft_line}"
     );
-    assert!(list.contains("vt-demo-4-2@1  demo  DEMO-06 4-2-S  ISO 4401-03  symbol: sym-4-2-spring-return@1  datasheet: no\n"), "{list}");
+    assert!(list.contains("vt-demo-4-2@1  demo  DEMO-06 4-2-S  ISO 4401-03  directional  symbol: sym-4-2-spring-return@1  datasheet: no\n"), "{list}");
     let found = mcp
         .list_valve_types(Parameters(SearchParams {
             search: Some("4401-05".into()),
@@ -119,10 +127,11 @@ async fn the_catalogue_and_the_datasheet_can_be_read(pool: PgPool) {
             .contains("no valve type")
     );
 
-    let text = mcp
-        .read_datasheet(datasheet("vt-demo-10", None, None))
-        .await
-        .unwrap();
+    let text = text_of(
+        mcp.read_datasheet(datasheet("vt-demo-10", None, None))
+            .await
+            .unwrap(),
+    );
     assert!(
         text.starts_with("Datasheet of vt-demo-10@1, 2 pages."),
         "{text}"
@@ -135,10 +144,11 @@ async fn the_catalogue_and_the_datasheet_can_be_read(pool: PgPool) {
         text.contains("315 bar") && text.contains("DEMO-10-4-3-C-230AC"),
         "{text}"
     );
-    let page2 = mcp
-        .read_datasheet(datasheet("vt-demo-10", Some(2), None))
-        .await
-        .unwrap();
+    let page2 = text_of(
+        mcp.read_datasheet(datasheet("vt-demo-10", Some(2), None))
+            .await
+            .unwrap(),
+    );
     assert!(
         !page2.contains("--- page 1 ---") && page2.contains("pages 2-2 of 2"),
         "{page2}"
@@ -174,6 +184,9 @@ async fn proposals_are_checked_then_queued(pool: PgPool) {
         e,
         "The proposal was not accepted. Fix these problems and submit again:\n\
          - valve type vt-demo-10 already exists at version 1; use version 1 to update it\n\
+         - params.function is missing; say what the valve does, one of: directional, check, \
+         pilot_operated_check, relief, counterbalance, flow_control, pressure_reducing, sequence, \
+         other\n\
          - unknown manufacturer \"acme\"; use one of these keys: argo-hytos, demo"
     );
     let mut bad = good_proposal();
@@ -282,7 +295,7 @@ async fn the_status_tells_the_review_outcome(pool: PgPool) {
         .await
         .unwrap();
     assert!(
-        list.contains("vt-demo-10@2  demo  DEMO-10 4-3-C  ISO 4401-05  symbol: sym-4-3-closed-centre@1  datasheet: yes\n"),
+        list.contains("vt-demo-10@2  demo  DEMO-10 4-3-C  ISO 4401-05  directional  symbol: sym-4-3-closed-centre@1  datasheet: yes\n"),
         "{list}"
     );
     assert!(!list.contains("vt-demo-10@1"), "{list}");
@@ -296,7 +309,9 @@ fn response(out: &mut impl BufRead, id: u64) -> Value {
             out.read_line(&mut line).unwrap() > 0,
             "server closed stdout"
         );
+        // stdout carries the protocol and nothing else.
         let msg: Value = serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}"));
+        assert_eq!(msg["jsonrpc"], "2.0", "{line}");
         if msg["id"] == id {
             return msg;
         }
@@ -319,8 +334,15 @@ async fn a_stdio_session_works(pool: PgPool) {
         .env("HYDRA_DATABASE_URL", url)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let logs = std::thread::spawn(move || {
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut stderr, &mut s).unwrap();
+        s
+    });
     let mut stdin = child.stdin.take().unwrap();
     let mut out = BufReader::new(child.stdout.take().unwrap());
     let mut send = |msg: Value| writeln!(stdin, "{msg}").unwrap();
@@ -353,6 +375,7 @@ async fn a_stdio_session_works(pool: PgPool) {
         names,
         [
             "get_valve_type",
+            "import_circuit",
             "list_valve_types",
             "proposal_status",
             "read_datasheet",
@@ -367,11 +390,16 @@ async fn a_stdio_session_works(pool: PgPool) {
     );
     let read = response(&mut out, 3);
     assert_ne!(read["result"]["isError"], true, "{read}");
-    let text = read["result"]["content"][0]["text"].as_str().unwrap();
+    let content = &read["result"]["content"];
+    let text = content[0]["text"].as_str().unwrap();
     assert!(
         text.contains("--- page 2 ---") && text.contains("DEMO-10-4-3-C-24DC"),
         "{text}"
     );
+    for page in [1, 2] {
+        assert_eq!(content[page]["type"], "image", "{content}");
+        assert_eq!(content[page]["mimeType"], "image/png", "{content}");
+    }
 
     send(
         json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
@@ -386,6 +414,117 @@ async fn a_stdio_session_works(pool: PgPool) {
             .contains("missing field `valve_type`")
     );
 
+    send(
+        json!({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+        "name": "import_circuit", "arguments": {"circuit": demo_circuit("demo-import-motors")}}}),
+    );
+    let imported = response(&mut out, 5);
+    assert_ne!(imported["result"]["isError"], true, "{imported}");
+
     drop(stdin);
     assert!(child.wait().unwrap().success());
+    let logs = logs.join().unwrap();
+    assert!(
+        logs.contains("datasheet read") && logs.contains("key=\"vt-demo-10@1\""),
+        "{logs}"
+    );
+    assert!(
+        logs.contains("import_circuit saved") && logs.contains("missing=2"),
+        "{logs}"
+    );
+}
+
+fn demo_circuit(name: &str) -> Value {
+    let path = format!(
+        "{}/../../fixtures/circuits/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn import(circuit: Value) -> Parameters<CircuitParams> {
+    Parameters(CircuitParams { circuit })
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn imported_circuits_are_saved_as_unchecked_drafts(pool: PgPool) {
+    let mcp = setup(&pool).await;
+    let me: String = sqlx::query_scalar("SELECT session_user::text")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    for name in ["demo-import-manifold", "demo-import-motors"] {
+        let json = demo_circuit(name);
+        let reply = mcp.import_circuit(import(json.clone())).await.unwrap();
+        assert!(
+            reply.contains("marked as imported and unchecked"),
+            "{reply}"
+        );
+        let summary = list_circuits(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == json["name"])
+            .unwrap();
+        assert_eq!(summary.owner, me);
+        let opened = open_circuit(&pool, &summary.id).await.unwrap();
+        assert_eq!(opened.revision, 1);
+        let expected = Circuit::from_json(&json.to_string()).unwrap();
+        assert_eq!(opened.document, expected, "{name}");
+        let revisions = list_revisions(&pool, &summary.id).await.unwrap();
+        assert_eq!(revisions[0].created_by, me);
+        assert!(
+            revisions[0]
+                .message
+                .as_deref()
+                .unwrap()
+                .starts_with("Imported by the AI assistant from drawing"),
+            "{revisions:?}"
+        );
+    }
+    let reply = mcp
+        .import_circuit(import(demo_circuit("demo-import-manifold")))
+        .await;
+    assert!(reply.unwrap_err().contains("already exists"));
+    assert_eq!(list_circuits(&pool).await.unwrap().len(), 2);
+
+    // A retry racing the first attempt still makes one circuit.
+    let mut json = demo_circuit("demo-import-motors");
+    json["name"] = "DEMO-RACE".into();
+    let (a, b) = tokio::join!(
+        mcp.import_circuit(import(json.clone())),
+        mcp.import_circuit(import(json))
+    );
+    assert!(a.is_ok() != b.is_ok(), "{a:?} / {b:?}");
+    assert_eq!(list_circuits(&pool).await.unwrap().len(), 3);
+}
+
+#[sqlx::test(migrator = "hydra_db::MIGRATOR")]
+#[ignore = "needs DATABASE_URL (Postgres)"]
+async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
+    let mcp = setup(&pool).await;
+    let mut json = demo_circuit("demo-import-manifold");
+    json["name"] = "DEMO-BROKEN".into();
+    // A missing valve that doesn't say what it is, and a relief drawn as an item.
+    let components = json["components"].as_array_mut().unwrap();
+    for c in components.iter_mut() {
+        if c["id"] == "5.2" {
+            c["requested"].as_object_mut().unwrap().remove("function");
+        }
+        if c["id"] == "X1" {
+            c["symbol"] = json!({"kind": "relief"});
+        }
+    }
+    let err = mcp.import_circuit(import(json)).await.unwrap_err();
+    assert!(err.contains("give requested.function"), "{err}");
+    assert!(err.contains("item X1 is drawn as a valve"), "{err}");
+    assert!(list_circuits(&pool).await.unwrap().is_empty());
+    // A JSON string holding the object works, and a missing schema is filled in.
+    let mut json = demo_circuit("demo-import-motors");
+    json.as_object_mut().unwrap().remove("schema");
+    let reply = mcp.import_circuit(import(json.to_string().into())).await;
+    assert!(reply.is_ok(), "{reply:?}");
+    let err = mcp.import_circuit(import(json!([1]))).await.unwrap_err();
+    assert!(err.contains("must be a JSON object"), "{err}");
 }
