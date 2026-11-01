@@ -993,7 +993,8 @@ const OUTLINE_PAD: f32 = 4.0;
 /// How close block parts must come beside an outside part at the block's edge, on both sides
 /// along it, for the outline to be cut in round the part, measured to the room round the block
 /// parts: with the cut's own room round the part, less than OUTLINE_PAD of block is left beside
-/// the cut.
+/// the cut. The hydra-mcp GUIDE and the import_circuit refusal give it as 12 mm from the block
+/// parts' drawings (SNUG + OUTLINE_PAD): change them with it.
 const SNUG: f32 = 2.0 * OUTLINE_PAD;
 
 /// Tolerance for a point lying on an outline edge, in mm.

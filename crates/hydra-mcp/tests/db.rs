@@ -548,8 +548,9 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
     assert!(
         e.contains(
             "- RV1 is not in in_block, but its layout puts it over the block's outline; place it \
-             wholly outside the area the block's parts span, in a corner holding no block part, \
-             or at the block's edge snug between block parts"
+             more than 4 mm outside the area the block's parts span, in a corner holding no \
+             block part, or at the block's edge snug between block parts, less than 12 mm \
+             from the block parts beside it"
         ),
         "{e}"
     );

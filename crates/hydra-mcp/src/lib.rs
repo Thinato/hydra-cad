@@ -155,7 +155,7 @@ Rules:
 - Every symbol must look exactly as it does on the drawing: the engineer compares the two side by side. Place it with "rotation" (0, 90, 180 or 270 degrees clockwise) and "mirror" (true flips it left to right, before the rotation). Unrotated and unmirrored, symbols stand upright with flow running up: inlets (P, A, In, the motor's A) at the bottom, outlets (T, B, Out) at the top, a relief valve's spring on the right and its pilot line on the left, a check valve's spring on top, a test point's M at the bottom; directional valves show their positions side by side, ports above and below, actuators at the ends as listed in left/right. 90 puts the bottom port on the left, 180 at the top, 270 on the right.
 - For each symbol, find the one of the eight placements (four rotations, each with or without mirror) where both of these match the drawing: (1) which side every port leaves the symbol, and (2) which side the spring, solenoid, lever, adjustment arrow, pilot line and drain are on. Ports alone are not enough. Examples for a relief valve: P bottom, T top, spring right: rotation 0. Spring left instead: mirror. P left, T right, spring below: 90. P left, T right, spring on top: 90 with mirror. P right, T left, spring on top: 270. P right, T left, spring below: 270 with mirror. A check valve whose flow runs downwards is 180. If no placement matches, say which symbol and how it differs in import.notes.
 - layout.wires traces each net's lines as the drawing routes them: per net id, a list of wires, each a list of [x, y] points in the same millimetres. A wire runs horizontally or vertically from point to point; where the line turns, add the corner point. Each wire ends on a port of its net or on another wire of the same net (a T-junction, drawn with a dot), and together a net's wires reach every port of the net in one connected piece: wires that only cross are not joined, so end one on the other. A wire never touches a port or wire of another net, except to cross it, and never runs through a part's symbol. Keep the drawing's corners, junctions and crossings, and the side of each part a line passes. Trace every net: a net left out of wires is drawn with automatic elbows, which rarely match the drawing. Hydra works out where each port is from the symbol and its placement; when a wire end misses a port, the problem says where the net's ports are, so move the end, and the corner before it, there.
-- in_block lists every component inside the manifold block: what the drawing's dash-dot boundary encloses, with the ports on its edge. Parts outside it (motors, cylinders, pumps, valves mounted elsewhere) are left out, and their layout places them wholly outside the area the block's parts span, since Hydra draws the block's outline around everything in in_block. For an L-shaped, U-shaped or stepped block, an outside part may instead stand in a corner holding no block part, or at the block's edge snug between block parts (nearer the edge than its own size, and no more than 12 mm from the block parts beside it on both sides along the edge): Hydra cuts the outline in round it, and lists each such part in the reply's warnings to check. Leave in_block out when the drawing shows no block.
+- in_block lists every component inside the manifold block: what the drawing's dash-dot boundary encloses, with the ports on its edge. Parts outside it (motors, cylinders, pumps, valves mounted elsewhere) are left out, and their layout places them more than 4 mm outside the area the block's parts span, since Hydra draws the block's outline around everything in in_block. For an L-shaped, U-shaped or stepped block, an outside part may instead stand in a corner holding no block part, or at the block's edge snug between block parts (nearer the edge than its own size, and less than 12 mm from the block parts beside it on both sides along the edge): Hydra cuts the outline in round it, and lists each such part in the reply's warnings to check. Leave in_block out when the drawing shows no block.
 - What you can't read goes in import.notes, never guessed.
 
 # Existing symbol definitions
@@ -438,10 +438,10 @@ impl HydraMcp {
         problems.extend(outline_issues(&circuit, &catalogue).iter().map(|i| match i {
             hydra_core::Issue::DrawnInsideBlock(id) => format!(
                 "{id} is not in in_block, but its layout puts it over the block's outline; place it \
-                 wholly outside the area the block's parts span, in a corner holding no block \
-                 part, or at the block's edge snug between block parts, no more than 12 mm from \
-                 those beside it on both sides (change in_block only if the drawing shows it \
-                 inside)"
+                 more than 4 mm outside the area the block's parts span, in a corner holding no \
+                 block part, or at the block's edge snug between block parts, less than 12 mm \
+                 from the block parts beside it on both sides (change in_block only if the \
+                 drawing shows it inside)"
             ),
             i => i.to_string(),
         }));
@@ -490,7 +490,7 @@ impl HydraMcp {
             .filter(|i| i.severity() == Severity::Warning)
             .map(|i| i.to_string())
             .chain(wire_warnings(&circuit, &catalogue))
-            // A notch is right for an L-shaped block, but also hides a part left out by mistake.
+            // A cut is right for an L- or U-shaped block, but also hides a part left out by mistake.
             .chain(notched_parts(&circuit, &catalogue).into_iter().map(|id| {
                 format!(
                     "{id} is outside the block and the outline is cut round it; check the drawing \

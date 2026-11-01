@@ -161,8 +161,9 @@ pub struct SchematicEditor {
     route: Option<Route>,
     /// The selected drawn wire: its net and index.
     wire: Option<(String, usize)>,
-    /// Wire problems and warnings for (edit counter, catalogue loads), like `valve_status`.
-    wire_issues: Option<((u64, u64), Vec<String>)>,
+    /// Wire problems and warnings, and the parts the outline is cut round, for (edit counter,
+    /// catalogue loads), like `valve_status`.
+    drawn_issues: Option<((u64, u64), Vec<String>)>,
 }
 
 impl SchematicEditor {
@@ -194,15 +195,15 @@ impl SchematicEditor {
             wiring: false,
             route: None,
             wire: None,
-            wire_issues: None,
+            drawn_issues: None,
         }
     }
 
     /// What is wrong with the drawn wires, and which parts the block's outline is cut round, in
     /// plain words, computed once per change.
-    fn wire_issues(&mut self, shared: &Shared) -> Vec<String> {
+    fn drawn_issues(&mut self, shared: &Shared) -> Vec<String> {
         let key = (self.doc.generation(), shared.catalogue_loads);
-        if self.wire_issues.as_ref().is_none_or(|(k, _)| *k != key) {
+        if self.drawn_issues.as_ref().is_none_or(|(k, _)| *k != key) {
             let (c, cat) = (&self.doc.circuit, &shared.catalogue);
             // A cut is right for an L- or U-shaped block, but also hides a part left out by mistake.
             let notched = notched_parts(c, cat).into_iter().map(|id| {
@@ -212,9 +213,9 @@ impl SchematicEditor {
                 )
             });
             let issues = [wire_problems(c, cat), wire_warnings(c, cat)].concat();
-            self.wire_issues = Some((key, issues.into_iter().chain(notched).collect()));
+            self.drawn_issues = Some((key, issues.into_iter().chain(notched).collect()));
         }
-        self.wire_issues
+        self.drawn_issues
             .as_ref()
             .map(|(_, w)| w.clone())
             .unwrap_or_default()
@@ -284,7 +285,7 @@ impl SchematicEditor {
             current.import = None;
             self.doc = Document::new(current);
             self.valve_status = None;
-            self.wire_issues = None;
+            self.drawn_issues = None;
             self.name = sent.name.clone();
         }
         self.doc.mark_saved_as(sent);
@@ -619,12 +620,12 @@ impl SchematicEditor {
         // While a circuit is being opened or restored, its reply will replace the document.
         let locked = self.awaiting.is_some();
         let status = self.circuit_status(shared);
-        let wire_issues = self.wire_issues(shared);
+        let drawn_issues = self.drawn_issues(shared);
         ui.add_enabled_ui(!locked, |ui| {
             self.toolbar(ui, shared);
             self.import_banner(ui, shared);
             self.selection_bar(ui, &shared.catalogue, &status);
-            self.validation(ui, &shared.catalogue, &status, &wire_issues);
+            self.validation(ui, &shared.catalogue, &status, &drawn_issues);
             self.extra_lines(ui);
             self.notes(ui);
             ui.weak(if self.wiring {
@@ -2846,10 +2847,10 @@ mod tests {
         assert!(h.state().0.dialog.is_none());
         assert!(h.state().0.in_flight.is_some(), "the copy is being saved");
         // The reply for a copy names a new circuit at revision 1.
-        assert!(h.state().0.wire_issues.is_some());
+        assert!(h.state().0.drawn_issues.is_some());
         h.state_mut().0.circuit_saved("c2".into(), 1);
         // The copy is a new document: nothing cached about the original carries over.
-        assert!(h.state().0.wire_issues.is_none() && h.state().0.valve_status.is_none());
+        assert!(h.state().0.drawn_issues.is_none() && h.state().0.valve_status.is_none());
         assert_eq!(
             h.state()
                 .0
@@ -3301,6 +3302,9 @@ mod tests {
         assert!(warned(&h));
         toggle(&mut h, "X2");
         assert!(!warned(&h));
+        h.state_mut().0.undo();
+        h.run_steps(2);
+        assert!(warned(&h));
     }
 
     #[test]
