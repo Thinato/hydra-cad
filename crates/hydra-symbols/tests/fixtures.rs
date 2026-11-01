@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use hydra_core::{Catalogue, Circuit, SCHEMA_VERSION, Severity};
+use hydra_core::{Catalogue, Circuit, SCHEMA_VERSION, Severity, Wire};
 use hydra_symbols::{
     Align, Primitive, block_outline, bounds, outline_issues, render_circuit, render_parts,
     render_symbol, to_pdf, to_svg, wire_problems, wire_warnings,
@@ -333,6 +333,66 @@ fn nets_are_drawn_between_port_anchors() {
         filled: false,
     };
     assert!(drawing.primitives.contains(&wire));
+}
+
+#[test]
+fn pilot_and_drain_wires_are_dashed_and_plugged_ports_closed_with_a_bar() {
+    let catalogue = catalogue();
+    // One net: a working line X-Y, and a pilot line from Z branching off it.
+    let json = r#"{"schema": 5, "name": "w", "components": [
+        {"id": "X", "kind": "port", "label": "X"}, {"id": "Y", "kind": "port", "label": "Y", "plugged": true},
+        {"id": "Z", "kind": "port", "label": "Z"}],
+        "nets": [{"id": "n", "ports": [{"component": "X", "port": "port"}, {"component": "Y", "port": "port"}, {"component": "Z", "port": "port"}]}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "Y": {"x": 20, "y": 0}, "Z": {"x": 10, "y": 10}},
+                   "wires": {"n": [[[0, 0], [20, 0]], {"kind": "pilot", "points": [[10, 10], [10, 0]]}]}}}"#;
+    let mut circuit = Circuit::from_json(json).unwrap();
+    assert_eq!(wire_problems(&circuit, &catalogue), Vec::<String>::new());
+    let lines = |c: &Circuit| {
+        let drawing = render_circuit(c, &catalogue);
+        let lines: Vec<(Vec<[f32; 2]>, bool, bool)> = (drawing.primitives.into_iter())
+            .filter_map(|p| match p {
+                Primitive::Polyline {
+                    points,
+                    dashed,
+                    filled,
+                    ..
+                } => Some((points, dashed, filled)),
+                _ => None,
+            })
+            .collect();
+        lines
+    };
+    let drawn = lines(&circuit);
+    assert!(drawn.contains(&(vec![[0.0, 0.0], [20.0, 0.0]], false, false)));
+    assert!(drawn.contains(&(vec![[10.0, 10.0], [10.0, 0.0]], true, false)));
+    // Y is closed by a bar across the line ending there, upright here, and has no circle.
+    let bar = |c: &Circuit| {
+        let found: Vec<_> = lines(c)
+            .into_iter()
+            .filter(|(_, _, filled)| *filled)
+            .collect();
+        assert_eq!(found.len(), 1, "{found:?}");
+        let (lo, hi) = bounds_of(&found[0].0);
+        // Relative to Y, to a hundredth of a millimetre.
+        let r = |v: f32| (v * 100.0).round() / 100.0;
+        ([r(lo[0] - 20.0), r(lo[1])], [r(hi[0] - 20.0), r(hi[1])])
+    };
+    assert_eq!(bar(&circuit), ([-0.35, -1.5], [0.35, 1.5]));
+    let parts = render_parts(&circuit, &catalogue);
+    let circles = |id: &str| {
+        let (_, d) = parts.iter().find(|(p, _)| p == id).unwrap();
+        (d.primitives.iter())
+            .filter(|p| matches!(p, Primitive::Circle { .. }))
+            .count()
+    };
+    assert_eq!((circles("X"), circles("Y")), (1, 0));
+    // Untraced, the net is drawn with solid elbows: a dashed line has to be traced.
+    circuit.layout.wires.clear();
+    assert!(lines(&circuit).iter().all(|(_, dashed, _)| !dashed));
+    assert_eq!(bar(&circuit), ([-0.35, -1.5], [0.35, 1.5]));
+    // A plugged port with no line reaching it gets a level bar, as for an upright line.
+    circuit.nets.clear();
+    assert_eq!(bar(&circuit), ([-1.5, -0.35], [1.5, 0.35]));
 }
 
 #[test]
@@ -1181,7 +1241,7 @@ fn drawn_wires_replace_the_automatic_ones() {
     let mut circuit = motors();
     let drawn = polylines(&circuit);
     for w in circuit.layout.wires.values().flatten() {
-        assert!(drawn.contains(w), "{w:?} is drawn");
+        assert!(drawn.contains(&w.points), "{w:?} is drawn");
     }
     // FC1.Out to HM1.A: as drawn, not the automatic elbow from the net's first port.
     let auto = vec![[40.0, 52.0], [40.0, 52.0], [40.0, 23.0]];
@@ -1193,7 +1253,7 @@ fn drawn_wires_replace_the_automatic_ones() {
         1,
         "a net without wires gets its elbow back"
     );
-    assert!(polylines(&circuit).contains(&circuit.layout.wires["n-p"][0]));
+    assert!(polylines(&circuit).contains(&circuit.layout.wires["n-p"][0].points));
 }
 
 #[test]
@@ -1204,8 +1264,8 @@ fn junction_dots_mark_where_three_lines_meet() {
     assert!(!dot_at(&c, [0.0, 106.0]));
     // n-p's trunk split at (40, 106), where FC1.In's branch meets it: three ends, one dot.
     let n_p = c.layout.wires.get_mut("n-p").unwrap();
-    n_p[0] = vec![[0.0, 110.0], [0.0, 106.0], [40.0, 106.0]];
-    n_p.push(vec![[40.0, 106.0], [255.0, 106.0], [255.0, 104.8]]);
+    n_p[0] = vec![[0.0, 110.0], [0.0, 106.0], [40.0, 106.0]].into();
+    n_p.push(vec![[40.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into());
     assert!(dot_at(&c, [40.0, 106.0]));
     let dots = |c: &Circuit| {
         (render_circuit(c, &catalogue()).primitives.iter())
@@ -1224,8 +1284,8 @@ fn junction_dots_mark_where_three_lines_meet() {
     // Two wires meeting end to end, as a corner: no dot.
     let mut c = motors();
     let n_t = c.layout.wires.get_mut("n-t").unwrap();
-    n_t[0] = vec![[20.0, 110.0], [20.0, 50.0]];
-    n_t.push(vec![[20.0, 50.0], [20.0, 2.0], [230.0, 2.0], [230.0, 72.0]]);
+    n_t[0] = vec![[20.0, 110.0], [20.0, 50.0]].into();
+    n_t.push(vec![[20.0, 50.0], [20.0, 2.0], [230.0, 2.0], [230.0, 72.0]].into());
     assert!(!dot_at(&c, [20.0, 50.0]));
     assert_eq!(wire_problems(&c, &catalogue()), Vec::<String>::new());
     // At a port, the port is one of the lines: M1.M, at the end of n-p's trunk.
@@ -1238,11 +1298,12 @@ fn junction_dots_mark_where_three_lines_meet() {
         [255.0, 106.0],
         [255.0, 100.0],
         [265.0, 100.0],
-    ];
+    ]
+    .into();
     assert!(dot_at(&c, m), "a wire passing over M1.M");
     let n_p = c.layout.wires.get_mut("n-p").unwrap();
-    n_p[0] = vec![[0.0, 110.0], [0.0, 106.0], [255.0, 106.0], [255.0, 104.8]];
-    n_p.push(vec![[255.0, 104.8], [255.0, 100.0], [265.0, 100.0]]);
+    n_p[0] = vec![[0.0, 110.0], [0.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into();
+    n_p.push(vec![[255.0, 104.8], [255.0, 100.0], [265.0, 100.0]].into());
     assert!(dot_at(&c, m), "two wire ends meeting at M1.M");
 }
 
@@ -1254,7 +1315,7 @@ fn drawn_wires_must_join_their_ports() {
     // FC1.Out's wire stops short of HM1.A.
     c.layout
         .wires
-        .insert("n-1".into(), vec![vec![[40.0, 52.0], [40.0, 30.0]]]);
+        .insert("n-1".into(), vec![vec![[40.0, 52.0], [40.0, 30.0]].into()]);
     assert_eq!(
         problems(&c),
         [
@@ -1267,7 +1328,7 @@ fn drawn_wires_must_join_their_ports() {
     // Within half a millimetre counts, and a port partway along a wire is reached.
     c.layout.wires.insert(
         "n-1".into(),
-        vec![vec![[40.0, 52.4], [40.0, 10.0], [40.3, 10.0]]],
+        vec![vec![[40.0, 52.4], [40.0, 10.0], [40.3, 10.0]].into()],
     );
     let p = problems(&c);
     assert!(
@@ -1276,8 +1337,10 @@ fn drawn_wires_must_join_their_ports() {
     );
     // Wires that each end on a port but only cross the rest of their net.
     let mut c = motors();
-    c.layout.wires.get_mut("n-t").unwrap()[4] = vec![[48.0, 63.0], [62.0, 63.0], [62.0, -5.0]];
-    c.layout.wires.get_mut("n-t").unwrap()[1] = vec![[40.0, 7.0], [40.0, -5.0], [62.0, -5.0]];
+    c.layout.wires.get_mut("n-t").unwrap()[4] =
+        vec![[48.0, 63.0], [62.0, 63.0], [62.0, -5.0]].into();
+    c.layout.wires.get_mut("n-t").unwrap()[1] =
+        vec![[40.0, 7.0], [40.0, -5.0], [62.0, -5.0]].into();
     let p = problems(&c);
     assert_eq!(
         p,
@@ -1298,7 +1361,7 @@ fn drawn_wires_must_keep_off_other_nets() {
         .wires
         .get_mut("n-t")
         .unwrap()
-        .push(vec![[20.0, 23.0], [62.0, 23.0]]);
+        .push(vec![[20.0, 23.0], [62.0, 23.0]].into());
     assert_eq!(
         problems(&c),
         [
@@ -1310,7 +1373,8 @@ fn drawn_wires_must_keep_off_other_nets() {
     );
     // Through RV1, over RV1.P, on n-p, and along n-p's branch to it.
     let mut c = motors();
-    c.layout.wires.get_mut("n-t").unwrap()[7] = vec![[20.0, 100.0], [185.0, 100.0], [185.0, 2.0]];
+    c.layout.wires.get_mut("n-t").unwrap()[7] =
+        vec![[20.0, 100.0], [185.0, 100.0], [185.0, 2.0]].into();
     // The touch is reported once, not from both wires.
     assert_eq!(
         problems(&c),
@@ -1334,7 +1398,7 @@ fn drawn_wires_must_keep_off_other_nets() {
         .wires
         .get_mut("n-t")
         .unwrap()
-        .push(vec![[20.0, 23.0], [62.0, 23.0]]);
+        .push(vec![[20.0, 23.0], [62.0, 23.0]].into());
     let p = problems(&c);
     assert!(
         p.contains(
@@ -1353,14 +1417,16 @@ fn wires_are_checked_only_when_they_can_be_quickly() {
     // Malformed or too many: import_problems' to report, so nothing here, and no work done.
     c.layout
         .wires
-        .insert("n-1".into(), vec![vec![[40.0, 52.0]]]);
+        .insert("n-1".into(), vec![vec![[40.0, 52.0]].into()]);
     assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
-    c.layout
-        .wires
-        .insert("n-1".into(), vec![vec![[40.0, 52.0], [40.0, f32::NAN]]]);
+    c.layout.wires.insert(
+        "n-1".into(),
+        vec![vec![[40.0, 52.0], [40.0, f32::NAN]].into()],
+    );
     assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
     let loose = vec![vec![[40.0, 30.0], [40.0, 31.0]]; hydra_core::MAX_WIRES_PER_NET + 1];
-    c.layout.wires.insert("n-1".into(), loose.clone());
+    let wires = loose.iter().cloned().map(Wire::from).collect();
+    c.layout.wires.insert("n-1".into(), wires);
     assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
     assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
     // Such wires are still drawn, without the junction dots that would take that work.
@@ -1368,7 +1434,7 @@ fn wires_are_checked_only_when_they_can_be_quickly() {
     assert!(dot_at(&motors(), [90.0, 106.0]) && !dot_at(&c, [90.0, 106.0]));
     // Within the caps they are checked, and a long list is cut short: 30 wires off by
     // themselves make 60 loose ends, 2 unreached ports and 1 net in pieces.
-    let apart = (0..30).map(|k| vec![[300.0 + k as f32, 0.0], [300.0 + k as f32, 1.0]]);
+    let apart = (0..30).map(|k| vec![[300.0 + k as f32, 0.0], [300.0 + k as f32, 1.0]].into());
     c.layout.wires.insert("n-1".into(), apart.collect());
     let p = wire_problems(&c, &catalogue);
     assert_eq!(p.len(), hydra_core::MAX_LISTED + 1);
@@ -1381,7 +1447,7 @@ fn wires_are_checked_only_when_they_can_be_quickly() {
     c.components.retain(|x| x.id != "HM1");
     c.layout
         .wires
-        .insert("n-1".into(), vec![vec![[40.0, 52.0], [40.0, 30.0]]]);
+        .insert("n-1".into(), vec![vec![[40.0, 52.0], [40.0, 30.0]].into()]);
     assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
 }
 
@@ -1393,7 +1459,7 @@ fn a_wire_through_a_part_is_a_warning() {
         .wires
         .get_mut("n-1")
         .unwrap()
-        .push(vec![[30.0, 60.0], [100.0, 60.0]]);
+        .push(vec![[30.0, 60.0], [100.0, 60.0]].into());
     // Through FC2 and through FC1, though the net has a port of FC1: not into that port.
     assert_eq!(
         wire_warnings(&c, &catalogue),

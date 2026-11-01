@@ -21,6 +21,9 @@ pub enum SymbolDef {
     Relief {
         #[serde(default)]
         adjustable: bool,
+        /// Piloted from another line through port `X`, instead of from `P`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pilot_port: bool,
     },
     /// Restriction between `A` and `B`.
     Orifice {
@@ -36,6 +39,9 @@ pub enum SymbolDef {
         compensated: bool,
         #[serde(default)]
         bypass: bool,
+        /// A second pilot, port `X`, on the compensator.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pilot_port: bool,
     },
     /// Check valve from `A` to `B` that pilot pressure on `X` opens backwards.
     PilotCheck {
@@ -136,11 +142,22 @@ impl SymbolDef {
         match self {
             SymbolDef::DirectionalValve(v) => v.ports.iter().map(|p| p.name.as_str()).collect(),
             SymbolDef::Check { .. } | SymbolDef::Orifice { .. } => vec!["A", "B"],
-            SymbolDef::Relief { .. } => vec!["P", "T"],
-            SymbolDef::FlowControl { bypass, .. } => {
+            SymbolDef::Relief { pilot_port, .. } => {
+                let mut ports = vec!["P", "T"];
+                if *pilot_port {
+                    ports.push("X");
+                }
+                ports
+            }
+            SymbolDef::FlowControl {
+                bypass, pilot_port, ..
+            } => {
                 let mut ports = vec!["In", "Out"];
                 if *bypass {
                     ports.push("Bypass");
+                }
+                if *pilot_port {
+                    ports.push("X");
                 }
                 ports
             }
@@ -202,6 +219,15 @@ impl SymbolDef {
                 }
                 problems
             }
+            SymbolDef::FlowControl {
+                compensated: false,
+                pilot_port: true,
+                ..
+            } => vec![
+                "a flow control's pilot port X works its pressure compensator, so it needs \
+                 compensated: true"
+                    .to_string(),
+            ],
             _ => Vec::new(),
         }
     }

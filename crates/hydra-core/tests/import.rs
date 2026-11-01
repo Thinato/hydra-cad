@@ -134,7 +134,10 @@ fn codes_must_be_trimmed_and_present() {
 #[test]
 fn valves_are_not_items_except_a_fixed_orifice() {
     let mut c = manifold();
-    item_mut(&mut c, "X1").symbol = SymbolDef::Relief { adjustable: false };
+    item_mut(&mut c, "X1").symbol = SymbolDef::Relief {
+        adjustable: false,
+        pilot_port: false,
+    };
     has(&c, "item X1 is drawn as a valve");
     let mut c = manifold();
     item_mut(&mut c, "X1").symbol = SymbolDef::Orifice { adjustable: true };
@@ -172,6 +175,15 @@ fn texts_are_bounded_and_names_trimmed() {
     let mut c = manifold();
     item_mut(&mut c, "X1").label = Some(long.clone());
     has(&c, "item X1: label is longer than 200");
+    let mut c = manifold();
+    let ComponentKind::Port { label, .. } = &mut c.components[0].kind else {
+        panic!("the manifold starts with a port");
+    };
+    *label = long.clone();
+    has(
+        &c,
+        &format!("port {}: label is longer than 200", c.components[0].id),
+    );
     let mut c = manifold();
     c.bom_extra[0].description = Some(long);
     has(&c, "extra line 1: description is longer than 200");
@@ -212,6 +224,7 @@ fn a_listed_requested_part_is_chosen() {
 fn drawn_wires_must_be_well_formed() {
     let wired = |net: &str, wires: Vec<Vec<[f32; 2]>>| {
         let mut c = manifold();
+        let wires = wires.into_iter().map(Wire::from).collect();
         c.layout.wires.insert(net.into(), wires);
         c
     };
@@ -259,7 +272,7 @@ fn drawn_wires_must_be_well_formed() {
     let ids: Vec<String> = c.nets.iter().map(|n| n.id.clone()).collect();
     for id in &ids {
         let w: Vec<[f32; 2]> = (0..MAX_WIRE_POINTS).map(|k| [k as f32, 0.0]).collect();
-        c.layout.wires.insert(id.clone(), vec![w; 5]);
+        c.layout.wires.insert(id.clone(), vec![w.into(); 5]);
     }
     assert!(ids.len() * 5 * MAX_WIRE_POINTS > MAX_IMPORT_WIRE_POINTS);
     has(&c, "more than 5000; one point per corner is enough");
