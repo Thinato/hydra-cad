@@ -418,6 +418,20 @@ fn mounting_a_valve_puts_it_in_the_block_in_one_step() {
         Some("Mount V1 on F1 and put it in the block")
     );
     assert_eq!(d.circuit, before);
+    // Redo puts both back.
+    assert_eq!(
+        d.redo().as_deref(),
+        Some("Mount V1 on F1 and put it in the block")
+    );
+    assert!(d.circuit.in_block.contains("V1"));
+    assert_eq!(mounts(&d), [("V1".into(), "F1".into())]);
+    // A valve bumped off its face keeps its tick.
+    d.apply(mount("V2", Some("F1"))).unwrap();
+    assert_eq!(mounts(&d), [("V2".into(), "F1".into())]);
+    assert!(d.circuit.in_block.contains("V1"));
+    d.undo();
+    d.undo();
+    assert_eq!(d.circuit, before);
 
     // A valve already in the block stays in it when the mount is undone.
     d.apply(Command::SetInBlock {
