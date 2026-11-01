@@ -628,8 +628,8 @@ fn a_notch_can_be_cut_at_every_corner() {
 fn notches_never_meet_and_surrounded_parts_stay_flagged() {
     let catalogue = catalogue();
     // Ports L, P, R are the block; N1 and N2 stand outside it on either side of P on the top
-    // edge. N1's notch, with room, ends exactly at P, so N2's notch can't have room there too:
-    // it would meet N1's at P and leave the top edge a spike.
+    // edge. Either notch, with room, would end exactly at P, and meet the other's there, leaving
+    // the top edge a spike: a port on a cut's edge stops it, so neither has room on its P side.
     let json = r#"{"schema": 4, "name": "n", "components": [
         {"id": "L", "kind": "port", "label": "L"}, {"id": "P", "kind": "port", "label": "P"},
         {"id": "R", "kind": "port", "label": "R"},
@@ -653,9 +653,8 @@ fn notches_never_meet_and_surrounded_parts_stay_flagged() {
         block_outline(&circuit, &catalogue).unwrap(),
         [
             [0.0, n1.1[1] + 4.0],
-            [26.5, n1.1[1] + 4.0],
-            [26.5, 0.0],
-            // N2's notch keeps clear of N1's: no room on its P side.
+            [n1.1[0], n1.1[1] + 4.0],
+            [n1.1[0], 0.0],
             [n2.0[0], 0.0],
             [n2.0[0], n2.1[1] + 4.0],
             [100.0, n2.1[1] + 4.0],
@@ -804,18 +803,114 @@ fn an_outside_part_at_an_edge_between_block_parts_gets_a_u_cut() {
 }
 
 #[test]
-fn a_valve_left_out_of_a_row_of_block_valves_stays_flagged() {
+fn u_cuts_go_in_from_the_bottom_and_right_edges() {
     let catalogue = catalogue();
-    // V1 stands at the bottom edge between RV1 and M1, where a motor would get a U cut.
+    // V1, left out of the motors block, stands at its bottom edge snug between RV1 and M1.
     let mut circuit = motors();
     circuit.in_block = ["P", "T", "FC1", "FC2", "FC3", "RV1", "M1"]
         .map(String::from)
         .into();
+    let parts = render_parts(&circuit, &catalogue);
+    let at = |id: &str| bounds(&parts.iter().find(|(p, _)| p == id).unwrap().1.primitives).unwrap();
+    let (v, m1) = (at("V1"), at("M1"));
+    let corners = block_outline(&circuit, &catalogue).unwrap();
+    let (min, max) = bounds_of(&corners);
+    // Room left of V1 and above it, none on its right, where M1 is too close.
+    assert!(m1.0[0] - 4.0 < v.1[0] + 4.0);
+    let (left, top, right) = (v.0[0] - 4.0, v.0[1] - 4.0, v.1[0]);
     assert_eq!(
-        outline_issues(&circuit, &catalogue),
-        [hydra_core::Issue::DrawnInsideBlock("V1".into())]
+        corners,
+        [
+            min,
+            [max[0], min[1]],
+            max,
+            [right, max[1]],
+            [right, top],
+            [left, top],
+            [left, max[1]],
+            [min[0], max[1]],
+        ]
     );
-    assert!(hydra_symbols::notched_parts(&circuit, &catalogue).is_empty());
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+    assert_eq!(hydra_symbols::notched_parts(&circuit, &catalogue), ["V1"]);
+
+    // M stands at the right edge of a square of block parts, between C and D.
+    let (circuit, b) = orifices(
+        &[
+            ("A", 0.0, 0.0),
+            ("B", 0.0, 40.0),
+            ("C", 40.0, 0.0),
+            ("D", 40.0, 40.0),
+            ("M", 40.0, 20.0),
+        ],
+        &["A", "B", "C", "D"],
+    );
+    let [a, bb, c, d, m] = b[..] else { panic!() };
+    let (min, max) = ([a.0[0] - 4.0, a.0[1] - 4.0], [d.1[0] + 4.0, bb.1[1] + 4.0]);
+    // Room beside M, none above or below it, where C and D are too close.
+    assert!(m.0[1] - 4.0 < c.1[1] + 4.0 && d.0[1] - 4.0 < m.1[1] + 4.0);
+    let inner = m.0[0] - 4.0;
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            min,
+            [max[0], min[1]],
+            [max[0], m.0[1]],
+            [inner, m.0[1]],
+            [inner, m.1[1]],
+            [max[0], m.1[1]],
+            max,
+            [min[0], max[1]],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+    assert!(dashes_on_outline(&circuit, &catalogue));
+}
+
+#[test]
+fn notches_at_opposite_corners_never_meet_at_a_point() {
+    let catalogue = catalogue();
+    // Block parts A and B in the other corners, spaced so N1's and N2's notches, each with room,
+    // would meet at one point and pinch the block in two.
+    // N2 at a round spot, and N1 nudged by the last bit until its notch meets N2's exactly.
+    let n2 = orifices(&[("N2", 20.0, 30.0)], &[]).1[0].0;
+    let n1_hi = |d: f32| orifices(&[("N1", d, d)], &[]).1[0].1;
+    let at = |a: usize| {
+        let mut d = n2[a] - 8.0 - n1_hi(0.0)[a] - 1e-5;
+        while n1_hi(d)[a] + 4.0 < n2[a] - 4.0 {
+            d = d.next_up();
+        }
+        d
+    };
+    let (x, y) = (at(0), at(1));
+    let (circuit, b) = orifices(
+        &[
+            ("N1", x, y),
+            ("A", 20.0, y),
+            ("B", x, 30.0),
+            ("N2", 20.0, 30.0),
+        ],
+        &["A", "B"],
+    );
+    let [n1, a, bb, n2] = b[..] else { panic!() };
+    let p = [n1.1[0] + 4.0, n1.1[1] + 4.0];
+    assert_eq!(p, [n2.0[0] - 4.0, n2.0[1] - 4.0], "set up to meet");
+    let (min, max) = ([bb.0[0] - 4.0, a.0[1] - 4.0], [a.1[0] + 4.0, bb.1[1] + 4.0]);
+    // N2's notch keeps clear of N1's: no room above it.
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            [min[0], p[1]],
+            p,
+            [p[0], min[1]],
+            [max[0], min[1]],
+            [max[0], n2.0[1]],
+            [p[0], n2.0[1]],
+            [p[0], max[1]],
+            [min[0], max[1]],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
 }
 
 #[test]

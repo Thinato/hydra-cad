@@ -990,6 +990,12 @@ fn crosses(p: &Primitive, lo: Point, hi: Point) -> bool {
 /// Space between the block's outline and the parts inside it.
 const OUTLINE_PAD: f32 = 4.0;
 
+/// How close block parts must come beside an outside part at the block's edge, on both sides
+/// along it, for the outline to be cut in round the part, measured to the room round the block
+/// parts: with the cut's own room round the part, less than OUTLINE_PAD of block is left beside
+/// the cut.
+const SNUG: f32 = 2.0 * OUTLINE_PAD;
+
 /// Tolerance for a point lying on an outline edge, in mm.
 const ON_EDGE: f32 = 1e-3;
 
@@ -1001,8 +1007,8 @@ type Rect = (Point, Point);
 /// It is the rectangle round every part in the block and through the block's ports, with a
 /// corner cut out round any part outside the block that stands in a corner holding no block
 /// part, so an L-shaped block keeps the part in its notch outside. A corner whose parts don't
-/// fit one notch is stepped, and a part other than a valve standing at an edge between block
-/// parts gets a U cut in from that edge.
+/// fit one notch is stepped, and a part standing at an edge snug between block parts gets a U
+/// cut in from that edge.
 pub fn block_outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<Vec<Point>> {
     Some(parts_and_wires(circuit, catalogue).2?.corners())
 }
@@ -1022,7 +1028,7 @@ pub fn drawn_inside_outline(
         ComponentKind::Port { .. } => Some(([place.x, place.y], [place.x, place.y])),
         _ => render_component(c, place, catalogue).and_then(|d| bounds(&d.primitives)),
     };
-    e.is_some_and(|e| outline.covers(e))
+    e.is_some_and(|e| covers(outline.rect, &outline.cuts, e))
 }
 
 /// The block's bounding rectangle and the rectangles cut out of it, each in from its edge.
@@ -1031,23 +1037,23 @@ struct Outline {
     cuts: Vec<Rect>,
 }
 
-impl Outline {
-    /// Whether a drawing's extent reaches over the outline's interior.
-    fn covers(&self, e: Rect) -> bool {
-        let (lo, hi) = self.rect;
-        let clipped = (
-            [e.0[0].max(lo[0]), e.0[1].max(lo[1])],
-            [e.1[0].min(hi[0]), e.1[1].min(hi[1])],
-        );
-        overlaps(e, self.rect)
-            && !self.cuts.iter().any(|n| {
-                n.0[0] <= clipped.0[0]
-                    && n.0[1] <= clipped.0[1]
-                    && clipped.1[0] <= n.1[0]
-                    && clipped.1[1] <= n.1[1]
-            })
-    }
+/// Whether a drawing's extent reaches over the interior of the outline `rect` less `cuts`.
+fn covers(rect: Rect, cuts: &[Rect], e: Rect) -> bool {
+    let (lo, hi) = rect;
+    let clipped = (
+        [e.0[0].max(lo[0]), e.0[1].max(lo[1])],
+        [e.1[0].min(hi[0]), e.1[1].min(hi[1])],
+    );
+    overlaps(e, rect)
+        && !cuts.iter().any(|n| {
+            n.0[0] <= clipped.0[0]
+                && n.0[1] <= clipped.0[1]
+                && clipped.1[0] <= n.1[0]
+                && clipped.1[1] <= n.1[1]
+        })
+}
 
+impl Outline {
     fn corners(&self) -> Vec<Point> {
         let (lo, hi) = self.rect;
         if self.cuts.is_empty() {
@@ -1129,7 +1135,7 @@ fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
             continue;
         };
         match (circuit.in_block.contains(&c.id), &c.kind) {
-            (false, kind) => others.push(((lo, hi), matches!(kind, ComponentKind::Valve(_)))),
+            (false, _) => others.push((lo, hi)),
             // Ports set the edge exactly, as block ports sit on it; parts get room around them.
             (true, ComponentKind::Port { .. }) => members.push((lo, hi)),
             (true, _) => members.push((
@@ -1159,18 +1165,18 @@ fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
         side(0, 1.0) && side(0, -1.0) && side(1, 1.0) && side(1, -1.0)
     };
     let (lo, hi) = rect;
-    // Whether a block part reaches into `r`, or a port onto its edges on the outline: it is
-    // pushed out past the rectangle where it lies on it, so a port on that edge counts.
+    let touch = |q: Rect, p: Rect| (0..2).all(|a| q.0[a] <= p.1[a] && p.0[a] <= q.1[a]);
+    // Whether a block part reaches into `r`, or a block port (a point) is in it or on its edge.
     let blocked = |r: Rect| {
-        let out = |v: f32, edge: f32, by: f32| if v == edge { v + by } else { v };
-        let reach = (
-            [out(r.0[0], lo[0], -1.0), out(r.0[1], lo[1], -1.0)],
-            [out(r.1[0], hi[0], 1.0), out(r.1[1], hi[1], 1.0)],
-        );
-        members.iter().any(|&m| overlaps(m, reach))
+        (members.iter()).any(|&m| {
+            if m.0 == m.1 {
+                touch(m, r)
+            } else {
+                overlaps(m, r)
+            }
+        })
     };
     let fits = |cuts: &[Rect], r: Rect| {
-        let touch = |q: Rect, p: Rect| (0..2).all(|a| q.0[a] <= p.1[a] && p.0[a] <= q.1[a]);
         let corners = [lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]].map(|p| (p, p));
         // It stays in the rectangle without reaching across it, isn't blocked...
         (0..2).all(|a| lo[a] <= r.0[a] && r.1[a] <= hi[a] && (lo[a] < r.0[a] || r.1[a] < hi[a]))
@@ -1201,17 +1207,17 @@ fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
         r
     };
     let mut cuts = Vec::new();
-    let loose: Vec<(Rect, bool)> = others
+    let loose: Vec<Rect> = others
         .iter()
         .copied()
-        .filter(|&(o, _)| overlaps(o, rect))
+        .filter(|&o| overlaps(o, rect))
         .collect();
     // A notch at each corner round the outside parts standing there, taken greedily in drawing
     // order.
     for k in 0..4 {
         let (c, far) = flip(k, rect);
         let mut inner = c;
-        for &(o, _) in loose.iter().filter(|&&(o, _)| !surrounded(o)) {
+        for &o in loose.iter().filter(|&&o| !surrounded(o)) {
             let hi = flip(k, o).1;
             let want = [
                 inner[0].max(hi[0].min(far[0])),
@@ -1227,13 +1233,10 @@ fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
     }
     // Any part still over the outline gets a step of its own at a corner, so the corner becomes
     // a staircase, or else a cut in from an edge it stands at, so that edge becomes a U.
-    for &(o, valve) in &loose {
-        if !(Outline {
-            rect,
-            cuts: cuts.clone(),
-        })
-        .covers(o)
-        {
+    // ponytail: parts are taken greedily in drawing order, each keeping the first cut that fits,
+    // so an earlier part's cut can block a later one's that a search over all of them would fit.
+    for &o in &loose {
+        if !covers(rect, &cuts, o) {
             continue;
         }
         let e = (
@@ -1244,13 +1247,11 @@ fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
             .filter(|_| !surrounded(o))
             .map(|k| flip(k, (flip(k, rect).0, flip(k, e).1)))
             .collect();
-        // It stands at an edge when it is nearer it than its own size, and between block parts
-        // when they come within the outline's room round each on both sides along the edge. A
-        // part with room beside it in a row, or a valve in a row of block valves, is more likely
-        // left out of the block by mistake.
+        // It stands at an edge when it is nearer it than its own size, and snug between block parts
+        // when they come within SNUG of it on both sides along the edge. A part with room beside
+        // it in a row is more likely left out of the block by mistake.
         let edges: Vec<Rect> = [(0, false), (0, true), (1, false), (1, true)]
             .into_iter()
-            .filter(|_| !valve)
             .filter_map(|(a, high)| {
                 let mut r = e;
                 let gap = if high {
@@ -1260,7 +1261,7 @@ fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
                     r.0[a] = lo[a];
                     e.0[a] - lo[a]
                 };
-                let between = [-2.0, 2.0].map(|by| blocked(widen(r, 1 - a, by * OUTLINE_PAD)));
+                let between = [-SNUG, SNUG].map(|by| blocked(widen(r, 1 - a, by)));
                 (gap < e.1[a] - e.0[a] && between == [true; 2]).then_some(r)
             })
             .collect();
@@ -1308,13 +1309,13 @@ pub fn outline_issues(circuit: &Circuit, catalogue: &Catalogue) -> Vec<Issue> {
         .collect()
 }
 
-/// Components outside the block that the outline has a corner cut out round.
+/// Components outside the block that the outline is cut round, at a corner or an edge.
 pub fn notched_parts(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
     outside_parts(circuit, catalogue, true)
 }
 
-/// Ids of the components outside the block that reach into its bounding rectangle: those in a
-/// notch, or those drawn over the outline.
+/// Ids of the components outside the block that reach into its bounding rectangle: those the
+/// outline is cut round, or those drawn over the outline.
 fn outside_parts(circuit: &Circuit, catalogue: &Catalogue, notched: bool) -> Vec<String> {
     let (parts, _, Some(outline)) = parts_and_wires(circuit, catalogue) else {
         return Vec::new();
@@ -1324,8 +1325,9 @@ fn outside_parts(circuit: &Circuit, catalogue: &Catalogue, notched: bool) -> Vec
         .iter()
         .filter(|c| !circuit.in_block.contains(&c.id))
         .filter(|c| {
-            extent(circuit, c, &parts)
-                .is_some_and(|e| overlaps(e, outline.rect) && outline.covers(e) != notched)
+            extent(circuit, c, &parts).is_some_and(|e| {
+                overlaps(e, outline.rect) && covers(outline.rect, &outline.cuts, e) != notched
+            })
         })
         .map(|c| c.id.clone())
         .collect()

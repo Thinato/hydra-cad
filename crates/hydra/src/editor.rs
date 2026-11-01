@@ -12,8 +12,8 @@ use hydra_core::{
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
 use hydra_symbols::{
-    Drawing, bounds, drawn_inside_outline, outline_issues, render_circuit, render_parts,
-    wire_problems, wire_warnings,
+    Drawing, bounds, drawn_inside_outline, notched_parts, outline_issues, render_circuit,
+    render_parts, wire_problems, wire_warnings,
 };
 
 use crate::catalogue::Shared;
@@ -198,12 +198,21 @@ impl SchematicEditor {
         }
     }
 
-    /// What is wrong with the drawn wires, in plain words, computed once per change.
+    /// What is wrong with the drawn wires, and which parts the block's outline is cut round, in
+    /// plain words, computed once per change.
     fn wire_issues(&mut self, shared: &Shared) -> Vec<String> {
         let key = (self.doc.generation(), shared.catalogue_loads);
         if self.wire_issues.as_ref().is_none_or(|(k, _)| *k != key) {
             let (c, cat) = (&self.doc.circuit, &shared.catalogue);
-            self.wire_issues = Some((key, [wire_problems(c, cat), wire_warnings(c, cat)].concat()));
+            // A cut is right for an L- or U-shaped block, but also hides a part left out by mistake.
+            let notched = notched_parts(c, cat).into_iter().map(|id| {
+                format!(
+                    "{id} is outside the block and the outline is cut round it; tick In block if \
+                     it belongs in the block"
+                )
+            });
+            let issues = [wire_problems(c, cat), wire_warnings(c, cat)].concat();
+            self.wire_issues = Some((key, issues.into_iter().chain(notched).collect()));
         }
         self.wire_issues
             .as_ref()
@@ -3265,6 +3274,33 @@ mod tests {
         h.state_mut().0.undo();
         h.run_steps(2);
         assert!(flagged(&h));
+    }
+
+    #[test]
+    fn parts_the_outline_is_cut_round_are_warned_about() {
+        let mut h = import_harness(None, false);
+        let toggle = |h: &mut Harness<State>, id: &str| {
+            h.state_mut().0.selected = Some(id.into());
+            h.run_steps(2);
+            h.get_by_label("In block").click();
+            h.run_steps(2);
+        };
+        let warned = |h: &Harness<State>| {
+            h.query_by_label(
+                "X2 is outside the block and the outline is cut round it; tick In block if it \
+                 belongs in the block",
+            )
+            .is_some()
+        };
+        h.get_by_label_contains("Validation").click();
+        h.run_steps(2);
+        // X2 stands in the bottom-right corner of the block P, 1.1 and 4.1 span.
+        for id in ["P", "1.1", "4.1"] {
+            toggle(&mut h, id);
+        }
+        assert!(warned(&h));
+        toggle(&mut h, "X2");
+        assert!(!warned(&h));
     }
 
     #[test]
