@@ -834,7 +834,10 @@ fn an_outside_part_at_an_edge_between_block_parts_gets_a_u_cut() {
     // A block port on the edge where the cut would go keeps it whole: M is flagged instead.
     circuit.components.push(hydra_core::Component {
         id: "P".into(),
-        kind: hydra_core::ComponentKind::Port { label: "P".into() },
+        kind: hydra_core::ComponentKind::Port {
+            label: "P".into(),
+            plugged: false,
+        },
     });
     circuit.layout.components.insert(
         "P".into(),
