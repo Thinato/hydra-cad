@@ -211,9 +211,9 @@ async fn a_pdf_without_text_still_gives_its_pages() {
 async fn a_stuck_renderer_is_killed() {
     // A duration carrying this test's process id, to find this very child
     // below even when other checkouts run the suite at the same time.
-    let marker = format!("sleep 5.{}", std::process::id());
+    let arg = format!("5.{}", std::process::id());
     let mut cmd = Command::new("sleep");
-    cmd.arg(marker.trim_start_matches("sleep "));
+    cmd.arg(&arg);
     let started = Instant::now();
     let e = run_renderer(cmd, Vec::new(), Duration::from_millis(200))
         .await
@@ -221,7 +221,7 @@ async fn a_stuck_renderer_is_killed() {
     assert!(e.contains("took too long"), "{e}");
     assert!(started.elapsed() < Duration::from_secs(2));
     let pgrep = std::process::Command::new("pgrep")
-        .args(["-f", &marker])
+        .args(["-f", &format!("^sleep {}$", arg.replace('.', "\\."))])
         .output()
         .unwrap();
     assert!(!pgrep.status.success(), "still running: {pgrep:?}");
