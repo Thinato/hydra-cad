@@ -2467,7 +2467,7 @@ mod tests {
             let dashed = render_circuit(&e.doc.circuit, &s.catalogue)
                 .primitives
                 .iter()
-                .any(|p| matches!(p, hydra_symbols::Primitive::Polyline { dashed: true, points, .. } if points.len() == 4));
+                .any(|p| matches!(p, hydra_symbols::Primitive::Polyline { dashed: true, points, .. } if points.first() == Some(&[0.0, 0.0]) && points.last() == Some(&[30.0, 0.0])));
             (kind, dashed)
         };
         click_sheet(&mut h, [12.0, -9.8], egui::PointerButton::Primary);

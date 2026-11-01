@@ -634,16 +634,25 @@ fn port_marker(label: &str, plugged: bool) -> Drawing {
 }
 
 /// ISO 1219 closed connection: a short thick bar across the line at `at`, square to it. Among
-/// `wires`, the line is the first piece of one that ends at or passes through `at`; without
-/// one, an upright line.
+/// `wires`, the line is the first piece of one that ends at or passes through `at`, not turning
+/// there; without one, an upright line.
 fn plug(at: Point, wires: &[Primitive]) -> Primitive {
     let along = wires.iter().find_map(|w| {
         let Primitive::Polyline { points, .. } = w else {
             return None;
         };
+        let d = |a: Point, b: Point| [b[0] - a[0], b[1] - a[1]];
+        // At a corner, neither leg is the line the plug closes.
+        let corner = (points.windows(3)).any(|t| {
+            let (u, v) = (d(t[0], t[1]), d(t[1], t[2]));
+            near(t[1], at) && u[0] * v[1] != u[1] * v[0]
+        });
+        if corner {
+            return None;
+        }
         (points.windows(2))
             .find(|s| s[0] != s[1] && on_wire(at, s))
-            .map(|s| [s[1][0] - s[0][0], s[1][1] - s[0][1]])
+            .map(|s| d(s[0], s[1]))
     });
     let [dx, dy] = along.unwrap_or([0.0, 1.0]);
     let len = dx.hypot(dy);
@@ -795,7 +804,7 @@ fn draw_component(
         d.ports.push((name, at(p)));
     }
     if !wires.is_empty() && !matches!(c.kind, ComponentKind::Port { .. }) {
-        port_names_clear(&mut d, wires);
+        port_names_clear(&mut d, wires, others);
     }
     if let ComponentKind::Port { plugged: true, .. } = c.kind {
         d.primitives.push(plug([place.x, place.y], wires));
@@ -872,7 +881,8 @@ fn draw_component(
                 }
                 .abs()
             };
-            slid.retain(|s| off(s) <= (w + max[0] - min[0]) / 2.0 + LABEL);
+            // Still over the part by a millimetre or more, so it reads as this part's.
+            slid.retain(|s| off(s) <= (w + max[0] - min[0]) / 2.0 - 1.0);
             slid.sort_by(|a, b| off(a).total_cmp(&off(b)));
             spots.extend(slid);
             let l = (spots.into_iter())
@@ -919,9 +929,9 @@ fn clear(label: &Primitive, wires: &[Primitive], taken: &[Rect]) -> bool {
 
 /// Each of a part's port names that a wire runs through, moved to the first of: the other side
 /// of its port's line, across the port's end, or both, then those off the anchor's level, that
-/// is clear of the wires, of the part's own lines and of its other names. It stays put when
-/// none is.
-fn port_names_clear(d: &mut Drawing, wires: &[Primitive]) {
+/// is clear of the wires, of the part's own lines and names, and of the other parts' boxes
+/// `parts`. It stays put when none is.
+fn port_names_clear(d: &mut Drawing, wires: &[Primitive], parts: &[Rect]) {
     let own: Vec<Primitive> = (d.primitives.iter())
         .filter(|p| matches!(p, Primitive::Polyline { .. }))
         .cloned()
@@ -974,7 +984,7 @@ fn port_names_clear(d: &mut Drawing, wires: &[Primitive]) {
                 ]
             })
             .map(|(x, y, a)| text([q[0] + x, q[1] + y], &name, a))
-            .find(|l| clear(l, wires, &others) && clear(l, &own, &[]));
+            .find(|l| clear(l, wires, &others) && clear(l, &own, parts));
         if let Some(l) = moved {
             d.primitives[i] = l;
         }
@@ -1162,7 +1172,7 @@ fn parts_and_wires(
     d.primitives = wires;
     // A port on the block's edge has its label outside the block, others above their circle;
     // beside the line instead where a wire runs through it.
-    let outline = outline(circuit, &parts);
+    let outline = outline(circuit, &parts, catalogue);
     let corners = outline.as_ref().map(Outline::corners).unwrap_or_default();
     for (id, part) in &mut parts {
         let Some(c) = circuit.component(id) else {
@@ -1204,7 +1214,7 @@ fn parts_and_wires(
             ],
         };
         let (to, a) = (spots.into_iter())
-            .find(|&(p, a)| clear(&text(p, label, a), &d.primitives, &[]))
+            .find(|&(p, a)| clear(&text(p, label, a), &d.primitives, &others(id.as_str())))
             .unwrap_or(spots[0]);
         for prim in &mut part.primitives {
             if let Primitive::Text { at, align, .. } = prim {
@@ -1267,14 +1277,17 @@ fn hop(wires: &mut [Primitive], net: impl Fn(usize) -> usize, ports: &[Point]) {
         let Primitive::Polyline { points, .. } = w else {
             continue;
         };
-        let mut out: Vec<Point> = points.first().copied().into_iter().collect();
+        let (mine, mut out) = (
+            net(i),
+            points.first().copied().into_iter().collect::<Vec<_>>(),
+        );
         for s in points.windows(2) {
             let ([x, y0], b) = (s[0], s[1]);
             if x == b[0] && y0 != b[1] {
                 let down = (b[1] - y0).signum();
                 let mut at: Vec<f32> = (level.iter())
                     .filter(|&&(n, y, x0, x1)| {
-                        n != net(i) && within(x, x0, x1) && within(y, y0, b[1])
+                        n != mine && within(x, x0, x1) && within(y, y0, b[1])
                     })
                     .map(|&(_, y, ..)| y)
                     .filter(|&y| !busy.iter().any(|p| (p[0] - x).hypot(p[1] - y) < 2.0 * HOP))
@@ -1326,7 +1339,7 @@ pub fn drawn_inside_outline(
     // Not drawn yet, so measured on its own: no wire reaches it to move its designator.
     let e = match c.kind {
         ComponentKind::Port { .. } => Some(([place.x, place.y], [place.x, place.y])),
-        _ => render_component(c, place, catalogue).and_then(|d| bounds(&d.primitives)),
+        _ => render_component(c, place, catalogue).and_then(|d| body(c, &d, catalogue)),
     };
     e.is_some_and(|e| outline.covers(e))
 }
@@ -1387,10 +1400,14 @@ fn overlaps(a: Rect, b: Rect) -> bool {
 }
 
 /// The outline round the block's parts, measured in `parts` from [`render_parts`].
-fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
+fn outline(
+    circuit: &Circuit,
+    parts: &[(String, Drawing)],
+    catalogue: &Catalogue,
+) -> Option<Outline> {
     let (mut members, mut others) = (Vec::new(), Vec::new());
     for c in &circuit.components {
-        let Some((lo, hi)) = extent(circuit, c, parts) else {
+        let Some((lo, hi)) = extent(circuit, c, parts, catalogue) else {
             continue;
         };
         match (circuit.in_block.contains(&c.id), &c.kind) {
@@ -1484,14 +1501,36 @@ fn placement(circuit: &Circuit, id: &str) -> Placement {
 
 /// Where a component is on the sheet: a port's point, or the box round anything else's drawing.
 /// `parts` comes from [`render_parts`], so a designator counts where it is drawn.
-fn extent(circuit: &Circuit, c: &Component, parts: &[(String, Drawing)]) -> Option<Rect> {
+fn extent(
+    circuit: &Circuit,
+    c: &Component,
+    parts: &[(String, Drawing)],
+    catalogue: &Catalogue,
+) -> Option<Rect> {
     match c.kind {
         ComponentKind::Port { .. } => {
             let place = placement(circuit, &c.id);
             Some(([place.x, place.y], [place.x, place.y]))
         }
-        _ => bounds(&parts.iter().find(|(id, _)| *id == c.id)?.1.primitives),
+        _ => body(c, &parts.iter().find(|(id, _)| *id == c.id)?.1, catalogue),
     }
+}
+
+/// The box round a part's drawing without its item label and status words. Those move to keep
+/// clear of wires, so the block's outline, and whether a part is over it, never follow them.
+fn body(c: &Component, d: &Drawing, catalogue: &Catalogue) -> Option<Rect> {
+    let label = match &c.kind {
+        ComponentKind::Item(item) => item.label.clone(),
+        _ => None,
+    };
+    let words = [label, status_words(c, catalogue)];
+    let kept: Vec<Primitive> = (d.primitives.iter())
+        .filter(
+            |p| !matches!(p, Primitive::Text { text, .. } if words.contains(&Some(text.clone()))),
+        )
+        .cloned()
+        .collect();
+    bounds(&kept)
 }
 
 /// Components outside the block that are drawn over its outline, so the schematic would show
@@ -1519,7 +1558,7 @@ fn outside_parts(circuit: &Circuit, catalogue: &Catalogue, notched: bool) -> Vec
         .iter()
         .filter(|c| !circuit.in_block.contains(&c.id))
         .filter(|c| {
-            extent(circuit, c, &parts)
+            extent(circuit, c, &parts, catalogue)
                 .is_some_and(|e| overlaps(e, outline.rect) && outline.covers(e) != notched)
         })
         .map(|c| c.id.clone())
