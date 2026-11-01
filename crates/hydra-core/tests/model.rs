@@ -438,6 +438,7 @@ fn on_block(mounts: &[(&str, &str)]) -> (Circuit, Catalogue) {
     c.nets[1].ports.push(pr("V2", "T"));
     c.nets[2].ports.push(pr("V2", "A"));
     c.nets[4].ports.push(pr("V2", "B"));
+    c.in_block = c.components.iter().map(|c| c.id.clone()).collect();
     c.assembly = Some(Assembly {
         block: CatalogueRef::new("blk", 1),
         mounts: mounts
@@ -463,16 +464,20 @@ fn mounted_valves_validate_and_round_trip() {
 #[test]
 fn assembly_mistakes_are_reported() {
     let (c, cat) = on_block(&[("V1", "F1"), ("V2", "F1"), ("P", "F2"), ("V9", "F2")]);
-    let issues = c.validate(&cat);
-    assert!(issues.contains(&Issue::FaceTaken {
-        face: "F1".into(),
-        components: ["V1".into(), "V2".into()],
-    }));
-    assert!(issues.contains(&Issue::MountedPort("P".into())));
-    assert!(issues.contains(&Issue::MountedUnknownComponent {
-        component: "V9".into(),
-        face: "F2".into(),
-    }));
+    assert_eq!(
+        c.validate(&cat),
+        vec![
+            Issue::MountedPort("P".into()),
+            Issue::FaceTaken {
+                face: "F1".into(),
+                components: ["V1".into(), "V2".into()],
+            },
+            Issue::MountedUnknownComponent {
+                component: "V9".into(),
+                face: "F2".into(),
+            },
+        ]
+    );
 
     let (c, cat) = on_block(&[("V1", "F3"), ("V2", "F7"), ("K1", "F2")]);
     assert_eq!(
@@ -511,6 +516,36 @@ fn assembly_mistakes_are_reported() {
             Issue::Unmounted("V2".into())
         ]
     );
+}
+
+#[test]
+fn only_valves_in_the_block_belong_on_it() {
+    // V2 is drawn outside the block, so leaving it off the block is right.
+    let (mut c, cat) = on_block(&[("V1", "F1")]);
+    c.in_block.remove("V2");
+    assert_eq!(c.validate(&cat), vec![]);
+
+    // V2 in the block but not mounted is still a warning.
+    c.in_block.insert("V2".into());
+    assert_eq!(c.validate(&cat), vec![Issue::Unmounted("V2".into())]);
+
+    // V2 mounted while drawn outside the block: the two views disagree.
+    let (mut c, cat) = on_block(&[("V1", "F1"), ("V2", "F2")]);
+    c.in_block.remove("V2");
+    let issues = c.validate(&cat);
+    assert_eq!(issues, vec![Issue::MountedOutsideBlock("V2".into())]);
+    assert_eq!(issues[0].severity(), Severity::Warning);
+    assert_eq!(
+        issues[0].to_string(),
+        "V2 is mounted on the block but drawn outside it; tick In block in the schematic, or take it off its face in the 3D tab"
+    );
+
+    // Nothing ticked In block: one warning instead of silence or one per valve.
+    let (mut c, cat) = on_block(&[("V1", "F1")]);
+    c.in_block.clear();
+    let issues = c.validate(&cat);
+    assert_eq!(issues, vec![Issue::NothingInBlock]);
+    assert_eq!(issues[0].severity(), Severity::Warning);
 }
 
 #[test]

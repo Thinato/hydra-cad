@@ -119,6 +119,8 @@ fn is_assembly_issue(issue: &Issue) -> bool {
             | Issue::FaceTaken { .. }
             | Issue::PatternMismatch { .. }
             | Issue::Unmounted(_)
+            | Issue::MountedOutsideBlock(_)
+            | Issue::NothingInBlock
     )
 }
 
@@ -573,6 +575,44 @@ mod tests {
         assert_eq!(mounts(&h), []);
         choose(&mut h, 0, "None");
         assert_eq!(h.state().2.circuit().assembly, None);
+    }
+
+    #[test]
+    fn only_valves_in_the_block_are_expected_on_it() {
+        let mut c = demo();
+        c.assembly = None;
+        c.in_block.remove("V2");
+        let mut h = harness(c);
+        choose(&mut h, 0, BLOCK_V2);
+        assert!(h.query_by_label("V1 is not mounted on the block").is_some());
+        assert!(h.query_by_label("V2 is not mounted on the block").is_none());
+
+        let outside = "V2 is mounted on the block but drawn outside it; tick In block in the schematic, or take it off its face in the 3D tab";
+        choose(&mut h, 1, "V2");
+        assert!(h.query_by_label(outside).is_some());
+        // Ticking "In block" in the schematic settles it.
+        h.state_mut()
+            .2
+            .edit(Command::SetInBlock {
+                id: "V2".into(),
+                inside: true,
+            })
+            .unwrap();
+        h.run();
+        assert!(h.query_by_label(outside).is_none());
+
+        // With nothing in the block, the tab says why it can't check the mounts.
+        let mut c = demo();
+        c.in_block.clear();
+        let h = harness(c);
+        assert!(
+            h.query_by_label_contains("No part is ticked In block")
+                .is_some()
+        );
+        assert!(
+            h.query_by_label_contains("mounted on the block but")
+                .is_none()
+        );
     }
 
     const BLOCK_V2: &str = "Demo manifold block with cartridge cavity C1 (fixture data, matches fixtures/models/demo-block.step) (v2)";
