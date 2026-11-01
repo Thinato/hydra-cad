@@ -55,8 +55,10 @@ fn proposal_uuid(id: &str) -> Result<Uuid, Error> {
     Uuid::parse_str(id).map_err(|_| unknown_proposal())
 }
 
-/// Queue `proposal` for review. Refused with [`Error::Invalid`] if it has
-/// [`Proposal::problems`] against the catalogue as it is now. Returns the proposal's id.
+/// Queue `proposal` for review. Refused with [`Error::AlreadyPending`] if a proposal for the
+/// same valve type and base version is still pending (only one of them could be approved),
+/// or with [`Error::Invalid`] if it has [`Proposal::problems`] against the catalogue as it is
+/// now. Returns the proposal's id.
 pub async fn submit_proposal(pool: &PgPool, proposal: &Proposal) -> Result<String, Error> {
     // Bounds what reviewers load and what every check walks; a datasheet needs far less.
     let size = serde_json::to_vec(proposal).map_or(0, |j| j.len());
@@ -67,10 +69,32 @@ pub async fn submit_proposal(pool: &PgPool, proposal: &Proposal) -> Result<Strin
             MAX_PROPOSAL_BYTES / 1024
         )]));
     }
-    // No locks: approval checks the proposal again against the catalogue as it is then.
+    // No catalogue lock: approval checks the proposal again against the catalogue as it is then.
+    // Checked before the transaction below, which would otherwise hold a second connection.
     let problems = proposal.problems(&load_catalogue(pool).await?.catalogue);
     if !problems.is_empty() {
         return Err(Error::Invalid(problems));
+    }
+    let v = &proposal.valve_type;
+    let mut tx = pool.begin().await?;
+    // Submitters for one valve type queue here until the first commits, so the second sees
+    // its row. Duplicates stored before this check stay reviewable as they are.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('hydra proposal: ' || $1))")
+        .bind(&v.key)
+        .execute(&mut *tx)
+        .await?;
+    let pending: Option<String> = sqlx::query_scalar(
+        "SELECT id::text FROM catalogue_proposals \
+         WHERE status = 'pending' AND proposal->'valve_type'->>'key' = $1 \
+           AND proposal->'valve_type'->>'version' = $2 \
+         ORDER BY created_at, id LIMIT 1",
+    )
+    .bind(&v.key)
+    .bind(v.version.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(id) = pending {
+        return Err(Error::AlreadyPending { id });
     }
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO catalogue_proposals (proposal, datasheet_asset_id) \
@@ -79,9 +103,10 @@ pub async fn submit_proposal(pool: &PgPool, proposal: &Proposal) -> Result<Strin
          RETURNING id",
     )
     .bind(Json(proposal))
-    .bind(&proposal.valve_type.key)
-    .fetch_one(pool)
+    .bind(&v.key)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(id.to_string())
 }
 
