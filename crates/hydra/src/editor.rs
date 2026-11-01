@@ -7,8 +7,8 @@
 use eframe::egui::{self, Color32, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2};
 use hydra_core::{
     Catalogue, CatalogueRef, Circuit, CircuitStatus, Command, Component, ComponentKind, Document,
-    ExtraBomLine, Item, Layout, Placement, PortRef, Rotation, SCHEMA_VERSION, Severity, StandIn,
-    SymbolDef, ValveStatus, WireEnd, next_id, stand_ins,
+    ExtraBomLine, Item, Layout, LineKind, Placement, PortRef, Rotation, SCHEMA_VERSION, Severity,
+    StandIn, SymbolDef, ValveStatus, WireEnd, next_id, stand_ins,
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
 use hydra_symbols::{
@@ -1042,6 +1042,25 @@ impl SchematicEditor {
             ui.horizontal_wrapped(|ui| {
                 let name = net_name(&self.doc.circuit, &net);
                 ui.strong(format!("Wire {} of net {name}", index + 1));
+                // Pilot and drain lines are drawn dashed.
+                let wires = self.doc.circuit.layout.wires.get(&net);
+                if let Some(kind) = wires.and_then(|w| w.get(index)).map(|w| w.kind) {
+                    let mut choice = kind;
+                    egui::ComboBox::from_id_salt("wire-kind")
+                        .selected_text(kind.words())
+                        .show_ui(ui, |ui| {
+                            for k in LineKind::ALL {
+                                ui.selectable_value(&mut choice, k, k.words());
+                            }
+                        });
+                    if choice != kind {
+                        self.apply(Command::SetWireKind {
+                            net: net.clone(),
+                            index,
+                            kind: choice,
+                        });
+                    }
+                }
                 if ui.button("Delete wire").clicked() {
                     self.delete_selected();
                 }
@@ -2434,6 +2453,40 @@ mod tests {
             h.state().0.doc.undo_label(),
             Some("Delete wire 1 of net n1")
         );
+    }
+
+    #[test]
+    fn a_selected_wire_becomes_a_pilot_line_drawn_dashed() {
+        let mut h = wiring_harness();
+        let wire = vec![[0.0, 0.0], [0.0, -10.0], [30.0, -10.0], [30.0, 0.0]];
+        (h.state_mut().0.doc.circuit.layout.wires).insert("n1".into(), vec![wire.into()]);
+        h.run();
+        let state = |h: &Harness<State>| {
+            let (e, s) = h.state();
+            let kind = e.doc.circuit.layout.wires["n1"][0].kind;
+            let dashed = render_circuit(&e.doc.circuit, &s.catalogue)
+                .primitives
+                .iter()
+                .any(|p| matches!(p, hydra_symbols::Primitive::Polyline { dashed: true, points, .. } if points.len() == 4));
+            (kind, dashed)
+        };
+        click_sheet(&mut h, [12.0, -9.8], egui::PointerButton::Primary);
+        assert!(h.query_by_label("Wire 1 of net n1").is_some());
+        h.get_all_by_role(egui::accesskit::Role::ComboBox)
+            .find(|n| n.value().as_deref() == Some("working line"))
+            .expect("the wire's kind")
+            .click();
+        h.run();
+        h.get_by_label("pilot line").click();
+        h.run_steps(2);
+        assert_eq!(state(&h), (LineKind::Pilot, true));
+        assert_eq!(
+            h.state().0.doc.undo_label(),
+            Some("Make wire 1 of net n1 a pilot line")
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert_eq!(state(&h), (LineKind::Working, false));
     }
 
     #[test]

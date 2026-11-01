@@ -830,6 +830,52 @@ fn drawing_a_wire_is_one_undo_step_and_joins_nets_keeping_their_wires() {
 }
 
 #[test]
+fn a_drawn_wire_becomes_a_pilot_line_and_stays_one_when_nets_join() {
+    let mut d = doc(&["A", "B", "C", "D"]);
+    d.apply(wire(at("A"), at("B"), &[[0.0, 0.0], [10.0, 0.0]]))
+        .unwrap();
+    d.apply(wire(at("C"), at("D"), &[[20.0, 0.0], [30.0, 0.0]]))
+        .unwrap();
+    let kind = |net: &str, index, kind| Command::SetWireKind {
+        net: net.into(),
+        index,
+        kind,
+    };
+    let kinds = |d: &Document| {
+        (d.circuit.layout.wires.values().flatten())
+            .map(|w| w.kind)
+            .collect::<Vec<_>>()
+    };
+    // Drawn wires are working lines.
+    assert_eq!(kinds(&d), [LineKind::Working, LineKind::Working]);
+    assert_eq!(
+        d.apply(kind("n2", 1, LineKind::Pilot)),
+        Err("net n2 has no drawn wire 2".into())
+    );
+    assert_eq!(
+        d.apply(kind("n2", 0, LineKind::Working)),
+        Err("wire 1 of net n2 is already a working line".into())
+    );
+    d.apply(kind("n2", 0, LineKind::Pilot)).unwrap();
+    assert_eq!(d.undo_label(), Some("Make wire 1 of net n2 a pilot line"));
+    assert_eq!(kinds(&d), [LineKind::Working, LineKind::Pilot]);
+    // Joining the nets, by a wire or by Connect, keeps each wire's kind.
+    d.apply(wire(at("B"), at("C"), &[[10.0, 0.0], [20.0, 0.0]]))
+        .unwrap();
+    assert_eq!(
+        kinds(&d),
+        [LineKind::Working, LineKind::Pilot, LineKind::Working]
+    );
+    d.undo();
+    d.apply(connect("D", "A")).unwrap();
+    // D's net n2 takes in n1, so its wires come first.
+    assert_eq!(kinds(&d), [LineKind::Pilot, LineKind::Working]);
+    d.undo();
+    d.undo();
+    assert_eq!(kinds(&d), [LineKind::Working, LineKind::Working]);
+}
+
+#[test]
 fn deleting_wires_and_drawing_a_net_automatically_again() {
     let mut d = doc(&["A", "B"]);
     d.apply(connect("A", "B")).unwrap();

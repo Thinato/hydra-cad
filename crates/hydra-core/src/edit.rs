@@ -2,7 +2,7 @@
 //! undo/redo and a readable log of what changed.
 
 use crate::{
-    Assembly, CatalogueRef, Circuit, Component, ComponentKind, ExtraBomLine,
+    Assembly, CatalogueRef, Circuit, Component, ComponentKind, ExtraBomLine, LineKind,
     MAX_IMPORT_WIRE_POINTS, MAX_WIRE_POINTS, MAX_WIRES_PER_NET, Net, Placement, PortRef,
 };
 
@@ -81,6 +81,12 @@ pub enum Command {
     RemoveWire { net: String, index: usize },
     /// Drop a net's drawn wires, so it is drawn with automatic elbows again.
     AutoWires { net: String },
+    /// Make drawn wire `index` of a net, counting from 0, a working, pilot or drain line.
+    SetWireKind {
+        net: String,
+        index: usize,
+        kind: LineKind,
+    },
 }
 
 /// Where a drawn wire starts or ends: on a port, or on a drawn wire of a net.
@@ -140,6 +146,9 @@ impl Command {
             Command::DrawWire { from, to, .. } => format!("Draw a wire from {from} to {to}"),
             Command::RemoveWire { net, index } => format!("Delete wire {} of net {net}", index + 1),
             Command::AutoWires { net } => format!("Draw net {net} automatically"),
+            Command::SetWireKind { net, index, kind } => {
+                format!("Make wire {} of net {net} a {}", index + 1, kind.words())
+            }
         }
     }
 
@@ -511,6 +520,19 @@ impl Command {
                 if circuit.layout.wires.remove(net).is_none() {
                     return Err(format!("net {net} is already drawn automatically"));
                 }
+            }
+            Command::SetWireKind { net, index, kind } => {
+                let wire = (circuit.layout.wires.get_mut(net))
+                    .and_then(|w| w.get_mut(*index))
+                    .ok_or_else(|| format!("net {net} has no drawn wire {}", index + 1))?;
+                if wire.kind == *kind {
+                    return Err(format!(
+                        "wire {} of net {net} is already a {}",
+                        index + 1,
+                        kind.words()
+                    ));
+                }
+                wire.kind = *kind;
             }
         }
         Ok(())
