@@ -1,0 +1,66 @@
+name: Cache
+
+# Merges don't run the PR checks (see main.yml), and a PR can only read caches saved on its own
+# branch or on main. This builds what pr.yml builds, after every merge, and saves the caches on
+# main, so a new PR's first run starts warm instead of compiling everything.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+
+concurrency:
+  group: cache
+  # A cancelled run saves no cache, so runs queue instead.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked --no-run
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+      - run: cargo test --workspace --locked --no-run
+
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: database
+      # The same invocations as pr.yml, so features resolve the same and nothing rebuilds there.
+      - run: cargo test -p hydra-db -p hydra-mcp --no-run
+      - run: cargo build -p hydra-db --bin hydra-admin
+      - run: cargo test -p hydra --no-run

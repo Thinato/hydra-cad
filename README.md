@@ -189,11 +189,14 @@ The shared database is a single point of failure, so `ops/backup/` has a nightly
 ## CI
 
 `.github/workflows/pr.yml` runs on every pull request into `main`:
-- it checks formatting, runs clippy, builds and tests on Windows and macOS;
+- it checks formatting and runs clippy on Linux first; the Windows and macOS jobs wait for that and fail at once if it failed, so a lint error doesn't spend their (dearer) minutes;
+- it runs the tests on Windows and macOS, and clippy again on Windows for its few Windows-only lines;
 - it runs the database tests and the backup/restore test on Linux against a `postgres:15` service container, because GitHub only offers service containers on Linux runners;
 - it checks that a changed version goes up.
 
 A pull request that changes only Markdown files skips the builds and tests; their checks show as skipped, which counts as passed.
+
+PR checks build without debug info, which links faster and keeps the caches small. A pull request can only read build caches saved on its own branch or on `main`, so `cache.yml` builds the same targets after every merge and saves them on `main`; a new pull request's first run then starts warm.
 
 `converter.yml` builds the STEP converter only when `tools/step2gltf` changes.
 
