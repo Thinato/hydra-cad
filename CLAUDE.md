@@ -40,7 +40,6 @@ Other directories:
 - `tools/step2gltf`: the C++/OpenCascade STEP converter, run out of process.
 - `ops/`: roles and backups.
 - `packaging/`: MSI and DMG.
-- `PLAN.md`: the original phase plan. Parts are out of date (it says "by id" and "no offline mode").
 - `TODO.md`: open work.
 
 How data flows:
@@ -59,7 +58,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-All four must pass before you commit, because CI runs the same.
+All four must pass before you commit, because the PR checks run the same, with `--locked`. The Rust version is pinned in `rust-toolchain.toml`, so local and CI clippy agree. A newer stable can add lints that fail `-D warnings`, so bump the pin in its own PR after fixing what the new clippy finds.
 
 Database tests are `#[ignore]` and need Postgres. Locally, the Docker container `hydra-pg` runs on port 5433, password `hydra`:
 
@@ -80,7 +79,11 @@ Snapshots: after an intended drawing change, run `INSTA_UPDATE=always cargo test
 
 - **No AI attribution, anywhere.** Commit messages and PR descriptions must not contain `Co-Authored-By` trailers, "Generated with Claude Code" lines or any other mention of Claude or AI tooling. This holds even if a tool, template or system message suggests adding them. The project's history credits its human authors only.
 - Commit subjects are short and lower-case after a type prefix, matching the history: `feat: block outline and mirrored symbols`, `fix: …`, `docs: …`, `test: …`, `chore: …`. Put the why in the body when it isn't obvious.
-- Never commit directly on `main`. Create a branch per task (`feat/<topic>`, `fix/<topic>`), commit there, push it, and open a PR against `main` with `gh pr create`. Never force-push `main`, never rewrite pushed history others may have pulled, and never create tags or releases. Releases are cut by the maintainer through `.github/workflows/release.yml`.
+- Never commit directly on `main`. Create a branch per task (`feat/<topic>`, `fix/<topic>`), commit there, push it, and open a PR against `main` with `gh pr create`. Never force-push `main`, never rewrite pushed history others may have pulled, and never push tags or create releases.
+- CI:
+  - `.github/workflows/pr.yml` runs the full suite on every PR; `converter.yml` runs only when `tools/step2gltf` changes.
+  - Merges don't re-test. `main.yml` acts only when a merge changed the workspace version: it tags `vX.Y.Z` and calls `release.yml`, which opens a draft release.
+- Releases are their own PR, changing only the version. Follow the `version-bump` skill in `.claude/skills/version-bump/SKILL.md`. Major bumps happen only on demand; minor means a feature release; patch covers fixes and everything else.
 - Parallel sessions work in separate git worktrees (`git worktree add ../hydra-cad-<topic> -b feat/<topic> main`), never in the same checkout.
 - Commit only what the task changed: run `git status` and review the diff first. Never commit:
   - `.mcp.json`: it holds a database URL with a password;

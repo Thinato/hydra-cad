@@ -1,9 +1,15 @@
-name: CI
+name: PR checks
 
+# The full test suite, on every pull request into main. Merges don't re-run it (see main.yml),
+# so keep "Require branches to be up to date before merging" on in the branch protection.
 on:
-  push:
-    branches: [main]
   pull_request:
+    branches: [main]
+
+# A new push to a PR cancels the run of its previous push.
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,14 +24,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # Installs the toolchain pinned in rust-toolchain.toml, with clippy and rustfmt.
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo build --workspace --all-targets
-      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo build --workspace --all-targets --locked
+      - run: cargo test --workspace --locked
       # The backup scripts for Windows Server can't run here; at least make sure they parse.
       - name: Parse the PowerShell scripts
         if: runner.os == 'Windows'
@@ -55,7 +60,7 @@ jobs:
       DATABASE_URL: postgres://postgres:hydra@localhost:5432/hydra
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p hydra-db -p hydra-mcp -- --ignored
       # The app's database-worker test runs against a migrated database holding the fixtures.
@@ -101,23 +106,28 @@ jobs:
           HYDRA_ADMIN: target/debug/hydra-admin
         run: ops/backup/hydra-restore-test.sh --dir "$RUNNER_TEMP/backups"
 
-  # The STEP-to-glTF converter needs OpenCASCADE, which Ubuntu packages; Debian's OCCT CMake
-  # targets also link TBB and fontconfig, whose -dev packages are not pulled in automatically.
-  converter:
+  # A version bump must go up, and is released when merged (main.yml).
+  version:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update
-      - run: sudo apt-get install -y --no-install-recommends cmake g++ make libocct-data-exchange-dev libtbb-dev libfontconfig-dev
-      - run: cmake -S tools/step2gltf -B "$RUNNER_TEMP/step2gltf"
-      - run: cmake --build "$RUNNER_TEMP/step2gltf" -j"$(nproc)"
-      - name: Convert the demo fixtures
+        with:
+          fetch-depth: 0
+      - name: Check a changed workspace version goes up
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          bin="$RUNNER_TEMP/step2gltf"
-          out="$RUNNER_TEMP/models"
-          mkdir -p "$out"
-          "$bin/make_fixtures" "$out"
-          for model in demo-valve-cetop3 demo-block demo-cartridge; do
-            "$bin/step2gltf" "$out/$model.step" "$out/$model.glb"
-            test -s "$out/$model.glb"
-          done
+          version() { sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p'; }
+          old="$(git show "$BASE:Cargo.toml" | version)"
+          new="$(version < Cargo.toml)"
+          if [[ "$old" == "$new" ]]; then
+            echo "Version unchanged ($new)."
+          elif [[ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -1)" != "$new" ]]; then
+            echo "::error::The workspace version goes down, from $old to $new."
+            exit 1
+          elif git rev-parse -q --verify "refs/tags/v$new" >/dev/null; then
+            echo "::error::Tag v$new already exists; pick the next version."
+            exit 1
+          else
+            echo "Version $old -> $new: merging this tags v$new and builds a draft release."
+          fi

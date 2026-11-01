@@ -10,7 +10,9 @@ PLAN.md
 target/
 .mcp.json
 .DS_Store
-.claude
+# Local Claude Code state; project skills are shared.
+.claude/*
+!.claude/skills/
 
 # Real drawings and manufacturer datasheets for local testing only: controlled copies and copyrighted.
 import-test-docs/
