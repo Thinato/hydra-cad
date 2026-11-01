@@ -4,16 +4,18 @@
 //! Every change goes through a [`Command`] on the in-memory [`Document`]; nothing reaches the
 //! database until Save writes a whole new revision.
 
+use std::sync::Arc;
+
 use eframe::egui::{self, Color32, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2};
 use hydra_core::{
     Catalogue, CatalogueRef, Circuit, CircuitStatus, Command, Component, ComponentKind, Document,
-    ExtraBomLine, Item, Layout, LineKind, Placement, PortRef, Rotation, SCHEMA_VERSION, Severity,
-    StandIn, SymbolDef, ValveStatus, WireEnd, next_id, stand_ins,
+    ExtraBomLine, Issue, Item, Layout, LineKind, Placement, PortRef, Rotation, SCHEMA_VERSION,
+    Severity, StandIn, SymbolDef, ValveStatus, WireEnd, next_id, stand_ins,
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
 use hydra_symbols::{
-    Drawing, bounds, drawn_inside_outline, notched_parts, outline_issues, render_circuit,
-    render_parts, wire_problems, wire_warnings,
+    Drawing, Rendered, bounds, drawn_inside_outline, notched_parts, render, render_circuit,
+    wire_problems, wire_warnings,
 };
 
 use crate::catalogue::Shared;
@@ -71,12 +73,16 @@ pub struct Saved {
     pub project: Option<String>,
 }
 
+/// A circuit as drawn, and what it was rendered for.
+type Cached<K> = Option<(K, Arc<Rendered>)>;
+
 enum Drag {
-    /// Moving a part; `grab` is the pointer's offset from the part's origin.
+    /// Moving a part to `to`; `grab` is the pointer's offset from the part's origin. Rotation and
+    /// mirror stay the document's, so R or M pressed while dragging is kept on drop.
     Move {
         id: String,
         grab: [f32; 2],
-        to: Placement,
+        to: [f32; 2],
     },
     /// Drawing a connection from a port.
     Wire {
@@ -164,6 +170,12 @@ pub struct SchematicEditor {
     /// Wire problems and warnings, and the parts the outline is cut round, for (edit counter,
     /// catalogue loads), like `valve_status`.
     drawn_issues: Option<((u64, u64), Vec<String>)>,
+    /// The document rendered for (edit counter, catalogue loads), like `valve_status`.
+    rendered: Cached<(u64, u64)>,
+    /// The document with the part being dragged at its new spot, for that key and the spot.
+    dragged: Cached<(u64, u64, String, [f32; 2])>,
+    /// How often either was rendered, for tests.
+    renders: usize,
 }
 
 impl SchematicEditor {
@@ -196,6 +208,50 @@ impl SchematicEditor {
             route: None,
             wire: None,
             drawn_issues: None,
+            rendered: None,
+            dragged: None,
+            renders: 0,
+        }
+    }
+
+    /// The document as drawn, rendered once per change.
+    fn rendered(&mut self, shared: &Shared) -> Arc<Rendered> {
+        let key = (self.doc.generation(), shared.catalogue_loads);
+        match &self.rendered {
+            Some((k, r)) if *k == key => r.clone(),
+            _ => {
+                let r = Arc::new(render(&self.doc.circuit, &shared.catalogue));
+                self.renders += 1;
+                self.rendered = Some((key, r.clone()));
+                r
+            }
+        }
+    }
+
+    /// `shown`, the document with any part being dragged at its new spot, as drawn: rendered
+    /// once per change and drag spot.
+    fn rendered_shown(&mut self, shown: &Circuit, shared: &Shared) -> Arc<Rendered> {
+        let doc = self.rendered(shared);
+        let Some(Drag::Move { id, to, .. }) = &self.drag else {
+            return doc;
+        };
+        if self.moved(id, *to) == self.placement(id) {
+            return doc;
+        }
+        let key = (
+            self.doc.generation(),
+            shared.catalogue_loads,
+            id.clone(),
+            *to,
+        );
+        match &self.dragged {
+            Some((k, r)) if *k == key => r.clone(),
+            _ => {
+                let r = Arc::new(render(shown, &shared.catalogue));
+                self.renders += 1;
+                self.dragged = Some((key, r.clone()));
+                r
+            }
         }
     }
 
@@ -286,6 +342,7 @@ impl SchematicEditor {
             self.doc = Document::new(current);
             self.valve_status = None;
             self.drawn_issues = None;
+            (self.rendered, self.dragged) = (None, None);
             self.name = sent.name.clone();
         }
         self.doc.mark_saved_as(sent);
@@ -526,6 +583,15 @@ impl SchematicEditor {
         }
     }
 
+    /// `id` moved to `to`, turned and mirrored as it is now.
+    fn moved(&self, id: &str, [x, y]: [f32; 2]) -> Placement {
+        Placement {
+            x,
+            y,
+            ..self.placement(id)
+        }
+    }
+
     fn placement(&self, id: &str) -> Placement {
         self.doc
             .circuit
@@ -628,7 +694,14 @@ impl SchematicEditor {
             self.toolbar(ui, shared);
             self.import_banner(ui, shared);
             self.selection_bar(ui, &shared.catalogue, &status);
-            self.validation(ui, &shared.catalogue, &status, &drawn_issues);
+            let outline_issues = self.rendered(shared).outline_issues.clone();
+            self.validation(
+                ui,
+                &shared.catalogue,
+                &status,
+                &outline_issues,
+                &drawn_issues,
+            );
             self.extra_lines(ui);
             self.notes(ui);
             ui.weak(if self.wiring {
@@ -640,7 +713,7 @@ impl SchematicEditor {
              (Shift-drag from an external port). Right-click a port to disconnect. \
              R rotates, Delete removes, double-click fits. W draws wires; click one to select it."
             });
-            self.canvas(ui, &shared.catalogue, &status);
+            self.canvas(ui, shared, &status);
         });
         if !locked {
             self.keys(ui, shared);
@@ -1295,6 +1368,7 @@ impl SchematicEditor {
         ui: &mut egui::Ui,
         catalogue: &Catalogue,
         status: &CircuitStatus,
+        outline_issues: &[Issue],
         wires: &[String],
     ) {
         let issues: Vec<(Severity, String)> = catalogue
@@ -1306,7 +1380,7 @@ impl SchematicEditor {
                     .circuit
                     .validate(catalogue)
                     .iter()
-                    .chain(&outline_issues(&self.doc.circuit, catalogue))
+                    .chain(outline_issues)
                     .chain(&status.issues)
                     .map(|i| (i.severity(), i.to_string())),
             )
@@ -1336,7 +1410,7 @@ impl SchematicEditor {
             });
     }
 
-    fn canvas(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue, status: &CircuitStatus) {
+    fn canvas(&mut self, ui: &mut egui::Ui, shared: &Shared, status: &CircuitStatus) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.view = rect;
         if self.wiring {
@@ -1350,10 +1424,13 @@ impl SchematicEditor {
         // What to draw: the document, with a part being dragged shown at its new spot.
         let mut shown = self.doc.circuit.clone();
         if let Some(Drag::Move { id, to, .. }) = &self.drag {
-            shown.layout.components.insert(id.clone(), *to);
+            shown
+                .layout
+                .components
+                .insert(id.clone(), self.moved(id, *to));
         }
-        let drawing = render_circuit(&shown, catalogue);
-        let parts = render_parts(&shown, catalogue);
+        let rendered = self.rendered_shown(&shown, shared);
+        let (drawing, parts) = (&rendered.drawing, &rendered.parts);
 
         // Not while drawing wires, where corners are clicked in quick succession.
         let refit = response.double_clicked() && !self.wiring;
@@ -1372,7 +1449,7 @@ impl SchematicEditor {
         {
             let p = self.to_sheet(origin);
             self.drag = Some(
-                match (port_at(&parts, &shown, p, reach, shift), part_at(&parts, p)) {
+                match (port_at(parts, &shown, p, reach, shift), part_at(parts, p)) {
                     (Some((from, start)), _) => Drag::Wire {
                         from,
                         start,
@@ -1383,7 +1460,7 @@ impl SchematicEditor {
                         self.selected = Some(id.clone());
                         Drag::Move {
                             grab: [p[0] - place.x, p[1] - place.y],
-                            to: place,
+                            to: [place.x, place.y],
                             id,
                         }
                     }
@@ -1396,8 +1473,7 @@ impl SchematicEditor {
             let p = [v.x, v.y];
             match drag {
                 Drag::Move { grab, to, .. } => {
-                    to.x = snap(p[0] - grab[0]);
-                    to.y = snap(p[1] - grab[1]);
+                    *to = [snap(p[0] - grab[0]), snap(p[1] - grab[1])];
                 }
                 Drag::Wire { end, .. } => *end = p,
                 Drag::Pan => {
@@ -1408,12 +1484,13 @@ impl SchematicEditor {
         }
         if response.drag_stopped() {
             match self.drag.take() {
-                Some(Drag::Move { id, to, .. }) if to != self.placement(&id) => {
-                    self.apply(Command::Place { id, placement: to });
+                Some(Drag::Move { id, to, .. }) if self.moved(&id, to) != self.placement(&id) => {
+                    let placement = self.moved(&id, to);
+                    self.apply(Command::Place { id, placement });
                 }
                 Some(Drag::Wire { from, end, .. }) => {
                     // Any port is a valid target, including external ones.
-                    if let Some((to, _)) = port_at(&parts, &shown, end, reach, true)
+                    if let Some((to, _)) = port_at(parts, &shown, end, reach, true)
                         && to != from
                     {
                         self.connect(from, to);
@@ -1427,10 +1504,10 @@ impl SchematicEditor {
         {
             let p = self.to_sheet(pos);
             if self.wiring {
-                self.wire_click(&parts, &shown, p, reach);
+                self.wire_click(parts, &shown, p, reach);
             } else {
                 // A part, or else a drawn wire.
-                self.selected = part_at(&parts, p);
+                self.selected = part_at(parts, p);
                 self.wire = (self.selected.is_none())
                     .then(|| wire_at(&shown, p, reach, None).map(|(net, i, ..)| (net, i)))
                     .flatten();
@@ -1446,7 +1523,7 @@ impl SchematicEditor {
         if response.secondary_clicked()
             && !self.wiring
             && let Some(pos) = response.interact_pointer_pos()
-            && let Some((port, _)) = port_at(&parts, &shown, self.to_sheet(pos), reach, true)
+            && let Some((port, _)) = port_at(parts, &shown, self.to_sheet(pos), reach, true)
         {
             self.apply(Command::Disconnect { port });
         }
@@ -1464,7 +1541,7 @@ impl SchematicEditor {
 
         let painter = ui.painter_at(rect);
         paint_sheet(&painter, rect, self.pan, self.zoom, &drawing.primitives);
-        for (id, part) in &parts {
+        for (id, part) in parts {
             if let Some(s) = status.status(id).filter(|s| *s != ValveStatus::Normal)
                 && let Some((min, max)) = bounds(&part.primitives)
             {
@@ -1502,9 +1579,9 @@ impl SchematicEditor {
         }
         let last = self.route.as_ref().and_then(|r| r.points.last().copied());
         let target = match hover {
-            Some(p) if self.wiring => end_at(&parts, &shown, p, reach, last).map(|(_, at, _)| at),
+            Some(p) if self.wiring => end_at(parts, &shown, p, reach, last).map(|(_, at, _)| at),
             Some(p) => {
-                port_at(&parts, &shown, p, reach, shift || self.drag.is_some()).map(|(_, at)| at)
+                port_at(parts, &shown, p, reach, shift || self.drag.is_some()).map(|(_, at)| at)
             }
             None => None,
         };
@@ -2178,6 +2255,7 @@ mod tests {
         kittest::{NodeT, Queryable},
     };
     use hydra_core::PORT_PIN;
+    use hydra_symbols::{outline_issues, render_parts};
 
     use super::*;
 
@@ -2470,6 +2548,8 @@ mod tests {
         let mut h = wiring_harness();
         let wire = vec![[0.0, 0.0], [0.0, -10.0], [30.0, -10.0], [30.0, 0.0]];
         (h.state_mut().0.doc.circuit.layout.wires).insert("n1".into(), vec![wire.into()]);
+        // Changed outside a command, so the render cached for this edit is stale.
+        h.state_mut().0.rendered = None;
         h.run();
         let state = |h: &Harness<State>| {
             let (e, s) = h.state();
@@ -2931,10 +3011,11 @@ mod tests {
         assert!(h.state().0.dialog.is_none());
         assert!(h.state().0.in_flight.is_some(), "the copy is being saved");
         // The reply for a copy names a new circuit at revision 1.
-        assert!(h.state().0.drawn_issues.is_some());
+        assert!(h.state().0.drawn_issues.is_some() && h.state().0.rendered.is_some());
         h.state_mut().0.circuit_saved("c2".into(), 1);
         // The copy is a new document: nothing cached about the original carries over.
         assert!(h.state().0.drawn_issues.is_none() && h.state().0.valve_status.is_none());
+        assert!(h.state().0.rendered.is_none() && h.state().0.dragged.is_none());
         assert_eq!(
             h.state()
                 .0
@@ -3558,6 +3639,114 @@ mod tests {
         h.get_by_label("Rotate").click();
         h.run_steps(3);
         assert_eq!(h.state().0.status_computed, before + 1);
+    }
+
+    #[test]
+    fn idle_frames_draw_the_circuit_rendered_once_per_change() {
+        let mut h = import_harness(Some(1), false);
+        let before = h.state().0.renders;
+        assert!(before > 0);
+        h.run_steps(5);
+        h.state_mut().0.selected = Some("6.1".into());
+        h.run_steps(2);
+        assert_eq!(
+            h.state().0.renders,
+            before,
+            "idle frames and selecting reuse it"
+        );
+        h.get_by_label("Rotate").click();
+        h.run_steps(3);
+        assert_eq!(h.state().0.renders, before + 1);
+    }
+
+    #[test]
+    fn a_catalogue_reload_redraws_the_status_words() {
+        let mut h = import_harness(Some(1), false);
+        let not_listed = |h: &Harness<State>| {
+            let r = &h.state().0.rendered.as_ref().unwrap().1;
+            (r.drawing.primitives.iter()).any(|p| {
+                matches!(p, hydra_symbols::Primitive::Text { text, .. } if text == "PART NOT LISTED DEMO-CB10-21")
+            })
+        };
+        assert!(!not_listed(&h));
+        let before = h.state().0.renders;
+        let s = &mut h.state_mut().1;
+        (s.catalogue.parts).retain(|p| p.part_number != "DEMO-CB10-21");
+        s.catalogue_loads += 1;
+        h.run_steps(3);
+        assert_eq!(h.state().0.renders, before + 1);
+        assert!(
+            not_listed(&h),
+            "2.1's part is gone from the reloaded catalogue"
+        );
+    }
+
+    #[test]
+    fn turning_a_part_while_dragging_it_is_kept_on_drop() {
+        let mut h = harness();
+        h.get_by_label("Add port").click();
+        h.run();
+        let from = anchor(&h, "X1", PORT_PIN);
+        let to = from + Vec2::new(0.0, 150.0);
+        h.hover_at(from);
+        h.drag_at(from);
+        h.run();
+        h.hover_at(from + (to - from) * 0.5);
+        h.run();
+        h.key_press(Key::R);
+        h.run();
+        h.hover_at(to);
+        h.run();
+        h.drop_at(to);
+        h.run();
+        let placed = h.state().0.placement("X1");
+        assert_eq!(placed.rotation, Rotation::R90, "{placed:?}");
+        assert!(placed.y > 20.0, "and it moved: {placed:?}");
+    }
+
+    #[test]
+    fn dragging_and_undo_redraw_what_the_canvas_hit_tests() {
+        let mut h = harness();
+        h.get_by_label("Add port").click();
+        h.run();
+        let from = anchor(&h, "X1", PORT_PIN);
+        let to = from + Vec2::new(0.0, 150.0);
+        let old = h.state().0.placement("X1");
+        // Held still mid-drag, the part at its drag spot is not rendered again.
+        h.hover_at(from);
+        h.drag_at(from);
+        h.run();
+        h.hover_at(from + (to - from) * 0.5);
+        h.run();
+        let mid = h.state().0.renders;
+        h.run_steps(3);
+        assert_eq!(h.state().0.renders, mid);
+        // At a new spot it is.
+        h.hover_at(from + (to - from) * 0.75);
+        h.run();
+        assert_eq!(h.state().0.renders, mid + 1);
+        // A catalogue reload renders the document and the part at its drag spot again.
+        h.state_mut().1.catalogue_loads += 1;
+        h.run();
+        assert_eq!(h.state().0.renders, mid + 3);
+        h.hover_at(to);
+        h.run();
+        h.drop_at(to);
+        h.run();
+        let new = h.state().0.placement("X1");
+        assert!(new.y > old.y + 20.0, "X1 moved down: {new:?}");
+        let (old, new) = ([old.x, old.y], [new.x, new.y]);
+        // The canvas finds the part where it was moved to, and after undo where it was again.
+        let select = |h: &mut Harness<State>, at| {
+            click_sheet(h, at, egui::PointerButton::Primary);
+            h.state().0.selected.clone()
+        };
+        assert_eq!(select(&mut h, old), None);
+        assert_eq!(select(&mut h, new).as_deref(), Some("X1"));
+        h.get_by_label("Undo").click();
+        h.run();
+        assert_eq!(select(&mut h, new), None);
+        assert_eq!(select(&mut h, old).as_deref(), Some("X1"));
     }
 
     #[test]
