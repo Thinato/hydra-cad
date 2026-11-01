@@ -785,7 +785,8 @@ impl SchematicEditor {
             if ui
                 .checkbox(&mut inside, "In block")
                 .on_hover_text(
-                    "Inside the manifold block: the schematic draws the block's outline around it",
+                    "Inside the manifold block: the schematic draws the block's outline around it, \
+                     and a valve in the block is expected on a face of the 3D block",
                 )
                 .changed()
             {

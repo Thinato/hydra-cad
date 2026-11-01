@@ -31,9 +31,9 @@ fn pr(component: &str, port: &str) -> PortRef {
 
 #[test]
 fn every_fixture_circuit_loads_and_v3_round_trips() {
-    let v2 = Circuit::from_json(&fixture("circuits/demo-manifold.json")).unwrap();
-    assert_eq!(v2.schema, SCHEMA_VERSION);
-    assert!(v2.import.is_none() && v2.bom_extra.is_empty());
+    let demo = Circuit::from_json(&fixture("circuits/demo-manifold.json")).unwrap();
+    assert_eq!(demo.schema, SCHEMA_VERSION);
+    assert!(demo.import.is_none() && demo.bom_extra.is_empty());
     for name in ["demo-import-manifold", "demo-import-motors"] {
         let json = fixture(&format!("circuits/{name}.json"));
         let c = Circuit::from_json(&json).unwrap();
@@ -51,6 +51,8 @@ fn an_old_valve_reads_as_one_that_uses_its_type() {
             {"id": "V1", "kind": "valve", "valve_type": "vt-demo-4-2@1"}]}"#,
     )
     .unwrap();
+    // A version 2 document is upgraded on load.
+    assert_eq!(c.schema, SCHEMA_VERSION);
     assert_eq!(
         c.components[0].kind,
         ComponentKind::valve(r("vt-demo-4-2@1"))
@@ -364,6 +366,7 @@ fn a_cartridge_fits_only_its_cavity() {
         id: "7.1".into(),
         kind: ComponentKind::valve(r("vt-demo-cartridge-relief@1")),
     }]);
+    c.in_block.insert("7.1".into());
     let mut doc = Document::new(c.clone());
     doc.apply(Command::SetBlock {
         block: Some(r("blk-demo@2")),
