@@ -2,12 +2,12 @@
 source: crates/hydra-symbols/tests/fixtures.rs
 expression: svg
 ---
-<svg xmlns="http://www.w3.org/2000/svg" width="152.50mm" height="85.00mm" viewBox="-5.50 -1.75 152.50 85.00">
+<svg xmlns="http://www.w3.org/2000/svg" width="152.50mm" height="87.50mm" viewBox="-5.50 -1.75 152.50 87.50">
 <g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
 <circle cx="0.00" cy="60.00" r="1.20"/>
 <text x="-2.00" y="60.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">P</text>
 <circle cx="0.00" cy="80.00" r="1.20"/>
-<text x="-2.00" y="80.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="0.00" y="82.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">T</text>
 <circle cx="60.00" cy="18.00" r="1.20"/>
 <text x="60.00" y="15.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">A1</text>
 <circle cx="80.00" cy="18.00" r="1.20"/>
@@ -28,8 +28,8 @@ expression: svg
 <polygon points="25.00,68.00 26.60,67.40 26.60,68.60" fill="black"/>
 <polyline points="20.00,73.00 20.00,76.00"/>
 <polyline points="20.00,63.00 20.00,60.00"/>
-<text x="19.00" y="75.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">T</text>
-<text x="19.00" y="61.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="19.00" y="74.50" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="19.00" y="61.50" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">P</text>
 <text x="9.00" y="68.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">RV1</text>
 <circle cx="40.50" cy="60.00" r="1.80"/>
 <polyline points="41.00,57.20 37.00,60.00 41.00,62.80"/>
@@ -37,9 +37,9 @@ expression: svg
 <polyline points="42.30,60.00 42.64,61.20 43.31,58.80 43.99,61.20 44.66,58.80 45.00,60.00"/>
 <polyline points="45.00,60.00 48.00,60.00"/>
 <polyline points="35.00,60.00 32.00,60.00"/>
-<text x="47.00" y="61.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
-<text x="33.00" y="61.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
-<text x="40.25" y="54.95" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">K1</text>
+<text x="46.50" y="61.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="33.50" y="61.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="40.00" y="54.95" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">K1</text>
 <polygon points="55.00,35.00 65.00,35.00 65.00,45.00 55.00,45.00"/>
 <polyline points="58.33,45.00 58.33,35.00"/>
 <polygon points="58.33,35.00 58.93,36.60 57.73,36.60" fill="black"/>
@@ -60,13 +60,13 @@ expression: svg
 <polyline points="78.33,35.00 81.67,45.00"/>
 <polygon points="81.67,45.00 80.59,43.67 81.73,43.29" fill="black"/>
 <polyline points="68.33,35.00 68.33,32.00"/>
-<text x="68.93" y="33.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="68.93" y="33.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <polyline points="71.67,35.00 71.67,32.00"/>
-<text x="72.27" y="33.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="72.27" y="33.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <polyline points="68.33,45.00 68.33,48.00"/>
-<text x="68.93" y="47.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="68.93" y="46.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 <polyline points="71.67,45.00 71.67,48.00"/>
-<text x="72.27" y="47.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="72.27" y="46.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
 <polygon points="50.00,37.00 55.00,37.00 55.00,43.00 50.00,43.00"/>
 <polyline points="51.25,43.00 53.75,37.00"/>
 <polyline points="50.00,40.00 49.58,37.90 48.75,42.10 47.92,37.90 47.08,42.10 46.25,37.90 45.42,42.10 45.00,40.00"/>
@@ -85,13 +85,13 @@ expression: svg
 <polyline points="123.33,35.00 126.67,45.00"/>
 <polygon points="126.67,45.00 125.59,43.67 126.73,43.29" fill="black"/>
 <polyline points="123.33,35.00 123.33,32.00"/>
-<text x="123.93" y="33.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="123.93" y="33.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <polyline points="126.67,35.00 126.67,32.00"/>
-<text x="127.27" y="33.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="127.27" y="33.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <polyline points="123.33,45.00 123.33,48.00"/>
-<text x="123.93" y="47.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="123.93" y="46.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 <polyline points="126.67,45.00 126.67,48.00"/>
-<text x="127.27" y="47.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="127.27" y="46.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
 <polygon points="105.00,37.00 110.00,37.00 110.00,43.00 105.00,43.00"/>
 <polyline points="106.25,43.00 108.75,37.00"/>
 <polyline points="130.00,40.00 130.42,42.10 131.25,37.90 132.08,42.10 132.92,37.90 133.75,42.10 134.58,37.90 135.00,40.00"/>
@@ -101,8 +101,8 @@ expression: svg
 <polyline points="116.53,21.99 116.14,21.58 115.84,21.10 115.66,20.56 115.60,20.00 115.66,19.44 115.84,18.90 116.14,18.42 116.53,18.01"/>
 <polyline points="115.00,16.00 115.00,13.00"/>
 <polyline points="115.00,24.00 115.00,27.00"/>
-<text x="116.00" y="14.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
-<text x="116.00" y="26.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="116.00" y="14.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="116.00" y="25.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <text x="112.47" y="20.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">O1</text>
 <polyline points="20.00,60.00 0.00,60.00 0.00,60.00"/>
 <polyline points="20.00,60.00 32.00,60.00 32.00,60.00"/>
@@ -112,7 +112,7 @@ expression: svg
 <polyline points="48.00,60.00 123.33,60.00 123.33,48.00"/>
 <polyline points="0.00,80.00 20.00,80.00 20.00,76.00"/>
 <circle cx="20.00" cy="80.00" r="0.60" fill="black"/>
-<polyline points="0.00,80.00 71.67,80.00 71.67,48.00"/>
+<polyline points="0.00,80.00 71.67,80.00 71.67,61.00 72.05,60.92 72.37,60.71 72.59,60.38 72.67,60.00 72.59,59.62 72.37,59.29 72.05,59.08 71.67,59.00 71.67,48.00"/>
 <circle cx="71.67" cy="80.00" r="0.60" fill="black"/>
 <polyline points="0.00,80.00 126.67,80.00 126.67,48.00"/>
 <polyline points="68.33,32.00 60.00,32.00 60.00,18.00"/>
@@ -190,74 +190,74 @@ expression: svg
 <polyline points="140.00,70.60 140.00,70.90"/>
 <polyline points="140.00,71.90 140.00,75.90"/>
 <polyline points="140.00,76.90 140.00,77.20"/>
-<polyline points="140.00,78.20 140.00,80.25"/>
-<polyline points="140.00,80.25 138.05,80.25"/>
-<polyline points="137.05,80.25 136.75,80.25"/>
-<polyline points="135.75,80.25 131.75,80.25"/>
-<polyline points="130.75,80.25 130.45,80.25"/>
-<polyline points="129.45,80.25 125.45,80.25"/>
-<polyline points="124.45,80.25 124.15,80.25"/>
-<polyline points="123.15,80.25 119.15,80.25"/>
-<polyline points="118.15,80.25 117.85,80.25"/>
-<polyline points="116.85,80.25 112.85,80.25"/>
-<polyline points="111.85,80.25 111.55,80.25"/>
-<polyline points="110.55,80.25 106.55,80.25"/>
-<polyline points="105.55,80.25 105.25,80.25"/>
-<polyline points="104.25,80.25 100.25,80.25"/>
-<polyline points="99.25,80.25 98.95,80.25"/>
-<polyline points="97.95,80.25 93.95,80.25"/>
-<polyline points="92.95,80.25 92.65,80.25"/>
-<polyline points="91.65,80.25 87.65,80.25"/>
-<polyline points="86.65,80.25 86.35,80.25"/>
-<polyline points="85.35,80.25 81.35,80.25"/>
-<polyline points="80.35,80.25 80.05,80.25"/>
-<polyline points="79.05,80.25 75.05,80.25"/>
-<polyline points="74.05,80.25 73.75,80.25"/>
-<polyline points="72.75,80.25 68.75,80.25"/>
-<polyline points="67.75,80.25 67.45,80.25"/>
-<polyline points="66.45,80.25 62.45,80.25"/>
-<polyline points="61.45,80.25 61.15,80.25"/>
-<polyline points="60.15,80.25 56.15,80.25"/>
-<polyline points="55.15,80.25 54.85,80.25"/>
-<polyline points="53.85,80.25 49.85,80.25"/>
-<polyline points="48.85,80.25 48.55,80.25"/>
-<polyline points="47.55,80.25 43.55,80.25"/>
-<polyline points="42.55,80.25 42.25,80.25"/>
-<polyline points="41.25,80.25 37.25,80.25"/>
-<polyline points="36.25,80.25 35.95,80.25"/>
-<polyline points="34.95,80.25 30.95,80.25"/>
-<polyline points="29.95,80.25 29.65,80.25"/>
-<polyline points="28.65,80.25 24.65,80.25"/>
-<polyline points="23.65,80.25 23.35,80.25"/>
-<polyline points="22.35,80.25 18.35,80.25"/>
-<polyline points="17.35,80.25 17.05,80.25"/>
-<polyline points="16.05,80.25 12.05,80.25"/>
-<polyline points="11.05,80.25 10.75,80.25"/>
-<polyline points="9.75,80.25 5.75,80.25"/>
-<polyline points="4.75,80.25 4.45,80.25"/>
-<polyline points="3.45,80.25 1.17,80.25"/>
-<polyline points="0.00,78.70 0.00,78.40"/>
-<polyline points="0.00,77.40 0.00,73.40"/>
-<polyline points="0.00,72.40 0.00,72.10"/>
-<polyline points="0.00,71.10 0.00,67.10"/>
-<polyline points="0.00,66.10 0.00,65.80"/>
-<polyline points="0.00,64.80 0.00,61.20"/>
-<polyline points="0.00,58.50 0.00,54.50"/>
-<polyline points="0.00,53.50 0.00,53.20"/>
-<polyline points="0.00,52.20 0.00,48.20"/>
-<polyline points="0.00,47.20 0.00,46.90"/>
-<polyline points="0.00,45.90 0.00,41.90"/>
-<polyline points="0.00,40.90 0.00,40.60"/>
-<polyline points="0.00,39.60 0.00,35.60"/>
-<polyline points="0.00,34.60 0.00,34.30"/>
-<polyline points="0.00,33.30 0.00,29.30"/>
-<polyline points="0.00,28.30 0.00,28.00"/>
-<polyline points="0.00,27.00 0.00,23.00"/>
-<polyline points="0.00,22.00 0.00,21.70"/>
-<polyline points="0.00,20.70 0.00,16.70"/>
-<polyline points="0.00,15.70 0.00,15.40"/>
-<polyline points="0.00,14.40 0.00,10.40"/>
-<polyline points="0.00,9.40 0.00,9.10"/>
-<polyline points="0.00,8.10 0.00,4.10"/>
+<polyline points="140.00,78.20 140.00,80.00"/>
+<polyline points="140.00,80.00 137.80,80.00"/>
+<polyline points="136.80,80.00 136.50,80.00"/>
+<polyline points="135.50,80.00 131.50,80.00"/>
+<polyline points="130.50,80.00 130.20,80.00"/>
+<polyline points="129.20,80.00 125.20,80.00"/>
+<polyline points="124.20,80.00 123.90,80.00"/>
+<polyline points="122.90,80.00 118.90,80.00"/>
+<polyline points="117.90,80.00 117.60,80.00"/>
+<polyline points="116.60,80.00 112.60,80.00"/>
+<polyline points="111.60,80.00 111.30,80.00"/>
+<polyline points="110.30,80.00 106.30,80.00"/>
+<polyline points="105.30,80.00 105.00,80.00"/>
+<polyline points="104.00,80.00 100.00,80.00"/>
+<polyline points="99.00,80.00 98.70,80.00"/>
+<polyline points="97.70,80.00 93.70,80.00"/>
+<polyline points="92.70,80.00 92.40,80.00"/>
+<polyline points="91.40,80.00 87.40,80.00"/>
+<polyline points="86.40,80.00 86.10,80.00"/>
+<polyline points="85.10,80.00 81.10,80.00"/>
+<polyline points="80.10,80.00 79.80,80.00"/>
+<polyline points="78.80,80.00 74.80,80.00"/>
+<polyline points="73.80,80.00 73.50,80.00"/>
+<polyline points="72.50,80.00 68.50,80.00"/>
+<polyline points="67.50,80.00 67.20,80.00"/>
+<polyline points="66.20,80.00 62.20,80.00"/>
+<polyline points="61.20,80.00 60.90,80.00"/>
+<polyline points="59.90,80.00 55.90,80.00"/>
+<polyline points="54.90,80.00 54.60,80.00"/>
+<polyline points="53.60,80.00 49.60,80.00"/>
+<polyline points="48.60,80.00 48.30,80.00"/>
+<polyline points="47.30,80.00 43.30,80.00"/>
+<polyline points="42.30,80.00 42.00,80.00"/>
+<polyline points="41.00,80.00 37.00,80.00"/>
+<polyline points="36.00,80.00 35.70,80.00"/>
+<polyline points="34.70,80.00 30.70,80.00"/>
+<polyline points="29.70,80.00 29.40,80.00"/>
+<polyline points="28.40,80.00 24.40,80.00"/>
+<polyline points="23.40,80.00 23.10,80.00"/>
+<polyline points="22.10,80.00 18.10,80.00"/>
+<polyline points="17.10,80.00 16.80,80.00"/>
+<polyline points="15.80,80.00 11.80,80.00"/>
+<polyline points="10.80,80.00 10.50,80.00"/>
+<polyline points="9.50,80.00 5.50,80.00"/>
+<polyline points="4.50,80.00 4.20,80.00"/>
+<polyline points="3.20,80.00 1.20,80.00"/>
+<polyline points="0.00,78.20 0.00,77.90"/>
+<polyline points="0.00,76.90 0.00,72.90"/>
+<polyline points="0.00,71.90 0.00,71.60"/>
+<polyline points="0.00,70.60 0.00,66.60"/>
+<polyline points="0.00,65.60 0.00,65.30"/>
+<polyline points="0.00,64.30 0.00,61.20"/>
+<polyline points="0.00,58.00 0.00,54.00"/>
+<polyline points="0.00,53.00 0.00,52.70"/>
+<polyline points="0.00,51.70 0.00,47.70"/>
+<polyline points="0.00,46.70 0.00,46.40"/>
+<polyline points="0.00,45.40 0.00,41.40"/>
+<polyline points="0.00,40.40 0.00,40.10"/>
+<polyline points="0.00,39.10 0.00,35.10"/>
+<polyline points="0.00,34.10 0.00,33.80"/>
+<polyline points="0.00,32.80 0.00,28.80"/>
+<polyline points="0.00,27.80 0.00,27.50"/>
+<polyline points="0.00,26.50 0.00,22.50"/>
+<polyline points="0.00,21.50 0.00,21.20"/>
+<polyline points="0.00,20.20 0.00,16.20"/>
+<polyline points="0.00,15.20 0.00,14.90"/>
+<polyline points="0.00,13.90 0.00,9.90"/>
+<polyline points="0.00,8.90 0.00,8.60"/>
+<polyline points="0.00,7.60 0.00,4.00"/>
 </g>
 </svg>

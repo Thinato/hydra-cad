@@ -2,7 +2,7 @@
 source: crates/hydra-symbols/tests/fixtures.rs
 expression: to_svg(&drawing.primitives)
 ---
-<svg xmlns="http://www.w3.org/2000/svg" width="54.00mm" height="20.50mm" viewBox="-27.00 -10.25 54.00 20.50">
+<svg xmlns="http://www.w3.org/2000/svg" width="54.00mm" height="20.00mm" viewBox="-27.00 -10.00 54.00 20.00">
 <g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
 <polygon points="-15.00,-5.00 -5.00,-5.00 -5.00,5.00 -15.00,5.00"/>
 <polyline points="-11.67,5.00 -11.67,-5.00"/>
@@ -21,13 +21,13 @@ expression: to_svg(&drawing.primitives)
 <polyline points="8.33,-5.00 11.67,5.00"/>
 <polygon points="11.67,5.00 10.59,3.67 11.73,3.29" fill="black"/>
 <polyline points="-1.67,-5.00 -1.67,-8.00"/>
-<text x="-1.07" y="-7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="-1.07" y="-6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <polyline points="1.67,-5.00 1.67,-8.00"/>
-<text x="2.27" y="-7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="2.27" y="-6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <polyline points="-1.67,5.00 -1.67,8.00"/>
-<text x="-1.07" y="7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="-1.07" y="6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 <polyline points="1.67,5.00 1.67,8.00"/>
-<text x="2.27" y="7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="2.27" y="6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
 <polyline points="-15.00,0.00 -20.00,-4.00"/>
 <circle cx="-20.00" cy="-4.00" r="0.60" fill="black"/>
 <polygon points="-25.00,-1.20 -20.00,-1.20 -20.00,1.20 -25.00,1.20"/>

@@ -616,9 +616,20 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
         "{reply}"
     );
     // One left out at the block's edge, snug between block parts, gets a U cut and a warning.
+    // V1 moves 5 mm down with its wires' ends, to stand at the edge.
     let mut u = demo_circuit("demo-import-motors");
     u["name"] = "DEMO-U".into();
     u["in_block"] = json!(["P", "T", "FC1", "FC2", "FC3", "RV1", "M1"]);
+    u["layout"]["components"]["V1"]["y"] = json!(85.0);
+    for net in ["n-p", "n-t"] {
+        for wire in u["layout"]["wires"][net].as_array_mut().unwrap() {
+            for p in wire.as_array_mut().unwrap() {
+                if *p == json!([230, 88]) || *p == json!([230, 72]) {
+                    p[1] = json!(p[1].as_f64().unwrap() + 5.0);
+                }
+            }
+        }
+    }
     let reply = mcp.import_circuit(import(u)).await.unwrap();
     assert!(
         reply.contains("V1 is outside the block and the outline is cut round it"),
