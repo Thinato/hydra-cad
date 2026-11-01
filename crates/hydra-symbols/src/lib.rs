@@ -1013,9 +1013,32 @@ pub fn status_words(c: &Component, catalogue: &Catalogue) -> Option<String> {
 /// Components without a placement sit at the origin. Components whose catalogue rows are
 /// missing are skipped; [`Circuit::validate`] reports them.
 pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
+    render(circuit, catalogue).drawing
+}
+
+/// Everything one editor frame draws and checks for a circuit, from one pass over it.
+#[derive(Debug)]
+pub struct Rendered {
+    /// What [`render_circuit`] returns.
+    pub drawing: Drawing,
+    /// What [`render_parts`] returns.
+    pub parts: Vec<(String, Drawing)>,
+    /// What [`outline_issues`] returns.
+    pub outline_issues: Vec<Issue>,
+}
+
+/// [`render_circuit`], [`render_parts`] and [`outline_issues`] at once, laying the circuit out
+/// only once.
+pub fn render(circuit: &Circuit, catalogue: &Catalogue) -> Rendered {
     let (parts, wires, outline) = parts_and_wires(circuit, catalogue);
+    let outline_issues = outside_parts(circuit, catalogue, &parts, outline.as_ref(), false)
+        .into_iter()
+        .map(Issue::DrawnInsideBlock)
+        .collect();
     let mut d = Drawing {
-        primitives: parts.into_iter().flat_map(|(_, p)| p.primitives).collect(),
+        primitives: (parts.iter())
+            .flat_map(|(_, p)| p.primitives.iter().cloned())
+            .collect(),
         ports: wires.ports,
     };
     d.primitives.extend(wires.primitives);
@@ -1031,7 +1054,11 @@ pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
             .collect();
         d.primitives.extend(dash_dot(&corners, &ports));
     }
-    d
+    Rendered {
+        drawing: d,
+        parts,
+        outline_issues,
+    }
 }
 
 /// Each drawn part by id, exactly as [`render_circuit`] draws it: its designator keeps clear of
@@ -1751,21 +1778,26 @@ fn body(c: &Component, d: &Drawing, catalogue: &Catalogue) -> Option<Rect> {
 /// Components outside the block that are drawn over its outline, so the schematic would show
 /// them in the block.
 pub fn outline_issues(circuit: &Circuit, catalogue: &Catalogue) -> Vec<Issue> {
-    outside_parts(circuit, catalogue, false)
-        .into_iter()
-        .map(Issue::DrawnInsideBlock)
-        .collect()
+    render(circuit, catalogue).outline_issues
 }
 
 /// Components outside the block that the outline is cut round, at a corner or an edge.
 pub fn notched_parts(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
-    outside_parts(circuit, catalogue, true)
+    let (parts, _, outline) = parts_and_wires(circuit, catalogue);
+    outside_parts(circuit, catalogue, &parts, outline.as_ref(), true)
 }
 
 /// Ids of the components outside the block that reach into its bounding rectangle: those the
-/// outline is cut round, or those drawn over the outline.
-fn outside_parts(circuit: &Circuit, catalogue: &Catalogue, notched: bool) -> Vec<String> {
-    let (parts, _, Some(outline)) = parts_and_wires(circuit, catalogue) else {
+/// outline is cut round, or those drawn over the outline. `parts` and `outline` come from
+/// [`parts_and_wires`].
+fn outside_parts(
+    circuit: &Circuit,
+    catalogue: &Catalogue,
+    parts: &[(String, Drawing)],
+    outline: Option<&Outline>,
+    notched: bool,
+) -> Vec<String> {
+    let Some(outline) = outline else {
         return Vec::new();
     };
     circuit
@@ -1773,7 +1805,7 @@ fn outside_parts(circuit: &Circuit, catalogue: &Catalogue, notched: bool) -> Vec
         .iter()
         .filter(|c| !circuit.in_block.contains(&c.id))
         .filter(|c| {
-            extent(circuit, c, &parts, catalogue).is_some_and(|e| {
+            extent(circuit, c, parts, catalogue).is_some_and(|e| {
                 overlaps(e, outline.rect) && covers(outline.rect, &outline.cuts, e) != notched
             })
         })
