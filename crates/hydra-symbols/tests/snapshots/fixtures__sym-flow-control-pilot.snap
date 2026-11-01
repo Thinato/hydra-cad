@@ -2,7 +2,7 @@
 source: crates/hydra-symbols/tests/fixtures.rs
 expression: to_svg(&drawing.primitives)
 ---
-<svg xmlns="http://www.w3.org/2000/svg" width="28.50mm" height="20.50mm" viewBox="-12.00 -10.25 28.50 20.50">
+<svg xmlns="http://www.w3.org/2000/svg" width="28.50mm" height="20.00mm" viewBox="-12.00 -10.00 28.50 20.00">
 <g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
 <polygon points="-5.00,-5.00 5.00,-5.00 5.00,5.00 -5.00,5.00"/>
 <polyline points="0.00,-5.00 0.00,5.00"/>
@@ -24,7 +24,7 @@ expression: to_svg(&drawing.primitives)
 <text x="9.50" y="-3.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">X</text>
 <polyline points="0.00,-5.00 0.00,-8.00"/>
 <polyline points="0.00,5.00 0.00,8.00"/>
-<text x="1.00" y="-7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">Out</text>
-<text x="1.00" y="7.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">In</text>
+<text x="1.00" y="-6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">Out</text>
+<text x="1.00" y="6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">In</text>
 </g>
 </svg>

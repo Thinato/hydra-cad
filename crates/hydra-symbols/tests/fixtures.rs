@@ -533,7 +533,7 @@ fn outline_lines(circuit: &Circuit, catalogue: &Catalogue) -> Vec<[[f32; 2]; 2]>
 fn an_outside_part_in_an_empty_corner_gets_a_notch() {
     let catalogue = catalogue();
     // Block parts A, B, C make an L; N stands outside the block in its top-right notch, and M
-    // outside it between A and B.
+    // outside it in the middle of the L.
     let json = r#"{"schema": 4, "name": "l", "components": [
         {"id": "A", "kind": "item", "symbol": {"kind": "orifice"}},
         {"id": "B", "kind": "item", "symbol": {"kind": "orifice"}},
@@ -541,7 +541,7 @@ fn an_outside_part_in_an_empty_corner_gets_a_notch() {
         {"id": "N", "kind": "item", "symbol": {"kind": "orifice"}},
         {"id": "M", "kind": "item", "symbol": {"kind": "orifice"}}],
         "layout": {"components": {"A": {"x": 0, "y": 0}, "B": {"x": 0, "y": 40},
-            "C": {"x": 40, "y": 40}, "N": {"x": 40, "y": 0}, "M": {"x": 0, "y": 20}}},
+            "C": {"x": 40, "y": 40}, "N": {"x": 40, "y": 0}, "M": {"x": 20, "y": 20}}},
         "in_block": ["A", "B", "C"]}"#;
     let mut circuit = Circuit::from_json(json).unwrap();
     let only = |id: &str| {
@@ -565,7 +565,7 @@ fn an_outside_part_in_an_empty_corner_gets_a_notch() {
             [min[0], max[1]]
         ]
     );
-    // N in the notch is fine; M between two block parts is drawn inside the block.
+    // N in the notch is fine; M amid the block parts is drawn inside the block.
     assert_eq!(
         outline_issues(&circuit, &catalogue),
         [hydra_core::Issue::DrawnInsideBlock("M".into())]
@@ -598,7 +598,7 @@ fn an_outside_part_in_an_empty_corner_gets_a_notch() {
     assert!(hydra_symbols::drawn_inside_outline(
         &circuit,
         &n_part,
-        place(0.0, 20.0),
+        place(20.0, 20.0),
         &catalogue
     ));
 
@@ -688,8 +688,8 @@ fn a_notch_can_be_cut_at_every_corner() {
 fn notches_never_meet_and_surrounded_parts_stay_flagged() {
     let catalogue = catalogue();
     // Ports L, P, R are the block; N1 and N2 stand outside it on either side of P on the top
-    // edge. N1's notch, with room, ends exactly at P, so N2's notch can't have room there too:
-    // it would meet N1's at P and leave the top edge a spike.
+    // edge. Either notch, with room, would end exactly at P, and meet the other's there, leaving
+    // the top edge a spike: a port on a cut's edge stops it, so neither has room on its P side.
     let json = r#"{"schema": 4, "name": "n", "components": [
         {"id": "L", "kind": "port", "label": "L"}, {"id": "P", "kind": "port", "label": "P"},
         {"id": "R", "kind": "port", "label": "R"},
@@ -713,9 +713,8 @@ fn notches_never_meet_and_surrounded_parts_stay_flagged() {
         block_outline(&circuit, &catalogue).unwrap(),
         [
             [0.0, n1.1[1] + 4.0],
-            [26.5, n1.1[1] + 4.0],
-            [26.5, 0.0],
-            // N2's notch keeps clear of N1's: no room on its P side.
+            [n1.1[0], n1.1[1] + 4.0],
+            [n1.1[0], 0.0],
             [n2.0[0], 0.0],
             [n2.0[0], n2.1[1] + 4.0],
             [100.0, n2.1[1] + 4.0],
@@ -740,6 +739,305 @@ fn notches_never_meet_and_surrounded_parts_stay_flagged() {
         [hydra_core::Issue::DrawnInsideBlock("O".into())]
     );
     assert!(hydra_symbols::notched_parts(&circuit, &catalogue).is_empty());
+}
+
+/// A drawing's bounds.
+type Extent = ([f32; 2], [f32; 2]);
+
+/// Orifices `ids` placed at `at`, with `in_block` the block, and the bounds of each drawn alone.
+fn orifices(ids: &[(&str, f32, f32)], in_block: &[&str]) -> (Circuit, Vec<Extent>) {
+    let components: Vec<String> = ids
+        .iter()
+        .map(|(id, _, _)| {
+            format!(r#"{{"id": "{id}", "kind": "item", "symbol": {{"kind": "orifice"}}}}"#)
+        })
+        .collect();
+    let layout: Vec<String> = ids
+        .iter()
+        .map(|(id, x, y)| format!(r#""{id}": {{"x": {x}, "y": {y}}}"#))
+        .collect();
+    let json = format!(
+        r#"{{"schema": 4, "name": "o", "components": [{}], "layout": {{"components": {{{}}}}},
+            "in_block": {in_block:?}}}"#,
+        components.join(","),
+        layout.join(",")
+    );
+    let circuit = Circuit::from_json(&json).unwrap();
+    let catalogue = catalogue();
+    let bounds = ids
+        .iter()
+        .map(|(id, _, _)| alone(&circuit, id, &catalogue))
+        .collect();
+    (circuit, bounds)
+}
+
+/// Whether every dash of the drawn outline lies on an edge of `block_outline`.
+fn dashes_on_outline(circuit: &Circuit, catalogue: &Catalogue) -> bool {
+    let corners = block_outline(circuit, catalogue).unwrap();
+    let on_edge = |p: [f32; 2]| {
+        (0..corners.len()).any(|k| {
+            let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
+            let within = |v: f32, a: f32, b: f32| a.min(b) - 1e-3 <= v && v <= a.max(b) + 1e-3;
+            within(p[0], a[0], b[0]) && within(p[1], a[1], b[1])
+        })
+    };
+    outline_lines(circuit, catalogue)
+        .iter()
+        .flatten()
+        .all(|&p| on_edge(p))
+}
+
+#[test]
+fn an_outside_part_at_an_edge_between_block_parts_gets_a_u_cut() {
+    let catalogue = catalogue();
+    // Block parts A, B, C make an L with N in its notch; M stands outside the block on its left
+    // edge, between A and B.
+    let (mut circuit, b) = orifices(
+        &[
+            ("A", 0.0, 0.0),
+            ("B", 0.0, 40.0),
+            ("C", 40.0, 40.0),
+            ("N", 40.0, 0.0),
+            ("M", 0.0, 20.0),
+        ],
+        &["A", "B", "C"],
+    );
+    let [a, bb, c, n, m] = b[..] else { panic!() };
+    let (min, max) = ([a.0[0] - 4.0, a.0[1] - 4.0], [c.1[0] + 4.0, c.1[1] + 4.0]);
+    let notch = [n.0[0] - 4.0, n.1[1] + 4.0];
+    // The outline goes in round M and back out, with room beside M but none above or below it,
+    // where A and B are too close.
+    assert!(m.0[1] - 4.0 < a.1[1] + 4.0 && bb.0[1] - 4.0 < m.1[1] + 4.0);
+    let (top, bottom, inner) = (m.0[1], m.1[1], m.1[0] + 4.0);
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            min,
+            [notch[0], min[1]],
+            notch,
+            [max[0], notch[1]],
+            max,
+            [min[0], max[1]],
+            [min[0], bottom],
+            [inner, bottom],
+            [inner, top],
+            [min[0], top],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+    assert_eq!(
+        hydra_symbols::notched_parts(&circuit, &catalogue),
+        ["N", "M"]
+    );
+    assert!(dashes_on_outline(&circuit, &catalogue));
+
+    // A block port on the edge where the cut would go keeps it whole: M is flagged instead.
+    circuit.components.push(hydra_core::Component {
+        id: "P".into(),
+        kind: hydra_core::ComponentKind::Port {
+            label: "P".into(),
+            plugged: false,
+        },
+    });
+    circuit.layout.components.insert(
+        "P".into(),
+        hydra_core::Placement {
+            x: min[0],
+            y: 20.0,
+            ..Default::default()
+        },
+    );
+    circuit.in_block.insert("P".into());
+    assert_eq!(block_outline(&circuit, &catalogue).unwrap().len(), 6);
+    assert_eq!(
+        outline_issues(&circuit, &catalogue),
+        [hydra_core::Issue::DrawnInsideBlock("M".into())]
+    );
+    assert_eq!(hydra_symbols::notched_parts(&circuit, &catalogue), ["N"]);
+
+    // With room between M and B, M looks left out of the block by mistake, so it is flagged.
+    circuit.components.retain(|c| c.id != "P");
+    circuit.in_block.remove("P");
+    circuit.layout.components.get_mut("B").unwrap().y = 60.0;
+    assert_eq!(
+        outline_issues(&circuit, &catalogue),
+        [hydra_core::Issue::DrawnInsideBlock("M".into())]
+    );
+}
+
+#[test]
+fn u_cuts_go_in_from_the_bottom_and_right_edges() {
+    let catalogue = catalogue();
+    // V1, left out of the motors block and moved 5 mm down with its wires' ends, stands at its
+    // bottom edge snug between RV1 and M1.
+    let mut circuit = motors();
+    circuit.in_block = ["P", "T", "FC1", "FC2", "FC3", "RV1", "M1"]
+        .map(String::from)
+        .into();
+    circuit.layout.components.get_mut("V1").unwrap().y += 5.0;
+    for p in circuit
+        .layout
+        .wires
+        .values_mut()
+        .flatten()
+        .flat_map(|w| &mut w.points)
+    {
+        if *p == [230.0, 88.0] || *p == [230.0, 72.0] {
+            p[1] += 5.0;
+        }
+    }
+    let parts = render_parts(&circuit, &catalogue);
+    // As the outline measures parts: V1, outside, without its status words, which move.
+    let at = |id: &str| {
+        let (_, d) = parts.iter().find(|(p, _)| p == id).unwrap();
+        hydra_symbols::outline_box(&circuit, circuit.component(id).unwrap(), d, &catalogue).unwrap()
+    };
+    let (v, m1) = (at("V1"), at("M1"));
+    let corners = block_outline(&circuit, &catalogue).unwrap();
+    let (min, max) = bounds_of(&corners);
+    // Room left of V1 and above it, none on its right, where M1 is too close.
+    assert!(m1.0[0] - 4.0 < v.1[0] + 4.0);
+    let (left, top, right) = (v.0[0] - 4.0, v.0[1] - 4.0, v.1[0]);
+    assert_eq!(
+        corners,
+        [
+            min,
+            [max[0], min[1]],
+            max,
+            [right, max[1]],
+            [right, top],
+            [left, top],
+            [left, max[1]],
+            [min[0], max[1]],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+    assert_eq!(hydra_symbols::notched_parts(&circuit, &catalogue), ["V1"]);
+
+    // M stands at the right edge of a square of block parts, between C and D.
+    let (circuit, b) = orifices(
+        &[
+            ("A", 0.0, 0.0),
+            ("B", 0.0, 40.0),
+            ("C", 40.0, 0.0),
+            ("D", 40.0, 40.0),
+            ("M", 40.0, 20.0),
+        ],
+        &["A", "B", "C", "D"],
+    );
+    let [a, bb, c, d, m] = b[..] else { panic!() };
+    let (min, max) = ([a.0[0] - 4.0, a.0[1] - 4.0], [d.1[0] + 4.0, bb.1[1] + 4.0]);
+    // Room beside M, none above or below it, where C and D are too close.
+    assert!(m.0[1] - 4.0 < c.1[1] + 4.0 && d.0[1] - 4.0 < m.1[1] + 4.0);
+    let inner = m.0[0] - 4.0;
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            min,
+            [max[0], min[1]],
+            [max[0], m.0[1]],
+            [inner, m.0[1]],
+            [inner, m.1[1]],
+            [max[0], m.1[1]],
+            max,
+            [min[0], max[1]],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+    assert!(dashes_on_outline(&circuit, &catalogue));
+}
+
+#[test]
+fn notches_at_opposite_corners_never_meet_at_a_point() {
+    let catalogue = catalogue();
+    // Block parts A and B in the other corners, spaced so N1's and N2's notches, each with room,
+    // would meet at one point and pinch the block in two.
+    // N2 at a round spot, and N1 nudged by the last bit until its notch meets N2's exactly.
+    let n2 = orifices(&[("N2", 20.0, 30.0)], &[]).1[0].0;
+    let n1_hi = |d: f32| orifices(&[("N1", d, d)], &[]).1[0].1;
+    let at = |a: usize| {
+        let mut d = n2[a] - 8.0 - n1_hi(0.0)[a] - 1e-5;
+        while n1_hi(d)[a] + 4.0 < n2[a] - 4.0 {
+            d = d.next_up();
+        }
+        d
+    };
+    let (x, y) = (at(0), at(1));
+    let (circuit, b) = orifices(
+        &[
+            ("N1", x, y),
+            ("A", 20.0, y),
+            ("B", x, 30.0),
+            ("N2", 20.0, 30.0),
+        ],
+        &["A", "B"],
+    );
+    let [n1, a, bb, n2] = b[..] else { panic!() };
+    let p = [n1.1[0] + 4.0, n1.1[1] + 4.0];
+    assert_eq!(p, [n2.0[0] - 4.0, n2.0[1] - 4.0], "set up to meet");
+    let (min, max) = ([bb.0[0] - 4.0, a.0[1] - 4.0], [a.1[0] + 4.0, bb.1[1] + 4.0]);
+    // N2's notch keeps clear of N1's: no room above it.
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            [min[0], p[1]],
+            p,
+            [p[0], min[1]],
+            [max[0], min[1]],
+            [max[0], n2.0[1]],
+            [p[0], n2.0[1]],
+            [p[0], max[1]],
+            [min[0], max[1]],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+}
+
+#[test]
+fn outside_parts_stacked_in_a_corner_get_a_stepped_outline() {
+    let catalogue = catalogue();
+    // A three by three grid: N1 and N2 along the top and N3 below N1 stand outside the block in
+    // its top-left corner. One notch round all three would take in block part D.
+    let (circuit, b) = orifices(
+        &[
+            ("N1", 0.0, 0.0),
+            ("N2", 20.0, 0.0),
+            ("N3", 0.0, 20.0),
+            ("A", 40.0, 0.0),
+            ("D", 20.0, 20.0),
+            ("B", 40.0, 20.0),
+            ("C", 0.0, 40.0),
+            ("E", 20.0, 40.0),
+            ("F", 40.0, 40.0),
+        ],
+        &["A", "B", "C", "D", "E", "F"],
+    );
+    let [_, n2, n3, a, d, _, c, _, f] = b[..] else {
+        panic!()
+    };
+    let (min, max) = ([c.0[0] - 4.0, a.0[1] - 4.0], [f.1[0] + 4.0, f.1[1] + 4.0]);
+    // Each step has room beside its part, but none below it, where D and C are too close.
+    assert!(n2.1[1] + 4.0 > d.0[1] - 4.0 && n3.1[1] + 4.0 > c.0[1] - 4.0);
+    let (wide, deep) = ([n2.1[0] + 4.0, n2.1[1]], [n3.1[0] + 4.0, n3.1[1]]);
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            [min[0], deep[1]],
+            deep,
+            [deep[0], wide[1]],
+            wide,
+            [wide[0], min[1]],
+            [max[0], min[1]],
+            max,
+            [min[0], max[1]],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+    assert_eq!(
+        hydra_symbols::notched_parts(&circuit, &catalogue),
+        ["N1", "N2", "N3"]
+    );
+    assert!(dashes_on_outline(&circuit, &catalogue));
 }
 
 #[test]
@@ -963,7 +1261,14 @@ fn drawn_wires_replace_the_automatic_ones() {
     let mut circuit = motors();
     let drawn = polylines(&circuit);
     for w in circuit.layout.wires.values().flatten() {
-        assert!(drawn.contains(&w.points), "{w:?} is drawn");
+        // Every point in order, with any hop over another net's wire in between.
+        let traced = |d: &Vec<[f32; 2]>| {
+            let mut rest = d.iter();
+            d.first() == w.points.first()
+                && d.last() == w.points.last()
+                && w.points.iter().all(|p| rest.any(|q| q == p))
+        };
+        assert!(drawn.iter().any(traced), "{w:?} is drawn");
     }
     // FC1.Out to HM1.A: as drawn, not the automatic elbow from the net's first port.
     let auto = vec![[40.0, 52.0], [40.0, 52.0], [40.0, 23.0]];
@@ -1006,7 +1311,7 @@ fn junction_dots_mark_where_three_lines_meet() {
     // Two wires meeting end to end, as a corner: no dot.
     let mut c = motors();
     let n_t = c.layout.wires.get_mut("n-t").unwrap();
-    n_t[0] = vec![[20.0, 115.0], [20.0, 50.0]].into();
+    n_t[0] = vec![[20.0, 110.0], [20.0, 50.0]].into();
     n_t.push(vec![[20.0, 50.0], [20.0, 2.0], [230.0, 2.0], [230.0, 72.0]].into());
     assert!(!dot_at(&c, [20.0, 50.0]));
     assert_eq!(wire_problems(&c, &catalogue()), Vec::<String>::new());
@@ -1244,7 +1549,8 @@ fn a_wire_along_an_untraced_nets_elbow_is_a_warning() {
 #[test]
 fn a_wire_along_the_outline_or_across_a_label_is_a_warning() {
     let catalogue = catalogue();
-    // P lower down the outline's left edge, its wire running 4 mm up that edge to the trunk.
+    // P at the outline's bottom left corner, its wire running 4 mm up the left edge to the
+    // trunk.
     let mut c = motors();
     c.layout.components.get_mut("P").unwrap().y = 110.0;
     c.layout.wires.get_mut("n-p").unwrap()[0] =
@@ -1275,20 +1581,34 @@ fn a_wire_along_the_outline_or_across_a_label_is_a_warning() {
 #[test]
 fn a_block_ports_own_wire_may_cross_its_label() {
     let catalogue = catalogue();
-    // T on the block's bottom edge has its label outside, below, where a wire to a part outside
-    // the block leaves it.
+    // P's own wires leave it left, then up and down, and straight up: every spot its label may
+    // move to is on one of them, so it stays on one, outside the block on its left edge, or
+    // above it with no block.
     let mut c = motors();
-    c.layout
-        .wires
-        .get_mut("n-t")
-        .unwrap()
-        .push(vec![[20.0, 115.0], [20.0, 125.0]].into());
-    assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
-    // With no block, a port's label sits above it, where its wire leaves.
-    let mut c = motors();
+    let n_p = c.layout.wires.get_mut("n-p").unwrap();
+    n_p.push(vec![[0.0, 106.0], [-3.0, 106.0], [-3.0, 96.0]].into());
+    n_p.push(vec![[0.0, 106.0], [-3.0, 106.0], [-3.0, 116.0]].into());
+    n_p.push(vec![[0.0, 106.0], [0.0, 96.0]].into());
+    let label_on_a_wire = |c: &Circuit| {
+        let parts = render_parts(c, &catalogue);
+        let (_, p) = parts.iter().find(|(id, _)| id == "P").unwrap();
+        let label = p
+            .primitives
+            .iter()
+            .find(|t| matches!(t, Primitive::Text { .. }));
+        let (lo, hi) = bounds(std::slice::from_ref(label.unwrap())).unwrap();
+        (c.layout.wires["n-p"]
+            .iter()
+            .flat_map(|w| w.points.windows(2)))
+        .any(|s| (0..2).all(|k| s[0][k].min(s[1][k]) <= hi[k] && s[0][k].max(s[1][k]) >= lo[k]))
+    };
+    assert!(label_on_a_wire(&c));
+    let own = |w: &String| w.contains("label \"P\"");
+    assert!(!wire_warnings(&c, &catalogue).iter().any(own));
     c.in_block.clear();
     assert_eq!(block_outline(&c, &catalogue), None);
-    assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
+    assert!(label_on_a_wire(&c));
+    assert!(!wire_warnings(&c, &catalogue).iter().any(own));
 }
 
 #[test]
@@ -1317,4 +1637,451 @@ fn a_long_list_of_wire_warnings_keeps_every_kind() {
     );
     assert_eq!(w[8], "and 19 more wire warnings like these");
     assert!(w[9].contains("crosses the label \"FC2\" of FC2"));
+}
+
+/// The texts of `circuit`'s parts that one of its wires runs through.
+fn texts_on_wires(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
+    let parts: Vec<Primitive> = (render_parts(circuit, catalogue).into_iter())
+        .flat_map(|(_, d)| d.primitives)
+        .collect();
+    // Without the block, all the circuit draws besides its parts is wires.
+    let mut bare = circuit.clone();
+    bare.in_block.clear();
+    let wires: Vec<Vec<[f32; 2]>> = (render_circuit(&bare, catalogue).primitives.into_iter())
+        .filter(|p| !parts.contains(p))
+        .filter_map(|p| match p {
+            Primitive::Polyline { points, .. } => Some(points),
+            _ => None,
+        })
+        .collect();
+    (parts.iter())
+        .filter_map(|p| {
+            let Primitive::Text { text, .. } = p else {
+                return None;
+            };
+            let (lo, hi) = bounds(std::slice::from_ref(p)).unwrap();
+            let on = (wires.iter()).any(|w| w.windows(2).any(|s| crosses(s[0], s[1], lo, hi)));
+            on.then(|| text.clone())
+        })
+        .collect()
+}
+
+fn golden(name: &str) -> Circuit {
+    let path = fixtures().join(format!("circuits/{name}.json"));
+    Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn labels_keep_clear_of_wires() {
+    let catalogue = catalogue();
+    // Status words, item labels, port names and port labels. In the imported manifold, M1's
+    // wire leaves its port downwards and the orifices X1 and X2 stand upright on their wires.
+    // PB10 is the label inside 9.1's box, which a wire is routed straight through.
+    assert_eq!(
+        texts_on_wires(&golden("demo-import-manifold"), &catalogue),
+        ["PB10"]
+    );
+    assert_eq!(
+        texts_on_wires(&golden("demo-manifold"), &catalogue),
+        Vec::<String>::new()
+    );
+    // The motors' column has wires on every side of these within reach, so they stay put; the
+    // port T's label, on its wire, moves beside it.
+    assert_eq!(
+        texts_on_wires(&golden("demo-import-motors"), &catalogue),
+        [
+            "PART NOT LISTED DEMO-PFC32-C3-12E",
+            "MISSING DEMO-PFC40-C3-12E",
+            "STAND-IN for DEMO-PFC25-C3-12E",
+            "DISC 1  100 bar  60 l/min",
+            "CONVEYOR 1  50 bar  60 l/min",
+            "CONVEYOR 2  50 bar  60 l/min",
+        ]
+    );
+}
+
+#[test]
+fn a_block_port_label_dodges_a_wire_leaving_the_block() {
+    let catalogue = catalogue();
+    // P sits on the block's bottom edge; its wire runs straight down to Z, outside the block.
+    let json = r#"{"schema": 5, "name": "p", "components": [
+        {"id": "X", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "Z", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "P", "kind": "port", "label": "P"}],
+        "nets": [{"id": "n", "ports": [{"component": "P", "port": "port"}, {"component": "Z", "port": "B"}]}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "Z": {"x": 0, "y": 60}, "P": {"x": 0, "y": 30}}},
+        "in_block": ["X", "P"]}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let (_, max) = bounds_of(&block_outline(&circuit, &catalogue).unwrap());
+    assert_eq!(max[1], 30.0, "P is on the bottom edge");
+    assert_eq!(texts_on_wires(&circuit, &catalogue), Vec::<String>::new());
+    let parts = render_parts(&circuit, &catalogue);
+    let (_, p) = parts.iter().find(|(id, _)| id == "P").unwrap();
+    let label = p
+        .primitives
+        .iter()
+        .find(|t| matches!(t, Primitive::Text { .. }));
+    let (lo, _) = bounds(std::slice::from_ref(label.unwrap())).unwrap();
+    assert!(lo[1] > 30.0, "still outside the block: {lo:?}");
+}
+
+#[test]
+fn block_ports_never_get_a_junction_dot() {
+    let catalogue = catalogue();
+    // A traced wire passing over the block port Y, which counts as a third line there.
+    let json = r#"{"schema": 5, "name": "d", "components": [
+        {"id": "X", "kind": "port", "label": "X"}, {"id": "Y", "kind": "port", "label": "Y"},
+        {"id": "Z", "kind": "port", "label": "Z"}],
+        "nets": [{"id": "n", "ports": [{"component": "X", "port": "port"}, {"component": "Y", "port": "port"}, {"component": "Z", "port": "port"}]}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "Y": {"x": 20, "y": 0}, "Z": {"x": 40, "y": 0}},
+                   "wires": {"n": [[[0, 0], [40, 0]]]}}}"#;
+    let mut c = Circuit::from_json(json).unwrap();
+    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
+    let y = [20.0, 0.0];
+    assert!(!dot_at(&c, y), "an open circle");
+    c.components[1].kind = hydra_core::ComponentKind::Port {
+        label: "Y".into(),
+        plugged: true,
+    };
+    assert!(!dot_at(&c, y), "a plug bar");
+    // Untraced, the elbows leave the net's first port, Y, both ways.
+    c.layout.wires.clear();
+    c.nets[0].ports.rotate_left(1);
+    for id in ["X", "Z"] {
+        c.layout.components.get_mut(id).unwrap().y = 10.0;
+    }
+    assert!(!dot_at(&c, y), "an automatic star");
+}
+
+#[test]
+fn a_wire_hops_over_another_nets_wire() {
+    // Net a runs down from A1 to A2, net b across from B1 to B2; they cross at (10, 10).
+    let json = r#"{"schema": 5, "name": "h", "components": [
+        {"id": "A1", "kind": "port", "label": "A1"}, {"id": "A2", "kind": "port", "label": "A2"},
+        {"id": "B1", "kind": "port", "label": "B1"}, {"id": "B2", "kind": "port", "label": "B2"}],
+        "nets": [{"id": "a", "ports": [{"component": "A1", "port": "port"}, {"component": "A2", "port": "port"}]},
+                 {"id": "b", "ports": [{"component": "B1", "port": "port"}, {"component": "B2", "port": "port"}]}],
+        "layout": {"components": {"A1": {"x": 10, "y": 0}, "A2": {"x": 10, "y": 20},
+                                  "B1": {"x": 0, "y": 10}, "B2": {"x": 20, "y": 10}}}}"#;
+    let mut c = Circuit::from_json(json).unwrap();
+    let lines = |c: &Circuit| -> Vec<(Vec<[f32; 2]>, bool)> {
+        (render_circuit(c, &catalogue()).primitives.into_iter())
+            .filter_map(|p| match p {
+                Primitive::Polyline { points, dashed, .. } => Some((points, dashed)),
+                _ => None,
+            })
+            .collect()
+    };
+    // The upright line hops: a half circle from 1 mm above the crossing, out to its right, to
+    // 1 mm below. The level one runs on unbroken.
+    let hopped = |points: &[[f32; 2]]| {
+        let at = |p: [f32; 2]| points.iter().position(|q| *q == p);
+        matches!(
+            (at([10.0, 9.0]), at([11.0, 10.0]), at([10.0, 11.0])),
+            (Some(a), Some(b), Some(c)) if a < b && b < c
+        ) && points.first() == Some(&[10.0, 0.0])
+            && points.last() == Some(&[10.0, 20.0])
+    };
+    let drawn = lines(&c);
+    assert!(drawn.iter().any(|(p, _)| hopped(p)), "{drawn:?}");
+    assert!(drawn.contains(&(vec![[0.0, 10.0], [20.0, 10.0], [20.0, 10.0]], false)));
+    // Traced, a pilot line hops too, and stays dashed.
+    let wires = &mut c.layout.wires;
+    wires.insert(
+        "a".into(),
+        vec![Wire {
+            kind: hydra_core::LineKind::Pilot,
+            points: vec![[10.0, 0.0], [10.0, 20.0]],
+        }],
+    );
+    wires.insert("b".into(), vec![vec![[0.0, 10.0], [20.0, 10.0]].into()]);
+    let drawn = lines(&c);
+    assert!(
+        drawn.iter().any(|(p, dashed)| *dashed && hopped(p)),
+        "{drawn:?}"
+    );
+    assert!(drawn.contains(&(vec![[0.0, 10.0], [20.0, 10.0]], false)));
+    let straight = |c: &Circuit| lines(c).contains(&(vec![[10.0, 0.0], [10.0, 20.0]], false));
+    // No hop: across a line of the same net...
+    let mut same = c.clone();
+    let b = same.nets.remove(1);
+    same.nets[0].ports.extend(b.ports);
+    let b = same.layout.wires.remove("b").unwrap();
+    same.layout.wires.insert(
+        "a".into(),
+        vec![vec![[10.0, 0.0], [10.0, 20.0]].into(), b[0].clone()],
+    );
+    assert!(straight(&same), "{:?}", lines(&same));
+    // ...1.5 mm from another net's junction dot, where B3's branch tees into b at (11.5, 10)...
+    let mut dot = c.clone();
+    dot.layout.wires.get_mut("a").unwrap()[0] = vec![[10.0, 0.0], [10.0, 20.0]].into();
+    let json = r#"{"id": "B3", "kind": "port", "label": "B3"}"#;
+    dot.components.push(serde_json::from_str(json).unwrap());
+    dot.layout.components.insert(
+        "B3".into(),
+        serde_json::from_str(r#"{"x": 11.5, "y": 20}"#).unwrap(),
+    );
+    dot.nets[1]
+        .ports
+        .push(serde_json::from_str(r#"{"component": "B3", "port": "port"}"#).unwrap());
+    dot.layout
+        .wires
+        .get_mut("b")
+        .unwrap()
+        .push(vec![[11.5, 10.0], [11.5, 20.0]].into());
+    assert!(dot_at(&dot, [11.5, 10.0]));
+    assert!(straight(&dot), "{:?}", lines(&dot));
+    // ...or ending 0.5 mm past a level line.
+    let mut end = c.clone();
+    end.layout.wires.get_mut("a").unwrap()[0] = vec![[10.0, 0.0], [10.0, 10.5]].into();
+    assert!(
+        lines(&end).contains(&(vec![[10.0, 0.0], [10.0, 10.5]], false)),
+        "{:?}",
+        lines(&end)
+    );
+}
+
+#[test]
+fn a_plug_bar_lies_across_a_line_starting_at_or_passing_through_it() {
+    let catalogue = catalogue();
+    let json = r#"{"schema": 5, "name": "w", "components": [
+        {"id": "X", "kind": "port", "label": "X"}, {"id": "Y", "kind": "port", "label": "Y", "plugged": true},
+        {"id": "Z", "kind": "port", "label": "Z"}],
+        "nets": [{"id": "n", "ports": [{"component": "X", "port": "port"}, {"component": "Y", "port": "port"}, {"component": "Z", "port": "port"}]}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "Y": {"x": 20, "y": 0}, "Z": {"x": 40, "y": 0}},
+                   "wires": {"n": [[[20, 0], [0, 0]], [[20, 0], [40, 0]]]}}}"#;
+    let mut c = Circuit::from_json(json).unwrap();
+    // Y's bar, relative to Y, to a hundredth of a millimetre.
+    let bar = |c: &Circuit| {
+        let parts = render_parts(c, &catalogue);
+        let (_, y) = parts.iter().find(|(id, _)| id == "Y").unwrap();
+        let points = (y.primitives.iter())
+            .find_map(|p| match p {
+                Primitive::Polyline {
+                    points,
+                    filled: true,
+                    ..
+                } => Some(points.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let (lo, hi) = bounds_of(&points);
+        let r = |v: f32| (v * 100.0).round() / 100.0;
+        ([r(lo[0] - 20.0), r(lo[1])], [r(hi[0] - 20.0), r(hi[1])])
+    };
+    let upright = ([-0.35, -1.5], [0.35, 1.5]);
+    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
+    assert_eq!(bar(&c), upright, "wires starting at Y");
+    c.layout
+        .wires
+        .insert("n".into(), vec![vec![[0.0, 0.0], [40.0, 0.0]].into()]);
+    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
+    assert_eq!(bar(&c), upright, "a wire passing through Y");
+    // A wire turning at Y closes neither leg: the bar is level, as for no line.
+    let z = c.layout.components.get_mut("Z").unwrap();
+    (z.x, z.y) = (20.0, 10.0);
+    let corner = vec![[0.0, 0.0], [20.0, 0.0], [20.0, 10.0]];
+    c.layout.wires.insert("n".into(), vec![corner.into()]);
+    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
+    assert_eq!(bar(&c), ([-1.5, -0.35], [1.5, 0.35]), "a wire turning at Y");
+}
+
+#[test]
+fn an_outside_parts_moved_label_leaves_the_block_alone() {
+    let catalogue = catalogue();
+    // Z's wire leaves it downwards through its value label's spot, so the label goes over Z,
+    // reaching up across the block's bottom edge. The part itself stays clear of the block.
+    let json = r#"{"schema": 5, "name": "o", "components": [
+        {"id": "X", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "Z", "kind": "item", "symbol": {"kind": "orifice"}, "label": "X 1.0 mm"},
+        {"id": "Q", "kind": "port", "label": "Q"}],
+        "nets": [{"id": "n", "ports": [{"component": "Z", "port": "A"}, {"component": "Q", "port": "port"}]}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "Z": {"x": 0, "y": 20}, "Q": {"x": 0, "y": 40}}},
+        "in_block": ["X"]}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let parts = render_parts(&circuit, &catalogue);
+    let (_, z) = parts.iter().find(|(id, _)| id == "Z").unwrap();
+    let label = (z.primitives.iter())
+        .find(|p| matches!(p, Primitive::Text { text, .. } if text == "X 1.0 mm"))
+        .unwrap();
+    let (lo, _) = bounds(std::slice::from_ref(label)).unwrap();
+    let (_, max) = bounds_of(&block_outline(&circuit, &catalogue).unwrap());
+    assert!(
+        lo[1] < max[1],
+        "the label {lo:?} reaches into the block, bottom {max:?}"
+    );
+    assert_eq!(outline_issues(&circuit, &catalogue), []);
+}
+
+#[test]
+fn moved_text_keeps_off_other_parts() {
+    let catalogue = catalogue();
+    for name in [
+        "demo-import-manifold",
+        "demo-import-motors",
+        "demo-manifold",
+    ] {
+        let circuit = golden(name);
+        // Each part's symbol, measured alone: no text, no dashed lines (status frames, pilots).
+        let symbols: Vec<_> = (circuit.components.iter())
+            .filter_map(|c| {
+                let place = circuit
+                    .layout
+                    .components
+                    .get(&c.id)
+                    .copied()
+                    .unwrap_or_default();
+                let d = hydra_symbols::render_component(c, place, &catalogue)?;
+                let lines: Vec<Primitive> = (d.primitives.into_iter())
+                    .filter(|p| {
+                        !matches!(
+                            p,
+                            Primitive::Text { .. } | Primitive::Polyline { dashed: true, .. }
+                        )
+                    })
+                    .collect();
+                Some((c.id.clone(), bounds(&lines)?))
+            })
+            .collect();
+        for (id, part) in render_parts(&circuit, &catalogue) {
+            for t in part
+                .primitives
+                .iter()
+                .filter(|p| matches!(p, Primitive::Text { .. }))
+            {
+                let (lo, hi) = bounds(std::slice::from_ref(t)).unwrap();
+                for (other, (a, b)) in symbols.iter().filter(|(o, _)| *o != id) {
+                    let over = lo[0] < b[0] && a[0] < hi[0] && lo[1] < b[1] && a[1] < hi[1];
+                    assert!(!over, "{name}: {t:?} of {id} is on {other}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_slid_label_stays_over_its_part() {
+    let catalogue = catalogue();
+    // Z's own wires take the spots under and over it, and S-T runs down just right of it. The
+    // gaps, left of Z's wire and right of S-T, leave the label all but beside Z, so it stays
+    // under Z.
+    let json = r#"{"schema": 5, "name": "s", "components": [
+        {"id": "Z", "kind": "item", "symbol": {"kind": "orifice"}, "label": "X 1.0 mm"},
+        {"id": "Q", "kind": "port", "label": "Q"}, {"id": "R", "kind": "port", "label": "R"},
+        {"id": "S", "kind": "port", "label": "S"}, {"id": "T", "kind": "port", "label": "T"}],
+        "nets": [{"id": "a", "ports": [{"component": "Z", "port": "A"}, {"component": "Q", "port": "port"}]},
+                 {"id": "b", "ports": [{"component": "Z", "port": "B"}, {"component": "R", "port": "port"}]},
+                 {"id": "c", "ports": [{"component": "S", "port": "port"}, {"component": "T", "port": "port"}]}],
+        "layout": {"components": {"Z": {"x": 0, "y": 0}, "Q": {"x": 0, "y": 20}, "R": {"x": 0, "y": -20},
+                                  "S": {"x": 4, "y": -20}, "T": {"x": 4, "y": 20}}}}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let parts = render_parts(&circuit, &catalogue);
+    let (_, z) = parts.iter().find(|(id, _)| id == "Z").unwrap();
+    let label = (z.primitives.iter())
+        .find(|p| matches!(p, Primitive::Text { text, .. } if text == "X 1.0 mm"))
+        .unwrap();
+    let (lo, hi) = bounds(std::slice::from_ref(label)).unwrap();
+    // Over the middle of Z, which spans x -1.5 to 2.5.
+    assert!(
+        lo[0] < 0.0 && hi[0] > 1.0,
+        "the label {lo:?}-{hi:?} is beside Z"
+    );
+}
+
+#[test]
+fn moved_names_and_port_labels_keep_off_neighbours() {
+    let catalogue = catalogue();
+    // H1-H2 runs level through Z's port name B. Above B's anchor is clear of it but on W, so B
+    // goes to the left of its line. P's wire runs up through P's label; right of P is N.
+    let json = r#"{"schema": 5, "name": "n", "components": [
+        {"id": "Z", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "H1", "kind": "port", "label": "H1"}, {"id": "H2", "kind": "port", "label": "H2"},
+        {"id": "W", "kind": "port", "label": "W"},
+        {"id": "P", "kind": "port", "label": "P"}, {"id": "R", "kind": "port", "label": "R"},
+        {"id": "N", "kind": "port", "label": "N"}],
+        "nets": [{"id": "h", "ports": [{"component": "H1", "port": "port"}, {"component": "H2", "port": "port"}]},
+                 {"id": "p", "ports": [{"component": "P", "port": "port"}, {"component": "R", "port": "port"}]}],
+        "layout": {"components": {"Z": {"x": 0, "y": 0}, "H1": {"x": -10, "y": -5.5}, "H2": {"x": 10, "y": -5.5},
+                                  "W": {"x": 2, "y": -8.5},
+                                  "P": {"x": 40, "y": 0}, "R": {"x": 40, "y": -20}, "N": {"x": 43.5, "y": 0}}}}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let parts = render_parts(&circuit, &catalogue);
+    let text = |id: &str, s: &str| {
+        let (_, d) = parts.iter().find(|(p, _)| p == id).unwrap();
+        let t = (d.primitives.iter())
+            .find(|p| matches!(p, Primitive::Text { text, .. } if text == s))
+            .unwrap();
+        bounds(std::slice::from_ref(t)).unwrap()
+    };
+    assert_eq!(texts_on_wires(&circuit, &catalogue), Vec::<String>::new());
+    let (lo, hi) = text("Z", "B");
+    assert!(
+        hi[0] < 0.8 || lo[1] > -7.3,
+        "B {lo:?}-{hi:?} is on W's circle"
+    );
+    let (_, hi) = text("P", "P");
+    assert!(hi[0] < 40.0, "P's label ends at {hi:?}, on N");
+}
+
+#[test]
+fn the_outline_wraps_block_parts_labels_but_not_outside_ones() {
+    let catalogue = catalogue();
+    // X's long label is in the block, so the outline goes round it.
+    let json = r#"{"schema": 5, "name": "l", "components": [
+        {"id": "X", "kind": "item", "symbol": {"kind": "orifice"}, "label": "A LONG LABEL ON A BLOCK PART"}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}}}, "in_block": ["X"]}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let parts = render_parts(&circuit, &catalogue);
+    let label = (parts[0].1.primitives.iter())
+        .find(|p| matches!(p, Primitive::Text { text, .. } if text.starts_with("A LONG")))
+        .unwrap();
+    let (lo, hi) = bounds(std::slice::from_ref(label)).unwrap();
+    let (min, max) = bounds_of(&block_outline(&circuit, &catalogue).unwrap());
+    assert!(
+        min[0] < lo[0] && min[1] < lo[1] && hi[0] < max[0] && hi[1] < max[1],
+        "label {lo:?}-{hi:?} outside the outline {min:?}-{max:?}"
+    );
+    // A part placed above the block whose label, under it, reaches into the block, but not the
+    // part itself, isn't drawn over the outline.
+    let z: hydra_core::Component = serde_json::from_str(
+        r#"{"id": "Z", "kind": "item", "symbol": {"kind": "orifice"}, "label": "X 1.0 mm"}"#,
+    )
+    .unwrap();
+    let place = |y: f32| serde_json::from_value(serde_json::json!({"x": 0, "y": y})).unwrap();
+    let top = min[1];
+    let alone = hydra_symbols::render_component(&z, place(top - 10.0), &catalogue).unwrap();
+    let (zlo, zhi) = bounds(&alone.primitives).unwrap();
+    assert!(
+        zhi[1] > top && zlo[1] < top,
+        "the label reaches in: {zlo:?}-{zhi:?}, top {top}"
+    );
+    assert!(!hydra_symbols::drawn_inside_outline(
+        &circuit,
+        &z,
+        place(top - 10.0),
+        &catalogue
+    ));
+    assert!(hydra_symbols::drawn_inside_outline(
+        &circuit,
+        &z,
+        place(top - 5.0),
+        &catalogue
+    ));
+}
+
+#[test]
+fn an_outline_box_keeps_a_port_name_reading_like_the_label() {
+    let catalogue = catalogue();
+    // G's label is "M", like its port's name, which reaches furthest right of its symbol.
+    let json = r#"{"schema": 5, "name": "g", "components": [
+        {"id": "G", "kind": "item", "symbol": {"kind": "test_point"}, "label": "M"}],
+        "layout": {"components": {"G": {"x": 0, "y": 0}}}}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let parts = render_parts(&circuit, &catalogue);
+    let g = circuit.component("G").unwrap();
+    let (_, hi) = hydra_symbols::outline_box(&circuit, g, &parts[0].1, &catalogue).unwrap();
+    assert_eq!(
+        hi[0], 2.5,
+        "the port name M counts, the label M under it doesn't"
+    );
 }
