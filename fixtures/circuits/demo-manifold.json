@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 4,
   "name": "Demo manifold (stand-in until the Germani transcription is added)",
   "components": [
     {"id": "P", "kind": "port", "label": "P"},

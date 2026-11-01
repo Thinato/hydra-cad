@@ -375,6 +375,11 @@ impl Circuit {
         if block.is_none() {
             issues.push(Issue::UnknownBlock(assembly.block.clone()));
         }
+        // Without in_block there is no telling which valves belong on the block: one warning
+        // says so instead of one per valve.
+        if self.in_block.is_empty() {
+            issues.push(Issue::NothingInBlock);
+        }
         let mut holders: BTreeMap<&str, &str> = BTreeMap::new();
         for (component, face) in &assembly.mounts {
             let valve_type = match self.component(component).map(|c| &c.kind) {
@@ -391,7 +396,7 @@ impl Circuit {
                 }
                 Some(ComponentKind::Valve(v)) => v.valve_type.as_ref(),
             };
-            if !self.in_block.contains(component) {
+            if !self.in_block.is_empty() && !self.in_block.contains(component) {
                 issues.push(Issue::MountedOutsideBlock(component.clone()));
             }
             if let Some(other) = holders.insert(face, component) {
@@ -514,9 +519,13 @@ pub enum Issue {
     #[error("{0} is not mounted on the block")]
     Unmounted(String),
     #[error(
-        "{0} is mounted on the block but drawn outside it; put it in the block or take it off the block"
+        "{0} is mounted on the block but drawn outside it; tick In block in the schematic, or take it off its face in the 3D tab"
     )]
     MountedOutsideBlock(String),
+    #[error(
+        "No part is ticked In block, so Hydra can't tell which valves belong on the 3D block; tick In block for the parts inside the block"
+    )]
+    NothingInBlock,
     #[error("the block holds component {0}, which is not in the circuit")]
     InBlockUnknown(String),
     #[error(
@@ -549,6 +558,7 @@ impl Issue {
             Issue::Unconnected(_)
             | Issue::Unmounted(_)
             | Issue::MountedOutsideBlock(_)
+            | Issue::NothingInBlock
             | Issue::DrawnInsideBlock(_)
             | Issue::ValveMissing { .. }
             | Issue::PartNotListed { .. }
