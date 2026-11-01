@@ -733,7 +733,7 @@ fn draw_component(
         let gap = if status.is_some() { pad + 1.0 } else { 1.0 };
         let mid = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0];
         // Designator beside the middle of a side no port leaves from, so no wire of this part
-        // starts there: left, right, then top, skipping a side another part's wire crosses.
+        // starts there: left, right, then top, skipping a side any of `wires` crosses.
         // ponytail: when ports or wires take every one of those sides it goes on the first free
         // one, or on the left, even over a wire; a crowded layout needs a part moved.
         let side_of = |[x, y]: Point| {
@@ -808,6 +808,27 @@ pub fn status_words(c: &Component, catalogue: &Catalogue) -> Option<String> {
 /// Components without a placement sit at the origin. Components whose catalogue rows are
 /// missing are skipped; [`Circuit::validate`] reports them.
 pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
+    let (parts, wires) = parts_and_wires(circuit, catalogue);
+    let mut d = Drawing {
+        primitives: parts.into_iter().flat_map(|(_, p)| p.primitives).collect(),
+        ports: wires.ports,
+    };
+    d.primitives.extend(wires.primitives);
+    if let Some((min, max)) = block_outline(circuit, catalogue) {
+        let corners = [min, [max[0], min[1]], max, [min[0], max[1]]];
+        d.primitives.extend(dash_dot(&corners));
+    }
+    d
+}
+
+/// Each drawn part by id, exactly as [`render_circuit`] draws it: its designator keeps clear of
+/// the circuit's wires, so anything measuring or hit-testing parts should use this.
+pub fn render_parts(circuit: &Circuit, catalogue: &Catalogue) -> Vec<(String, Drawing)> {
+    parts_and_wires(circuit, catalogue).0
+}
+
+/// The parts by id, and the wires with every port anchor named `component.port`.
+fn parts_and_wires(circuit: &Circuit, catalogue: &Catalogue) -> (Vec<(String, Drawing)>, Drawing) {
     let place = |c: &Component| {
         circuit
             .layout
@@ -872,17 +893,18 @@ pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
         }
     }
     // The parts again, now that their designators can keep clear of the wires.
-    for c in &circuit.components {
-        if let Some(part) = draw_component(c, place(c), catalogue, &wires) {
-            d.primitives.extend(part.primitives);
-        }
-    }
-    d.primitives.extend(wires);
-    if let Some((min, max)) = block_outline(circuit, catalogue) {
-        let corners = [min, [max[0], min[1]], max, [min[0], max[1]]];
-        d.primitives.extend(dash_dot(&corners));
-    }
-    d
+    let parts = circuit
+        .components
+        .iter()
+        .filter_map(|c| {
+            Some((
+                c.id.clone(),
+                draw_component(c, place(c), catalogue, &wires)?,
+            ))
+        })
+        .collect();
+    d.primitives = wires;
+    (parts, d)
 }
 
 /// Whether a line of `p` passes through the box `lo`-`hi` (Liang-Barsky clipping per segment).
@@ -916,6 +938,7 @@ const OUTLINE_PAD: f32 = 4.0;
 /// The block's outline `(min, max)`: around every part in the block, through the block's ports.
 /// `None` when no drawn component is in the block.
 pub fn block_outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<(Point, Point)> {
+    let parts = render_parts(circuit, catalogue);
     let mut min = [f32::INFINITY; 2];
     let mut max = [f32::NEG_INFINITY; 2];
     for c in circuit
@@ -924,7 +947,7 @@ pub fn block_outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<(Point,
         .filter(|c| circuit.in_block.contains(&c.id))
     {
         // Ports set the edge exactly, as block ports sit on it; parts get room around them.
-        let (lo, hi) = match extent(circuit, c, catalogue) {
+        let (lo, hi) = match extent(circuit, c, &parts) {
             Some(e) if matches!(c.kind, ComponentKind::Port { .. }) => e,
             Some((lo, hi)) => (
                 [lo[0] - OUTLINE_PAD, lo[1] - OUTLINE_PAD],
@@ -939,16 +962,19 @@ pub fn block_outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<(Point,
 }
 
 /// Where a component is on the sheet: a port's point, or the box round anything else's drawing.
-fn extent(circuit: &Circuit, c: &Component, catalogue: &Catalogue) -> Option<(Point, Point)> {
-    let place = circuit
-        .layout
-        .components
-        .get(&c.id)
-        .copied()
-        .unwrap_or_default();
+/// `parts` comes from [`render_parts`], so a designator counts where it is drawn.
+fn extent(circuit: &Circuit, c: &Component, parts: &[(String, Drawing)]) -> Option<(Point, Point)> {
     match c.kind {
-        ComponentKind::Port { .. } => Some(([place.x, place.y], [place.x, place.y])),
-        _ => bounds(&render_component(c, place, catalogue)?.primitives),
+        ComponentKind::Port { .. } => {
+            let place = circuit
+                .layout
+                .components
+                .get(&c.id)
+                .copied()
+                .unwrap_or_default();
+            Some(([place.x, place.y], [place.x, place.y]))
+        }
+        _ => bounds(&parts.iter().find(|(id, _)| *id == c.id)?.1.primitives),
     }
 }
 
@@ -958,12 +984,13 @@ pub fn outline_issues(circuit: &Circuit, catalogue: &Catalogue) -> Vec<Issue> {
     let Some((min, max)) = block_outline(circuit, catalogue) else {
         return Vec::new();
     };
+    let parts = render_parts(circuit, catalogue);
     circuit
         .components
         .iter()
         .filter(|c| !circuit.in_block.contains(&c.id))
         .filter(|c| {
-            extent(circuit, c, catalogue).is_some_and(|(lo, hi)| {
+            extent(circuit, c, &parts).is_some_and(|(lo, hi)| {
                 lo[0] < max[0] && min[0] < hi[0] && lo[1] < max[1] && min[1] < hi[1]
             })
         })
