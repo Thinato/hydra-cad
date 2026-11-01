@@ -24,7 +24,8 @@ pub struct Circuit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assembly: Option<Assembly>,
     /// Ids of the components inside the manifold block, its ports included. The schematic draws
-    /// the block's outline around them.
+    /// the block's outline around them. With a 3D block chosen, these are the valves expected on
+    /// its faces, and only these.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub in_block: BTreeSet<String>,
     /// Bill-of-materials lines that aren't components, such as plugs, seals and the block.
@@ -390,6 +391,9 @@ impl Circuit {
                 }
                 Some(ComponentKind::Valve(v)) => v.valve_type.as_ref(),
             };
+            if !self.in_block.contains(component) {
+                issues.push(Issue::MountedOutsideBlock(component.clone()));
+            }
             if let Some(other) = holders.insert(face, component) {
                 issues.push(Issue::FaceTaken {
                     face: face.clone(),
@@ -424,6 +428,7 @@ impl Circuit {
                 && catalogue
                     .valve_type(valve_type)
                     .is_some_and(|v| v.mounting.is_some())
+                && self.in_block.contains(&c.id)
                 && !assembly.mounts.contains_key(&c.id)
             {
                 issues.push(Issue::Unmounted(c.id.clone()));
@@ -508,6 +513,10 @@ pub enum Issue {
     },
     #[error("{0} is not mounted on the block")]
     Unmounted(String),
+    #[error(
+        "{0} is mounted on the block but drawn outside it; put it in the block or take it off the block"
+    )]
+    MountedOutsideBlock(String),
     #[error("the block holds component {0}, which is not in the circuit")]
     InBlockUnknown(String),
     #[error(
@@ -539,6 +548,7 @@ impl Issue {
         match self {
             Issue::Unconnected(_)
             | Issue::Unmounted(_)
+            | Issue::MountedOutsideBlock(_)
             | Issue::DrawnInsideBlock(_)
             | Issue::ValveMissing { .. }
             | Issue::PartNotListed { .. }

@@ -364,6 +364,7 @@ fn a_cartridge_fits_only_its_cavity() {
         id: "7.1".into(),
         kind: ComponentKind::valve(r("vt-demo-cartridge-relief@1")),
     }]);
+    c.in_block.insert("7.1".into());
     let mut doc = Document::new(c.clone());
     doc.apply(Command::SetBlock {
         block: Some(r("blk-demo@2")),
