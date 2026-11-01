@@ -322,7 +322,7 @@ fn button(
 }
 
 /// A full-width banner in the mark's tone: the mark, the bold `first` sentence, then `rest`, and
-/// at the right whatever `action` adds: the board allows one button, or nothing.
+/// after it whatever `action` adds: the board allows one button, or nothing.
 pub fn banner<R>(
     ui: &mut Ui,
     mark: Mark,
@@ -346,17 +346,13 @@ pub fn banner<R>(
                 0.0,
                 TextFormat::simple(body, LIGHT.ink),
             );
-            // The action first, from the right, so the text wraps in the room left of it.
-            let row = Vec2::new(ui.available_width(), 0.0);
-            ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Min), |ui| {
-                let inner = action(ui);
-                ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
-                    let side = ui.text_style_height(&TextStyle::Body);
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
-                    mark.paint(ui.painter(), rect.shrink(side * 0.15), tone.text);
-                    ui.add(Label::new(job).wrap());
-                });
-                inner
+            // The action follows the text, as it is read, and wraps with it.
+            ui.horizontal_wrapped(|ui| {
+                let side = ui.text_style_height(&TextStyle::Body);
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
+                mark.paint(ui.painter(), rect.shrink(side * 0.15), tone.text);
+                ui.add(Label::new(job).wrap());
+                action(ui)
             })
             .inner
         })
@@ -367,21 +363,25 @@ pub fn banner<R>(
 /// `border` lines: a toolbar group or a segmented control. Give a segment
 /// `Button::selected` to show which one is on.
 pub fn group<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    Frame::new()
-        // Shows through the 1 px gaps between the controls as their dividers.
-        .fill(LIGHT.border)
-        .stroke(Stroke::new(1.0, LIGHT.border_strong))
-        .corner_radius(RADIUS)
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.x = 1.0;
-            let w = &mut ui.visuals_mut().widgets;
-            for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
-                state.corner_radius = CornerRadius::ZERO;
-                state.bg_stroke = Stroke::NONE;
-            }
-            ui.horizontal(add).inner
-        })
-        .inner
+    let joined = ui.scope(|ui| {
+        // Neighbours overlap by their 1 px edge, which is the divider between them.
+        ui.spacing_mut().item_spacing.x = -1.0;
+        let w = &mut ui.visuals_mut().widgets;
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+            state.corner_radius = CornerRadius::ZERO;
+            state.bg_stroke = Stroke::new(1.0, LIGHT.border);
+        }
+        ui.horizontal(add).inner
+    });
+    // The group's edge, over its controls' outer edges. Each control fills itself, so a
+    // disabled one fades to the surface, not to the divider colour.
+    ui.painter().rect_stroke(
+        joined.response.rect,
+        RADIUS,
+        Stroke::new(1.0, LIGHT.border_strong),
+        StrokeKind::Inside,
+    );
+    joined.inner
 }
 
 /// A strip of a side panel, as wide as the panel: `add` in 12 × 10 px padding over a `border`
@@ -895,23 +895,25 @@ mod tests {
         let painted = shapes(|ui| {
             group(ui, |ui| {
                 buttons.push(ui.button("New").rect);
-                buttons.push(ui.button("Open").rect);
+                buttons.push(ui.add_enabled(false, Button::new("Open")).rect);
             });
         });
-        let frame = rects(&painted)
+        let edge = rects(&painted)
             .into_iter()
             .find(|r| r.stroke == Stroke::new(1.0, LIGHT.border_strong))
-            .expect("a frame with a strong edge");
-        assert_eq!(frame.fill, LIGHT.border, "the dividers show through");
-        // Joined: a 1 px divider between them, and square inside.
-        assert_eq!(buttons[1].left() - buttons[0].right(), 1.0);
-        let inner = rects(&painted)
+            .expect("the group's strong edge");
+        assert!(edge.rect.contains_rect(buttons[0].union(buttons[1])));
+        // Joined: they share their 1 px edge, the divider, and are square inside.
+        assert_eq!(buttons[1].left() - buttons[0].right(), -1.0);
+        let inner: Vec<_> = rects(&painted)
             .into_iter()
-            .filter(|r| r.fill == LIGHT.surface)
-            .collect::<Vec<_>>();
+            .filter(|r| r.stroke.width == 1.0 && r.stroke.color != LIGHT.border_strong)
+            .collect();
         assert_eq!(inner.len(), 2);
         assert!(inner.iter().all(|r| r.corner_radius == CornerRadius::ZERO));
-        assert!(inner.iter().all(|r| r.stroke.is_empty()));
+        assert_eq!(inner[0].stroke.color, LIGHT.border);
+        // Nothing behind the controls tints a disabled one.
+        assert!(rects(&painted).iter().all(|r| r.fill != LIGHT.border));
     }
 
     #[test]

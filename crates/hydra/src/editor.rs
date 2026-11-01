@@ -58,6 +58,8 @@ enum Field {
     Item(String, usize),
     /// Position, quantity, code or description of an extra BOM line.
     Extra(usize, usize),
+    /// A port's or an item's label.
+    Label(String),
     Notes,
 }
 
@@ -77,8 +79,12 @@ pub struct Saved {
     pub project: Option<String>,
 }
 
-/// A circuit as drawn, and what it was rendered for.
-type Cached<K> = Option<(K, Arc<Rendered>)>;
+/// Something computed once per change, and what it was computed for: by default, the circuit
+/// as drawn.
+type Cached<K, T = Rendered> = Option<(K, Arc<T>)>;
+
+/// One issue: its severity, the part it is about if any, and the message.
+type IssueRow = (Severity, Option<String>, String);
 
 enum Drag {
     /// Moving a part to `to`; `grab` is the pointer's offset from the part's origin. Rotation and
@@ -145,7 +151,6 @@ pub struct SchematicEditor {
     place: Option<CatalogueRef>,
     /// Text fields, synced from the document while not being edited.
     name: String,
-    label: String,
     note: String,
     /// The field drawn with [`Self::field`] that is being typed in.
     editing: Option<Editing>,
@@ -173,9 +178,10 @@ pub struct SchematicEditor {
     bottom: Bottom,
     /// The selected drawn wire: its net and index.
     wire: Option<(String, usize)>,
-    /// Wire problems and warnings, and the parts the outline is cut round, for (edit counter,
-    /// catalogue loads), like `valve_status`.
-    drawn_issues: Option<((u64, u64), Vec<String>)>,
+    /// Every issue, for (edit counter, catalogue loads), like `valve_status`.
+    issues: Cached<(u64, u64), Vec<IssueRow>>,
+    /// A part picked in the parts list or the issues, selected at the end of the frame.
+    pick: Option<String>,
     /// The document rendered for (edit counter, catalogue loads), like `valve_status`.
     rendered: Cached<(u64, u64)>,
     /// The document with the part being dragged at its new spot, for that key and the spot.
@@ -197,7 +203,6 @@ impl SchematicEditor {
             fitted_to: Some(Vec2::ZERO),
             view: Rect::NOTHING,
             place: None,
-            label: String::new(),
             note: String::new(),
             editing: None,
             new_line: Default::default(),
@@ -214,7 +219,8 @@ impl SchematicEditor {
             route: None,
             bottom: Bottom::Issues,
             wire: None,
-            drawn_issues: None,
+            issues: None,
+            pick: None,
             rendered: None,
             dragged: None,
             renders: 0,
@@ -262,26 +268,50 @@ impl SchematicEditor {
         }
     }
 
-    /// What is wrong with the drawn wires, and which parts the block's outline is cut round, in
-    /// plain words, computed once per change.
-    fn drawn_issues(&mut self, shared: &Shared) -> Vec<String> {
+    /// Every problem with the circuit, errors first, computed once per change: the catalogue's,
+    /// validation, the outline, valve statuses, the drawn wires, and the parts the outline is cut
+    /// round. Each names the part it is about only when it knows the part's id.
+    fn issues(&mut self, shared: &Shared) -> Arc<Vec<IssueRow>> {
         let key = (self.doc.generation(), shared.catalogue_loads);
-        if self.drawn_issues.as_ref().is_none_or(|(k, _)| *k != key) {
-            let (c, cat) = (&self.doc.circuit, &shared.catalogue);
-            // A cut is right for an L- or U-shaped block, but also hides a part left out by mistake.
-            let notched = notched_parts(c, cat).into_iter().map(|id| {
-                format!(
-                    "{id} is outside the block and the outline is cut round it; tick In block if \
-                     it belongs in the block"
-                )
-            });
-            let issues = [wire_problems(c, cat), wire_warnings(c, cat)].concat();
-            self.drawn_issues = Some((key, issues.into_iter().chain(notched).collect()));
+        if let Some((k, issues)) = &self.issues
+            && *k == key
+        {
+            return issues.clone();
         }
-        self.drawn_issues
-            .as_ref()
-            .map(|(_, w)| w.clone())
-            .unwrap_or_default()
+        let status = self.circuit_status(shared);
+        let outline = self.rendered(shared);
+        let (c, cat) = (&self.doc.circuit, &shared.catalogue);
+        let typed = |i: &Issue| (i.severity(), i.component().map(String::from), i.to_string());
+        // A cut is right for an L- or U-shaped block, but also hides a part left out by mistake.
+        let notched = notched_parts(c, cat).into_iter().map(|id| {
+            let message = format!(
+                "{id} is outside the block and the outline is cut round it; tick In block if it \
+                 belongs in the block"
+            );
+            (Severity::Warning, Some(id), message)
+        });
+        let mut issues: Vec<IssueRow> = (cat.problems().into_iter())
+            .map(|p| (Severity::Error, None, format!("catalogue: {p}")))
+            .chain(
+                (c.validate(cat).iter())
+                    .chain(&outline.outline_issues)
+                    .chain(&status.issues)
+                    .map(typed),
+            )
+            // Warnings: a net being drawn is incomplete until its last wire is in. Their words
+            // name no part's id, so they link none.
+            .chain(
+                [wire_problems(c, cat), wire_warnings(c, cat)]
+                    .concat()
+                    .into_iter()
+                    .map(|w| (Severity::Warning, None, w)),
+            )
+            .chain(notched)
+            .collect();
+        issues.sort_by_key(|(s, ..)| *s != Severity::Error);
+        let issues = Arc::new(issues);
+        self.issues = Some((key, issues.clone()));
+        issues
     }
 
     /// Valve statuses of the document against the catalogue, computed once per change.
@@ -348,7 +378,7 @@ impl SchematicEditor {
             current.import = None;
             self.doc = Document::new(current);
             self.valve_status = None;
-            self.drawn_issues = None;
+            self.issues = None;
             (self.rendered, self.dragged) = (None, None);
             self.name = sent.name.clone();
         }
@@ -696,7 +726,7 @@ impl SchematicEditor {
         // While a circuit is being opened or restored, its reply will replace the document.
         let locked = self.awaiting.is_some();
         let status = self.circuit_status(shared);
-        let drawn_issues = self.drawn_issues(shared);
+        let issues = self.issues(shared);
         ui.add_enabled_ui(!locked, |ui| {
             let fill = |color| egui::Frame::new().fill(color);
             egui::Panel::top("schematic-toolbar")
@@ -711,28 +741,35 @@ impl SchematicEditor {
             egui::Panel::bottom("schematic-status")
                 .frame(fill(LIGHT.chrome).inner_margin(egui::Margin::symmetric(12, 4)))
                 .show(ui, |ui| self.status_bar(ui));
-            let outline_issues = self.rendered(shared).outline_issues.clone();
-            let issues = self.issues(&shared.catalogue, &status, &outline_issues, &drawn_issues);
+            // Each side panel stops short of the window, so the sheet always has room.
             egui::Panel::bottom("schematic-issues")
                 .resizable(true)
                 .default_size(200.0)
                 .min_size(90.0)
+                .max_size(360.0)
                 .frame(fill(LIGHT.surface))
                 .show(ui, |ui| self.bottom_panel(ui, &issues));
             egui::Panel::left("schematic-parts")
                 .resizable(true)
                 .default_size(248.0)
                 .min_size(180.0)
+                .max_size(400.0)
                 .frame(fill(LIGHT.panel))
                 .show(ui, |ui| self.parts(ui, &shared.catalogue, &status));
             egui::Panel::right("schematic-inspector")
                 .resizable(true)
                 .default_size(300.0)
                 .min_size(240.0)
+                .max_size(480.0)
                 .frame(fill(LIGHT.panel))
                 .show(ui, |ui| self.inspector(ui, &shared.catalogue, &status));
             self.canvas(ui, shared, &status);
         });
+        // A part picked in the parts list or the issues is selected once the inspector has
+        // drawn, so a field it lost focus from still lands on the part it belongs to.
+        if let Some(id) = self.pick.take() {
+            self.select(id);
+        }
         if !locked {
             self.keys(ui, shared);
         }
@@ -747,86 +784,81 @@ impl SchematicEditor {
         let busy = self.in_flight.is_some() || self.awaiting.is_some();
         // 32 px, the primary Save button's height, so the joined edges of a group line up.
         ui.spacing_mut().interact_size.y = 32.0;
-        let row = Vec2::new(ui.available_width(), 0.0);
-        // Export first, from the right, so the rest wraps in the room left of it.
-        ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            ui.menu_button("Export", |ui| {
-                for kind in [Export::Svg, Export::Pdf, Export::Bom] {
-                    if ui.button(kind.label()).clicked() {
-                        ui.close();
-                        self.export(kind, &shared.catalogue);
-                    }
+        ui.horizontal_wrapped(|ui| {
+            theme::group(ui, |ui| {
+                if ui.button("New").clicked() {
+                    self.guarded(Pending::New, shared, ui.ctx());
+                }
+                let open = ui
+                    .add_enabled(online, egui::Button::new("Open…"))
+                    .on_disabled_hover_text(offline);
+                if open.clicked()
+                    && let Some(db) = &shared.db
+                {
+                    self.dialog = Some(Dialog::Open(None));
+                    db.send(Request::ListCircuits);
+                }
+                let save = ui
+                    .add_enabled(self.can_save(shared), theme::primary("Save"))
+                    .on_disabled_hover_text(if online { "Nothing to save" } else { offline });
+                if save.clicked() {
+                    self.save(shared, false);
+                }
+                let why = if !online {
+                    offline
+                } else if busy {
+                    "Waiting for the database"
+                } else {
+                    "Save the circuit first"
+                };
+                let copy = ui
+                    .add_enabled(
+                        online && !busy && self.saved.is_some(),
+                        egui::Button::new("Save as copy"),
+                    )
+                    .on_disabled_hover_text(why);
+                if copy.clicked() {
+                    self.save(shared, true);
+                }
+                let history = ui
+                    .add_enabled(
+                        online && self.saved.is_some(),
+                        egui::Button::new("History…"),
+                    )
+                    .on_disabled_hover_text(if online {
+                        "Save the circuit first"
+                    } else {
+                        offline
+                    });
+                if history.clicked()
+                    && let (Some(db), Some(saved)) = (&shared.db, &self.saved)
+                {
+                    self.dialog = Some(Dialog::History {
+                        revisions: None,
+                        preview: None,
+                    });
+                    db.send(Request::ListRevisions(saved.id.clone()));
                 }
             });
-            let wrapped = egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true);
-            ui.with_layout(wrapped, |ui| {
-                theme::group(ui, |ui| {
-                    if ui.button("New").clicked() {
-                        self.guarded(Pending::New, shared, ui.ctx());
-                    }
-                    let open = ui
-                        .add_enabled(online, egui::Button::new("Open…"))
-                        .on_disabled_hover_text(offline);
-                    if open.clicked()
-                        && let Some(db) = &shared.db
-                    {
-                        self.dialog = Some(Dialog::Open(None));
-                        db.send(Request::ListCircuits);
-                    }
-                    let save = ui
-                        .add_enabled(self.can_save(shared), theme::primary("Save"))
-                        .on_disabled_hover_text(if online { "Nothing to save" } else { offline });
-                    if save.clicked() {
-                        self.save(shared, false);
-                    }
-                    let copy = ui
-                        .add_enabled(
-                            online && !busy && self.saved.is_some(),
-                            egui::Button::new("Save as copy"),
-                        )
-                        .on_disabled_hover_text(if online {
-                            "Save the circuit first"
-                        } else {
-                            offline
-                        });
-                    if copy.clicked() {
-                        self.save(shared, true);
-                    }
-                    let history = ui
-                        .add_enabled(
-                            online && self.saved.is_some(),
-                            egui::Button::new("History…"),
-                        )
-                        .on_disabled_hover_text("Save the circuit first");
-                    if history.clicked()
-                        && let (Some(db), Some(saved)) = (&shared.db, &self.saved)
-                    {
-                        self.dialog = Some(Dialog::History {
-                            revisions: None,
-                            preview: None,
-                        });
-                        db.send(Request::ListRevisions(saved.id.clone()));
-                    }
-                });
-                theme::group(ui, |ui| {
-                    let undo =
-                        ui.add_enabled(self.doc.undo_label().is_some(), egui::Button::new("Undo"));
-                    let undo = match self.doc.undo_label() {
-                        Some(what) => undo.on_hover_text(format!("Undo {what}")),
-                        None => undo,
-                    };
-                    if undo.clicked() {
-                        self.undo();
-                    }
-                    if ui
-                        .add_enabled(self.doc.redo_label().is_some(), egui::Button::new("Redo"))
-                        .clicked()
-                    {
-                        self.redo();
-                    }
-                });
-                ui.separator();
-                let catalogue = &shared.catalogue;
+            theme::group(ui, |ui| {
+                let undo =
+                    ui.add_enabled(self.doc.undo_label().is_some(), egui::Button::new("Undo"));
+                let undo = match self.doc.undo_label() {
+                    Some(what) => undo.on_hover_text(format!("Undo {what}")),
+                    None => undo,
+                };
+                if undo.clicked() {
+                    self.undo();
+                }
+                if ui
+                    .add_enabled(self.doc.redo_label().is_some(), egui::Button::new("Redo"))
+                    .clicked()
+                {
+                    self.redo();
+                }
+            });
+            let catalogue = &shared.catalogue;
+            theme::group(ui, |ui| {
                 let choice = |r: &Option<CatalogueRef>| match r
                     .as_ref()
                     .and_then(|r| catalogue.valve_type(r))
@@ -889,21 +921,31 @@ impl SchematicEditor {
                         }
                     }
                 });
-                // A toggle showing its key, tinted while on.
-                let key = RichText::new("W").monospace().color(LIGHT.secondary);
-                if ui
-                    .add(
-                        egui::Button::new("Draw wires")
-                            .right_text(key)
-                            .selected(self.wiring),
-                    )
-                    .on_hover_text("Draw a net's wires by hand (W)")
-                    .clicked()
-                {
-                    self.wiring = !self.wiring;
-                }
-                if busy {
-                    ui.spinner();
+            });
+            // A toggle showing its key, tinted while on.
+            let key = RichText::new("W").monospace().color(LIGHT.secondary);
+            if ui
+                .add(
+                    egui::Button::new("Draw wires")
+                        .right_text(key)
+                        .selected(self.wiring),
+                )
+                .on_hover_text("Draw a net's wires by hand (W)")
+                .clicked()
+            {
+                self.wiring = !self.wiring;
+            }
+            if busy {
+                ui.spinner();
+            }
+            // Export last, as it is read, pushed to the right of the row it lands on.
+            push_right(ui, button_width(ui, "Export"));
+            ui.menu_button("Export", |ui| {
+                for kind in [Export::Svg, Export::Pdf, Export::Bom] {
+                    if ui.button(kind.label()).clicked() {
+                        ui.close();
+                        self.export(kind, catalogue);
+                    }
                 }
             });
         });
@@ -949,18 +991,28 @@ impl SchematicEditor {
                 ui.label(data(format!("x {x:.1}  y {y:.1} mm")));
             }
             // Points per millimetre, not a percentage: screens differ in how big a point is.
-            ui.label(data(format!("{:.1} px/mm", self.zoom)));
-            let hint = if self.wiring {
-                "Click a port or a drawn wire to start a wire, click its corners, and finish on a \
-                 port or wire; a wire to another net joins the nets · Esc or right-click cancels \
-                 the wire · Esc again or W stops drawing"
+            ui.label(data(format!("{:.1} pt/mm", self.zoom)));
+            // The essentials on the bar, every key under the pointer.
+            let (hint, full) = if self.wiring {
+                (
+                    "Click a port or wire to start, click corners, finish on a port or wire · \
+                     Esc cancels the wire · Esc again or W stops drawing",
+                    "Click a port or a drawn wire to start a wire, click its corners, and finish \
+                     on a port or wire; a wire to another net joins the nets. Esc or right-click \
+                     cancels the wire; Esc again or W stops drawing. Drag to pan.",
+                )
             } else {
-                "Drag parts to move them · Drag from a valve port to another port to connect \
-                 (Shift-drag from an external port) · Right-click a port to disconnect · \
-                 R rotates · M mirrors · Delete removes · double-click fits · W draws wires; \
-                 click one to select it"
+                (
+                    "Drag to move · drag port to port to connect · R rotates · M mirrors · \
+                     Delete removes · W draws wires · double-click fits",
+                    "Drag parts to move them. Drag from a valve port to another port to connect \
+                     (Shift-drag from an external port). Right-click a port to disconnect. \
+                     R rotates, M mirrors, Delete removes, double-click fits. W draws wires; \
+                     click a drawn wire to select it.",
+                )
             };
-            ui.add(egui::Label::new(RichText::new(hint).small().color(LIGHT.secondary)).truncate());
+            let hint = RichText::new(hint).small().color(LIGHT.secondary);
+            ui.add(egui::Label::new(hint).wrap()).on_hover_text(full);
         });
     }
 
@@ -971,6 +1023,7 @@ impl SchematicEditor {
         self.wiring = false;
         self.route = None;
     }
+
     /// Ask where to save, then write the circuit as it is now, unsaved edits included.
     fn export(&mut self, kind: Export, catalogue: &Catalogue) {
         let ext = kind.extension();
@@ -1012,6 +1065,7 @@ impl SchematicEditor {
             },
         );
     }
+
     /// A text field for `field` whose edit becomes one command and one undo step once finished,
     /// not one per keystroke. Escape drops the edit. Its width is the ui's `text_edit_width`.
     fn field(&mut self, ui: &mut egui::Ui, field: Field, label: egui::Id, multiline: bool) {
@@ -1050,6 +1104,13 @@ impl SchematicEditor {
                 _ => None,
             },
             Field::Extra(i, f) => Some(extra_texts(circuit.bom_extra.get(*i)?)[*f].clone()),
+            Field::Label(id) => match &circuit.component(id)?.kind {
+                ComponentKind::Port { label, .. }
+                | ComponentKind::Item(Item {
+                    label: Some(label), ..
+                }) => Some(label.clone()),
+                _ => None,
+            },
             Field::Notes => Some(circuit.import.as_ref()?.notes.join("\n")),
         }
     }
@@ -1090,6 +1151,7 @@ impl SchematicEditor {
             let what = match &e.field {
                 Field::Item(id, _) => id.clone(),
                 Field::Extra(i, _) => format!("Extra line {}", i + 1),
+                Field::Label(id) => format!("{id}'s label"),
                 Field::Notes => "The import notes".into(),
             };
             self.status = Some(format!(
@@ -1123,6 +1185,17 @@ impl SchematicEditor {
                         self.status = Some(why);
                         return;
                     }
+                }
+            }
+            Field::Label(id) => {
+                let label = e.text.trim();
+                if label.is_empty() {
+                    self.status = Some(format!("{id} needs a label, so its old one is kept."));
+                    return;
+                }
+                Command::SetLabel {
+                    id,
+                    label: label.to_string(),
                 }
             }
             Field::Notes => Command::SetNotes {
@@ -1216,6 +1289,7 @@ impl SchematicEditor {
                     });
             });
     }
+
     /// The parts list: valves with their catalogue status, items, then block ports. Clicking
     /// one selects it, as clicking it on the sheet does.
     fn parts(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue, status: &CircuitStatus) {
@@ -1280,8 +1354,8 @@ impl SchematicEditor {
                         });
                 }
             });
-        if let Some(id) = picked {
-            self.select(id);
+        if picked.is_some() {
+            self.pick = picked;
         }
     }
 
@@ -1375,31 +1449,14 @@ impl SchematicEditor {
                     });
                 }
             }
-            ComponentKind::Port { label, .. }
-            | ComponentKind::Item(hydra_core::Item {
-                label: Some(label), ..
-            }) => {
+            ComponentKind::Port { .. }
+            | ComponentKind::Item(hydra_core::Item { label: Some(_), .. }) => {
                 theme::section(ui, |ui| {
                     let head = ui
                         .label(RichText::new("Label").text_style(theme::label()))
                         .id;
-                    let edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.label)
-                            .desired_width(ui.available_width()),
-                    );
-                    let edit = edit.labelled_by(head);
-                    if edit.lost_focus()
-                        && self.label.trim() != label
-                        && !self.label.trim().is_empty()
-                    {
-                        self.apply(Command::SetLabel {
-                            id: c.id.clone(),
-                            label: self.label.trim().to_string(),
-                        });
-                    }
-                    if !edit.has_focus() {
-                        self.label = label.clone();
-                    }
+                    ui.spacing_mut().text_edit_width = ui.available_width();
+                    self.field(ui, Field::Label(c.id.clone()), head, false);
                 });
             }
             ComponentKind::Item(_) => {}
@@ -1615,37 +1672,9 @@ impl SchematicEditor {
         }
     }
 
-    /// Every problem with the circuit, errors first: its severity, the part it names if any,
-    /// and the message.
-    fn issues(
-        &self,
-        catalogue: &Catalogue,
-        status: &CircuitStatus,
-        outline_issues: &[Issue],
-        wires: &[String],
-    ) -> Vec<(Severity, Option<String>, String)> {
-        let circuit = &self.doc.circuit;
-        let parted = |(s, m): (Severity, String)| (s, named_part(circuit, &m), m);
-        let mut issues: Vec<_> = catalogue
-            .problems()
-            .into_iter()
-            .map(|p| (Severity::Error, None, format!("catalogue: {p}")))
-            .chain(
-                (circuit.validate(catalogue).iter())
-                    .chain(outline_issues)
-                    .chain(&status.issues)
-                    .map(|i| parted((i.severity(), i.to_string()))),
-            )
-            // Warnings: a net being drawn is incomplete until its last wire is in.
-            .chain(wires.iter().map(|w| parted((Severity::Warning, w.clone()))))
-            .collect();
-        issues.sort_by_key(|(s, ..)| *s != Severity::Error);
-        issues
-    }
-
     /// The panel docked under the sheet: the issues, the extra bill-of-materials lines or the
     /// import notes.
-    fn bottom_panel(&mut self, ui: &mut egui::Ui, issues: &[(Severity, Option<String>, String)]) {
+    fn bottom_panel(&mut self, ui: &mut egui::Ui, issues: &[IssueRow]) {
         if self.doc.circuit.import.is_none() && self.bottom == Bottom::Notes {
             self.bottom = Bottom::Issues;
         }
@@ -1671,24 +1700,25 @@ impl SchematicEditor {
                         ui.label(text.color(LIGHT.secondary));
                     }
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let notes = self.doc.circuit.import.as_ref().map(|i| i.notes.len());
-                    let extra = self.doc.circuit.bom_extra.len();
-                    // Right to left: the last tab first.
-                    let mut tabs = vec![];
-                    if let Some(n) = notes {
-                        tabs.push((Bottom::Notes, format!("Import notes ({n})")));
-                    }
-                    tabs.push((Bottom::Extra, format!("Extra BOM lines ({extra})")));
-                    tabs.push((Bottom::Issues, "Issues".to_string()));
-                    theme::group(ui, |ui| {
-                        for (tab, text) in tabs {
-                            let button = egui::Button::new(text).selected(self.bottom == tab);
-                            if ui.add(button).clicked() {
-                                self.bottom = tab;
-                            }
+                let extra = self.doc.circuit.bom_extra.len();
+                let mut tabs = vec![
+                    (Bottom::Issues, "Issues".to_string()),
+                    (Bottom::Extra, format!("Extra BOM lines ({extra})")),
+                ];
+                if let Some(import) = &self.doc.circuit.import {
+                    let n = import.notes.len();
+                    tabs.push((Bottom::Notes, format!("Import notes ({n})")));
+                }
+                // At the right, still read after the counts. Neighbours share a 1 px edge.
+                let width = tabs.iter().map(|(_, t)| button_width(ui, t) - 1.0).sum();
+                push_right(ui, width);
+                theme::group(ui, |ui| {
+                    for (tab, text) in tabs {
+                        let button = egui::Button::new(text).selected(self.bottom == tab);
+                        if ui.add(button).clicked() {
+                            self.bottom = tab;
                         }
-                    });
+                    }
                 });
             });
         });
@@ -1713,14 +1743,15 @@ impl SchematicEditor {
                             }
                         }
                     });
-                if let Some(id) = picked {
-                    self.select(id);
+                if picked.is_some() {
+                    self.pick = picked;
                 }
             }
             Bottom::Extra => self.extra_lines(ui),
             Bottom::Notes => self.notes(ui),
         }
     }
+
     fn canvas(&mut self, ui: &mut egui::Ui, shared: &Shared, status: &CircuitStatus) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.view = rect;
@@ -2305,24 +2336,25 @@ fn explain(c: &Component, status: ValveStatus, catalogue: &Catalogue) -> String 
     }
 }
 
-/// The part a message is about: the first word naming a part of the circuit, or a port of one
-/// (`V1.P`). A word after "net" is a net's name, not a part.
-// ponytail: a guess from the words, so a part named like a word of another message would be
-// linked; an `Issue::component()` in hydra-core would be exact for the typed issues.
-fn named_part(circuit: &Circuit, message: &str) -> Option<String> {
-    let mut after_net = false;
-    for word in message.split_whitespace() {
-        let w = word.trim_matches(|c: char| ",;:.()'\"".contains(c));
-        let w = w.strip_suffix("'s").unwrap_or(w);
-        if !after_net {
-            let port_of = || circuit.component(w.rsplit_once('.')?.0);
-            if let Some(c) = circuit.component(w).or_else(port_of) {
-                return Some(c.id.clone());
-            }
-        }
-        after_net = matches!(word, "net" | "nets");
+/// The width of a button showing `text`.
+fn button_width(ui: &egui::Ui, text: &str) -> f32 {
+    let galley = egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    galley.size().x + 2.0 * ui.spacing().button_padding.x
+}
+
+/// Space that pushes the next `width` of widgets to the right edge of the row, so they are
+/// still read and tabbed to last.
+fn push_right(ui: &mut egui::Ui, width: f32) {
+    // A few points to spare, so rounding never wraps them onto a row of their own.
+    let rest = ui.available_size_before_wrap().x - width - 2.0 * ui.spacing().item_spacing.x - 4.0;
+    if rest > 0.0 {
+        ui.add_space(rest);
     }
-    None
 }
 
 /// A small heading over a group of rows in a side panel.
@@ -2403,7 +2435,8 @@ fn issue_row(ui: &mut egui::Ui, severity: Severity, part: Option<&str>, message:
                         let link = RichText::new(part)
                             .family(egui::FontFamily::Name(theme::MONO_SEMIBOLD.into()));
                         let link = ui.link(link).on_hover_text("Select it on the sheet");
-                        // egui's link reports itself as a plain label; say it is a link.
+                        // egui 0.36's link reaches screen readers (and kittest) as a label, its
+                        // inner label's role winning over the link's; say it is a link.
                         let enabled = ui.is_enabled();
                         link.widget_info(|| {
                             egui::WidgetInfo::labeled(egui::WidgetType::Link, enabled, part)
@@ -3511,10 +3544,10 @@ mod tests {
         assert!(h.state().0.dialog.is_none());
         assert!(h.state().0.in_flight.is_some(), "the copy is being saved");
         // The reply for a copy names a new circuit at revision 1.
-        assert!(h.state().0.drawn_issues.is_some() && h.state().0.rendered.is_some());
+        assert!(h.state().0.issues.is_some() && h.state().0.rendered.is_some());
         h.state_mut().0.circuit_saved("c2".into(), 1);
         // The copy is a new document: nothing cached about the original carries over.
-        assert!(h.state().0.drawn_issues.is_none() && h.state().0.valve_status.is_none());
+        assert!(h.state().0.issues.is_none() && h.state().0.valve_status.is_none());
         assert!(h.state().0.rendered.is_none() && h.state().0.dragged.is_none());
         assert_eq!(
             h.state()
@@ -3884,8 +3917,11 @@ mod tests {
         h.state_mut().0.selected = Some("5.2".into());
         h.run_steps(2);
         assert!(
-            h.query_all_by_label("Missing").count() >= 2,
-            "in the list and the inspector"
+            h.query_by_label(
+                "DEMO-10-4-3-E-24DC is not in the catalogue. Use a stand-in below, or add it to \
+                 the catalogue."
+            )
+            .is_some()
         );
         assert!(
             h.query_by_label("no compatible stand-in: needs directional, ISO 4401-05")
@@ -4658,74 +4694,141 @@ mod tests {
     }
 
     #[test]
-    fn issues_come_errors_first_and_their_part_link_selects_it() {
+    fn issues_come_errors_first_and_link_exactly_their_part() {
         use egui::accesskit::Role;
         let mut h = harness();
-        h.get_by_label("Add port").click();
-        h.run();
+        // Bare-number designators, as cavity numbers are: no "wire 1" or "15" may link them.
         let e = &mut h.state_mut().0;
-        e.selected = None;
-        e.apply(Command::Add {
-            component: Component {
-                id: "V9".into(),
-                kind: ComponentKind::valve(CatalogueRef::new("vt-nope", 1)),
-            },
-            placement: Placement {
-                x: 40.0,
+        let port = |id: &str| ComponentKind::Port {
+            label: id.into(),
+            plugged: false,
+        };
+        let parts = [
+            (
+                "1",
+                ComponentKind::valve(CatalogueRef::new("vt-nope", 1)),
+                40.0,
+            ),
+            ("2", port("2"), 0.0),
+            ("3", port("3"), 30.0),
+            ("4", port("4"), 60.0),
+        ];
+        for (id, kind, x) in parts {
+            let component = Component {
+                id: id.into(),
+                kind,
+            };
+            let placement = Placement {
+                x,
                 ..Placement::default()
-            },
-            in_block: false,
-        });
-        e.selected = None;
-        h.run();
-        let (e, s) = h.state();
-        let status = CircuitStatus::compute(&e.doc.circuit, &s.catalogue);
-        // An error listed after the warnings, as one from the outline would be.
-        let late = [Issue::DuplicateNet("n9".into())];
-        let issues = e.issues(&s.catalogue, &status, &late, &[]);
-        let severities: Vec<_> = issues.iter().map(|(s, ..)| *s).collect();
-        let first_warning = severities
-            .iter()
-            .position(|s| *s == Severity::Warning)
+            };
+            (e.doc.apply(Command::Add {
+                component,
+                placement,
+                in_block: false,
+            }))
             .unwrap();
-        assert!(first_warning > 0, "{issues:?}");
+        }
+        let pin = |c: &str| PortRef {
+            component: c.into(),
+            port: PORT_PIN.into(),
+        };
+        (e.doc.apply(Command::Connect {
+            a: pin("2"),
+            b: pin("3"),
+        }))
+        .unwrap();
+        let net = e.doc.circuit.nets[0].id.clone();
+        let wire = vec![[0.0, 0.0], [0.0, -10.0], [15.0, -10.0]];
+        e.doc.circuit.layout.wires.insert(net, vec![wire.into()]);
+        // An error validation lists after a warning.
+        e.doc.circuit.in_block.insert("Z9".into());
+        (e.issues, e.rendered) = (None, None);
+        h.run();
+
+        let issues = h.state_mut().0.issues(&shared());
+        let row = |text: &str| {
+            (issues.iter().find(|(.., m)| m.contains(text)))
+                .unwrap_or_else(|| panic!("no {text:?} in {issues:#?}"))
+        };
+        let errors = issues
+            .iter()
+            .take_while(|(s, ..)| *s == Severity::Error)
+            .count();
         assert!(
-            severities[first_warning..]
+            issues[errors..]
                 .iter()
-                .all(|s| *s == Severity::Warning)
+                .all(|(s, ..)| *s == Severity::Warning),
+            "{issues:#?}"
         );
-        assert_eq!(issues[0].1.as_deref(), Some("V9"), "{issues:#?}");
-        assert_eq!(first_warning, 2, "{issues:#?}");
-        // Each row says its severity in words, beside its mark.
+        assert_eq!(row("Z9").0, Severity::Error, "sorted before the warnings");
+        assert_eq!(row("vt-nope").1.as_deref(), Some("1"));
+        assert_eq!(row("port 4.port").1.as_deref(), Some("4"));
+        assert_eq!(row("Z9").1, None, "not in the circuit");
+        assert_eq!(row("wire 1 of net").1, None, "drawn-wire words name no id");
+
+        // Each row says its severity in words, beside its mark; the link selects the part.
         assert!(h.query_all_by_label("Error").count() >= 1);
         assert!(h.query_all_by_label("Warning").count() >= 1);
-        assert!(h.query_by_label("1 warning").is_some());
-        h.get_by_role_and_label(Role::Link, "X1").click();
+        h.get_by_role_and_label(Role::Link, "1").click();
         h.run();
-        assert_eq!(h.state().0.selected(), Some("X1"));
+        assert_eq!(h.state().0.selected(), Some("1"));
     }
 
     #[test]
-    fn a_message_names_the_part_it_is_about() {
-        let mut c = empty_circuit();
-        for id in ["P", "X3", "5.1"] {
-            c.components.push(Component {
-                id: id.into(),
-                kind: ComponentKind::Port {
-                    label: id.into(),
-                    plugged: false,
-                },
-            });
-        }
-        let named = |m: &str| named_part(&c, m);
-        assert_eq!(
-            named("wire 1 of net P passes over port X3.port, which is on no net").as_deref(),
-            Some("X3"),
-            "P after \"net\" is the net"
+    fn a_label_being_typed_lands_on_its_part_when_another_is_picked() {
+        use egui::accesskit::Role;
+        let typed = |pick: &dyn Fn(&mut Harness<State>)| {
+            let mut h = harness();
+            for _ in 0..2 {
+                h.get_by_label("Add port").click();
+                h.run();
+            }
+            h.get_by_role_and_label(Role::Button, "X1").click();
+            h.run();
+            assert_eq!(h.state().0.selected(), Some("X1"));
+            retype(&mut h, "Label", 0, "PX", None);
+            pick(&mut h);
+            let label = |id: &str| match &h.state().0.doc.circuit.component(id).unwrap().kind {
+                ComponentKind::Port { label, .. } => label.clone(),
+                _ => unreachable!(),
+            };
+            assert_eq!((label("X1"), label("X2")), ("PX".into(), "X2".into()));
+            assert_eq!(h.state().0.selected(), Some("X2"));
+        };
+        // From the parts list, and from X2's "not connected" issue.
+        typed(&|h| {
+            h.get_by_role_and_label(Role::Button, "X2").click();
+            h.run();
+        });
+        typed(&|h| {
+            h.get_by_role_and_label(Role::Link, "X2").click();
+            h.run();
+        });
+    }
+
+    #[test]
+    fn the_tab_lays_out_at_the_default_window_size() {
+        let mut h = theme::harness(
+            Vec2::new(1200.0, 800.0),
+            |ui, (e, s): &mut State| e.ui(ui, s),
+            (SchematicEditor::new(empty_circuit(), None), shared()),
         );
-        assert_eq!(named("5.1's port A is open").as_deref(), Some("5.1"));
-        assert_eq!(named("port 5.1.A is not connected").as_deref(), Some("5.1"));
-        assert_eq!(named("No part is ticked In block"), None);
+        h.run();
+        let view = h.state().0.view;
+        assert!(view.width() > 300.0 && view.height() > 200.0, "{view:?}");
+        let inside = |label: &str| {
+            let r = h.get_by_label(label).rect();
+            r.right() <= 1200.0 && r.bottom() <= 800.0 && r.top() < view.top()
+        };
+        for label in ["New", "Undo", "Place", "Draw wires W", "Export"] {
+            assert!(inside(label), "{label} is off the toolbar");
+        }
+        let hint = h.get_by_label_contains("R rotates").rect();
+        assert!(
+            hint.right() <= 1200.0 && hint.top() > view.bottom(),
+            "{hint:?}"
+        );
     }
 
     #[test]

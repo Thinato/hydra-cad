@@ -95,7 +95,7 @@ The Components board shows each one. How they map to egui, with the `theme` help
   - *Danger* (`theme::danger(text)`) is outlined in `missing.text`, never filled, and is used for reject, delete and discard.
   - Both helpers return an `impl Widget` around an egui `Button`, 32 px high, so `add_enabled` and the hover texts work as usual. Under the pointer or pressed, primary turns `accent_hover` and danger takes the `missing` tint and strong edge. With keyboard focus both get the 2 px accent ring. A disabled primary button is the accent faded by egui.
   - A disabled button always says why in its tooltip (`on_disabled_hover_text`).
-- **Toolbar groups:** buttons grouped by job with joined edges (file, edit, place, export), built with `theme::group(ui, add)`: one `border_strong` frame, square controls inside and 1 px `border` lines between them. A toggle is a `Button::selected` with its key as `right_text` (`Draw wires W`) and turns `accent_tint` while on. The Schematic toolbar's controls are 32 px, the primary Save button's height, so a group's joined edges line up.
+- **Toolbar groups:** buttons grouped by job with joined edges (file, edit, place, export), built with `theme::group(ui, add)`: one `border_strong` edge, square controls inside that share their 1 px `border` edges as dividers. Each control fills itself, so a disabled one fades to the surface. A toggle is a `Button::selected` with its key as `right_text` (`Draw wires W`) and turns `accent_tint` while on. The Schematic toolbar's controls are 32 px, the primary Save button's height, so a group's joined edges line up.
 - **Tabs:** the active tab has a 3 px `accent` top edge and the panel colour. Proposals carries a count of waiting proposals in the `agent` tone.
 - **Fields:** a label above, 32 px high. In a table (the Proposals fields) the label is the first column instead.
   - Codes and refs are in Data type.
@@ -103,7 +103,7 @@ The Components board shows each one. How they map to egui, with the `theme` help
   - A field with an error gets a `missing` edge and the fix in plain words under it.
 - **Status chips:** `theme::chip(ui, mark, word)`: the mark, then the word, in the tone's text on its tint with a `strong` edge, 24 px high. Kittests and screen readers read the word as a label. The mark picks the tone (`Mark::tone`): ▲ `unlisted`, ■ `missing`, ⇄ `stand_in`, ✓ `ok`, ◆ `agent`, ● the accent (waiting for a person), ✕ grey (rejected). Valve status is about the catalogue. Review status (waiting, approved, rejected, checked) is about a person's decision.
 - **Marked text:** `theme::marked(ui, mark, text)`: the mark, as tall as the text, then the text, both in the mark's tone and always left to right. Used for a problem line, a queue row's check or a "No symbol" note.
-- **Banners:** `theme::banner(ui, mark, first, rest, action)`: a full-width strip in the mark's tint with a `strong` edge: the mark, the bold first sentence, then the fix, and at the right what `action` adds. The board allows at most one button: an unchecked import offers "Mark checked". Pass `|_| ()` for none.
+- **Banners:** `theme::banner(ui, mark, first, rest, action)`: a full-width strip in the mark's tint with a `strong` edge: the mark, the bold first sentence, then the fix, and after it what `action` adds, so it is read in that order. The board allows at most one button: an unchecked import offers "Mark checked". Pass `|_| ()` for none.
 - **Tables:** square, a `border` edge, `divider` lines between rows, a `panel`-coloured header row in Overline type and `secondary` colour, and 12 px cell padding.
 - **Panel sections:** `theme::section(ui, add)`: a strip as wide as the side panel, 12 × 10 px padding over a `border` line. A panel's header (an overline title such as PARTS, and a count or buttons) and each section of the inspector (CATALOGUE, USE INSTEAD, PLACEMENT, titled in overline type in `secondary`) are sections.
 - **List rows:** `theme::list_row(ui, selected, name, add)`: a 1 px `divider` under each row; the selected row is `accent_tint` with a 1 px `accent` edge all round (never a coloured stripe down one side), and a focused row gets the same edge. A clickable row tells screen readers its name and whether it is selected (`WidgetInfo::selected`). The review queue and the parts list use it.
@@ -132,12 +132,13 @@ Approve stays off while a problem is open, and the action bar says why.
 Built so far: the queue, each waiting row with its check (■ problems, ▲ replaces a released type, ✓ checks pass), the header with its chips, the symbol on the sheet, the replace banner, the fields and parts tables, the notes, and the action bar pinned under the detail with its problem count. The step list, the datasheet page beside the symbol, each field's source page and the activity feed wait for data hydra-mcp doesn't record yet (see TODO.md).
 
 The Schematic tab follows the board around the sheet:
-- the toolbar's groups: file (Save as the primary button), edit, place, the Draw wires toggle, and Export at the right; below them the circuit's name, the note for the next save, the revision and what happened last;
+- the toolbar's groups: file (Save as the primary button), edit, place (valve type, Place, Add port, Add part), the Draw wires toggle, and Export at the right, still read last; below them the circuit's name, the note for the next save, the revision and what happened last;
 - the unchecked-import banner with Mark checked;
 - the parts list on the left: valves with their series and code and a status chip, items, and block ports as chips; a click selects the part;
 - the inspector on the right: the part's designator and what it is, its status chip and why in plain words, CATALOGUE, USE INSTEAD with the stand-ins and the port mapping, the label or bill-of-materials fields, and PLACEMENT (Rotate R, Mirror M, Delete, In block, Plugged); for a selected wire its kind, Delete wire and Draw net automatically;
 - the panel under the sheet: the issues, or the extra bill-of-materials lines or the import notes, chosen with a segmented switch;
-- the status bar: the pointer's position on the sheet in mm, the zoom in points per mm (not a percentage, since screens differ in how big a point is) and the keyboard hints for the mode.
+- the status bar: the pointer's position on the sheet in mm, the zoom in points per mm (not a percentage, since screens differ in how big a point is) and the essential keys for the mode, with every key in its hover.
+- An issue links the part it is about only when it knows the part's id (`Issue::component`, or the part the outline is cut round); the drawn-wire messages link none. Nothing is guessed from a message's words.
 
 The revision stays as toolbar text until the title block is drawn on the sheet.
 
