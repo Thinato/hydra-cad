@@ -162,14 +162,16 @@ fn designators_are_clear_of_wires_frames_and_the_outline() {
 #[test]
 fn a_designator_moved_by_a_wire_counts_where_it_is_drawn() {
     let catalogue = catalogue();
-    // The wire from Q to R runs down just left of X100, so its designator goes on the right.
+    // The wire drawn from Q to R runs down just left of X100, so its designator goes on the
+    // right. (An automatic wire would keep clear of the designator instead.)
     let json = r#"{"schema": 4, "name": "w", "components": [
         {"id": "Q", "kind": "port", "label": "Q"}, {"id": "R", "kind": "port", "label": "R"},
         {"id": "X100", "kind": "item", "symbol": {"kind": "orifice"}},
         {"id": "Z1", "kind": "item", "symbol": {"kind": "orifice"}}],
         "nets": [{"id": "n", "ports": [{"component": "Q", "port": "port"}, {"component": "R", "port": "port"}]}],
         "layout": {"components": {"Q": {"x": 26, "y": 0}, "R": {"x": 26, "y": 60},
-                                  "X100": {"x": 30, "y": 30}, "Z1": {"x": 46, "y": 30}}},
+                                  "X100": {"x": 30, "y": 30}, "Z1": {"x": 46, "y": 30}},
+                   "wires": {"n": [[[26, 0], [26, 60]]]}},
         "in_block": ["X100"]}"#;
     let circuit = Circuit::from_json(json).unwrap();
     let parts = render_parts(&circuit, &catalogue);
@@ -965,15 +967,16 @@ fn drawn_wires_replace_the_automatic_ones() {
     for w in circuit.layout.wires.values().flatten() {
         assert!(drawn.contains(&w.points), "{w:?} is drawn");
     }
-    // FC1.Out to HM1.A: as drawn, not the automatic elbow from the net's first port.
-    let auto = vec![[40.0, 52.0], [40.0, 52.0], [40.0, 23.0]];
-    assert!(!drawn.contains(&auto));
-    let first = |c: &Circuit| polylines(c).into_iter().filter(|w| w == &auto).count();
+    // FC1.Out to HM1.A: drawn once, as traced, with no automatic wire beside it; without its
+    // wires the net is routed automatically, here along the same straight line.
+    let line = vec![[40.0, 52.0], [40.0, 23.0]];
+    let count = |c: &Circuit| polylines(c).into_iter().filter(|w| w == &line).count();
+    assert_eq!(count(&circuit), 1);
     circuit.layout.wires.remove("n-1");
     assert_eq!(
-        first(&circuit),
+        count(&circuit),
         1,
-        "a net without wires gets its elbow back"
+        "a net without wires gets its automatic wire back"
     );
     assert!(polylines(&circuit).contains(&circuit.layout.wires["n-p"][0].points));
 }
