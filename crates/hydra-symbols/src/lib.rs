@@ -1972,24 +1972,23 @@ pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
         })
         .collect();
     let corners = outline.as_ref().map(Outline::corners).unwrap_or_default();
-    // Designators and block ports' labels where they are drawn: a designator keeps clear of
-    // wires where it can. A block port's label sits on its own wire's line at the block's edge,
-    // so that wire is let off. Status words and an item's label are centred under the part,
-    // across the line into its bottom port, wherever it is placed, so they aren't checked.
+    // Designators and block ports' labels where they are drawn, with the part's ports: a
+    // designator keeps clear of wires where it can, but a part's own wires may take every side
+    // it could go on, and a block port's label sits on its own wire's line at the block's edge,
+    // so a wire touching one of the part's ports is let off. Status words and an item's label
+    // are centred under the part, across the line into its bottom port, wherever it is placed,
+    // so they aren't checked.
     let labels: Vec<_> = (parts.iter())
         .filter_map(|(id, part)| {
-            let c = circuit.component(id)?;
-            let (name, port) = match &c.kind {
-                ComponentKind::Port { label, .. } => {
-                    let place = placement(circuit, id);
-                    (label, Some([place.x, place.y]))
-                }
-                _ => (id, None),
+            let name = match &circuit.component(id)?.kind {
+                ComponentKind::Port { label, .. } => label,
+                _ => id,
             };
             let text = (part.primitives.iter()).find(
                 |p| matches!(p, Primitive::Text { text, .. } if text == name && !text.is_empty()),
             )?;
-            Some((id, name, bounds(std::slice::from_ref(text))?, port))
+            let own: Vec<Point> = part.ports.iter().map(|(_, p)| *p).collect();
+            Some((id, name, bounds(std::slice::from_ref(text))?, own))
         })
         .collect();
     // The nets left untraced, with their ports and their automatic lines as drawn.
@@ -2101,8 +2100,8 @@ pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
                 }
             }
             let line = open(w.to_vec());
-            for (id, text, (lo, hi), port) in &labels {
-                if !port.is_some_and(|p| on_wire(p, w)) && crosses(&line, *lo, *hi) {
+            for (id, text, (lo, hi), own) in &labels {
+                if !own.iter().any(|p| on_wire(*p, w)) && crosses(&line, *lo, *hi) {
                     kinds[3].push(format!(
                         "{what} crosses the label \"{text}\" of {id}; move the wire or {id} so \
                          the label is clear"
@@ -2111,13 +2110,14 @@ pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
             }
         }
     }
-    // A long list is cut short evenly, so every kind found is still shown.
+    // A long list is cut short evenly, so every kind found is still shown, in MAX_LISTED lines
+    // at most, counting each kind's "and N more".
     let each = MAX_LISTED / kinds.iter().filter(|k| !k.is_empty()).count().max(1);
     (kinds.into_iter())
         .flat_map(|mut k| {
             if k.len() > each {
-                let more = k.len() - each;
-                k.truncate(each);
+                let more = k.len() - (each - 1);
+                k.truncate(each - 1);
                 k.push(format!("and {more} more wire warnings like these"));
             }
             k

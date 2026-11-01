@@ -1528,6 +1528,13 @@ fn a_wire_along_an_untraced_nets_elbow_is_a_warning() {
     let n_t = c.layout.wires.get_mut("n-t").unwrap();
     n_t[8] = vec![[20.0, 40.0], [62.0, 40.0]].into();
     assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
+    // Over the untraced net's port, FC1.Out, where its line starts: a problem, not this too.
+    c.layout.wires.get_mut("n-t").unwrap()[8] = vec![[20.0, 52.0], [62.0, 52.0]].into();
+    assert_eq!(
+        wire_problems(&c, &catalogue),
+        ["wire 9 of net n-t passes over port FC1.Out, which is on net n-1; route it around"]
+    );
+    assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
     // A corner of the automatic line on a traced wire that runs on past both its ends: n-2's
     // line turns at 102, 52 on its way down to FC2.X.
     let mut c = motors();
@@ -1627,16 +1634,16 @@ fn a_long_list_of_wire_warnings_keeps_every_kind() {
         .unwrap()
         .push(vec![[30.0, 60.0], [100.0, 60.0]].into());
     let w = wire_warnings(&c, &catalogue);
-    // Three kinds share the 20 lines: 6 each at most.
-    assert_eq!(w.len(), 2 + 6 + 1 + 1, "{w:?}");
+    // Three kinds share the 20 lines: 6 each at most, counting "and N more".
+    assert_eq!(w.len(), 2 + 6 + 1, "{w:?}");
     assert!(w[0].contains("runs through FC1") && w[1].contains("runs through FC2"));
     assert!(
-        w[2..8]
+        w[2..7]
             .iter()
             .all(|w| w.contains("runs along the block outline"))
     );
-    assert_eq!(w[8], "and 19 more wire warnings like these");
-    assert!(w[9].contains("crosses the label \"FC2\" of FC2"));
+    assert_eq!(w[7], "and 20 more wire warnings like these");
+    assert!(w[8].contains("crosses the label \"FC2\" of FC2"));
 }
 
 /// The texts of `circuit`'s parts that one of its wires runs through.
@@ -2084,4 +2091,57 @@ fn an_outline_box_keeps_a_port_name_reading_like_the_label() {
         hi[0], 2.5,
         "the port name M counts, the label M under it doesn't"
     );
+}
+
+#[test]
+fn a_valves_own_wires_never_warn_in_any_placement() {
+    // Every catalogue valve, in all 8 placements, each port wired straight out to a block port:
+    // its own wires may take every side its designator could go on (a counterbalance turned 90,
+    // a flow control turned 270), and nothing in the drawing could fix that.
+    let catalogue = catalogue();
+    for vt in &catalogue.valve_types {
+        for (rotation, mirror) in [0, 90, 180, 270]
+            .into_iter()
+            .flat_map(|r| [(r, false), (r, true)])
+        {
+            let mut json = serde_json::json!({
+                "schema": SCHEMA_VERSION, "name": "probe",
+                "components": [{"id": "V1", "kind": "valve", "valve_type": format!("{}@{}", vt.key, vt.version)}],
+                "nets": [],
+                "layout": {"components": {"V1": {"x": 50, "y": 50, "rotation": rotation, "mirror": mirror}}, "wires": {}},
+            });
+            let c = Circuit::from_json(&json.to_string()).unwrap();
+            let v = render_parts(&c, &catalogue).remove(0).1;
+            let symbol: Vec<Primitive> = (v.primitives.iter())
+                .filter(|p| !matches!(p, Primitive::Text { .. }))
+                .cloned()
+                .collect();
+            let (lo, hi) = bounds(&symbol).unwrap();
+            for (k, (port, p)) in v.ports.iter().enumerate() {
+                // Out of the side of the symbol the port is nearest.
+                let edges = [p[0] - lo[0], hi[0] - p[0], p[1] - lo[1], hi[1] - p[1]];
+                let side = (0..4)
+                    .min_by(|&a, &b| edges[a].total_cmp(&edges[b]))
+                    .unwrap();
+                let q = match side {
+                    0 => [p[0] - 20.0, p[1]],
+                    1 => [p[0] + 20.0, p[1]],
+                    2 => [p[0], p[1] - 20.0],
+                    _ => [p[0], p[1] + 20.0],
+                };
+                let (e, n) = (format!("E{k}"), format!("n{k}"));
+                json["components"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({"id": e, "kind": "port", "label": e}));
+                json["nets"].as_array_mut().unwrap().push(serde_json::json!({"id": n, "ports": [{"component": "V1", "port": port}, {"component": e, "port": "port"}]}));
+                json["layout"]["components"][&e] = serde_json::json!({"x": q[0], "y": q[1]});
+                json["layout"]["wires"][&n] = serde_json::json!([[p, q]]);
+            }
+            let c = Circuit::from_json(&json.to_string()).unwrap();
+            let at = format!("{} at {rotation}, mirrored {mirror}", vt.key);
+            assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new(), "{at}");
+            assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new(), "{at}");
+        }
+    }
 }
