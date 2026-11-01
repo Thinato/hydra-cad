@@ -933,7 +933,12 @@ fn parts_and_wires(
     let dotted = circuit.layout.wires_are_bounded();
     let routed: std::collections::BTreeMap<String, Vec<hydra_core::Wire>> =
         (automatic_wires(circuit, catalogue).into_iter())
-            .map(|(id, wires)| (id, wires.into_iter().map(hydra_core::Wire::from).collect()))
+            .map(|(id, r)| {
+                (
+                    id,
+                    r.wires.into_iter().map(hydra_core::Wire::from).collect(),
+                )
+            })
             .collect();
     for net in &circuit.nets {
         if let Some(drawn) = (circuit.layout.wires.get(&net.id)).or(routed.get(net.id.as_str())) {
@@ -1007,13 +1012,13 @@ fn parts_and_wires(
     (parts, d, outline)
 }
 
-/// The automatic wires of each net the layout leaves untraced, by net id, as polylines: routed
-/// round the parts, their designators and the traced wires, from the circuit alone. The
-/// renderer draws these, and a check can compare against them.
+/// The automatic wires of each net the layout leaves untraced, by net id: routed round the
+/// parts, their designators and the traced wires, from the circuit alone. The renderer draws
+/// these, and a check can compare against them.
 fn automatic_wires(
     circuit: &Circuit,
     catalogue: &Catalogue,
-) -> std::collections::BTreeMap<String, Vec<Vec<Point>>> {
+) -> std::collections::BTreeMap<String, route::Routed> {
     let place = |c: &Component| placement(circuit, &c.id);
     let mut anchors: Vec<(String, Point)> = Vec::new();
     // Each part's symbol box, without its text or status frame, and per port its part's box
@@ -1052,9 +1057,19 @@ fn automatic_wires(
                 }
             }
         }
+        // The symbol with its pilot lines, without its text or status frame.
         let symbol: Vec<Primitive> = (part.primitives.into_iter())
             .filter(|p| !matches!(p, Primitive::Text { .. }))
-            .filter(|p| !matches!(p, Primitive::Polyline { dashed: true, .. }))
+            .filter(|p| {
+                !matches!(
+                    p,
+                    Primitive::Polyline {
+                        closed: true,
+                        dashed: true,
+                        ..
+                    }
+                )
+            })
             .collect();
         let at = [place(c).x, place(c).y];
         let symbol = bounds(&symbol).unwrap_or((at, at));
@@ -1065,8 +1080,9 @@ fn automatic_wires(
         }
     }
 
+    let bounded = circuit.layout.wires_are_bounded();
     let traced: Vec<&[Point]> = (circuit.layout.wires.values().flatten())
-        .filter(|_| circuit.layout.wires_are_bounded())
+        .filter(|_| bounded)
         .map(|w| &w.points[..])
         .chain(frames.iter().map(|f| &f[..]))
         .collect();
@@ -1553,11 +1569,20 @@ pub fn wire_problems(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
     problems
 }
 
-/// Hand-drawn wires that run through a part's symbol, other than into its own ports. Usually a
-/// misread route.
+/// Hand-drawn wires that run through a part's symbol, other than into its own ports, usually a
+/// misread route; and nets drawn automatically that couldn't be routed clear.
 pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
+    let mut warnings: Vec<String> = (automatic_wires(circuit, catalogue).into_iter())
+        .filter(|(_, r)| !r.clear)
+        .map(|(net, _)| {
+            format!(
+                "net {net} couldn't be routed clear of the other lines and parts, so it is drawn \
+                 with plain elbows that may cross them; trace its wires"
+            )
+        })
+        .collect();
     let Some((nets, _)) = drawn_nets(circuit, catalogue) else {
-        return Vec::new();
+        return warnings;
     };
     // Each part's symbol box: no designator, status words or status frame. Without its text,
     // a part measures the same here as in `render_parts`, wherever its designator moved to.
@@ -1573,7 +1598,6 @@ pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
             Some((c, lo, hi))
         })
         .collect();
-    let mut warnings = Vec::new();
     for d in &nets {
         for &(c, lo, hi) in &parts {
             // A segment into one of the part's ports on this net enters its symbol rightly.

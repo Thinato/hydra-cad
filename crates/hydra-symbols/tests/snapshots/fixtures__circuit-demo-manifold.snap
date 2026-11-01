@@ -108,8 +108,8 @@ expression: svg
 <polyline points="20.00,60.00 0.00,60.00"/>
 <circle cx="20.00" cy="60.00" r="0.60" fill="black"/>
 <polyline points="48.00,60.00 68.33,60.00 68.33,48.00"/>
-<polyline points="68.33,49.25 123.33,49.25 123.33,48.00"/>
-<circle cx="68.33" cy="49.25" r="0.60" fill="black"/>
+<polyline points="68.33,50.00 123.33,50.00 123.33,48.00"/>
+<circle cx="68.33" cy="50.00" r="0.60" fill="black"/>
 <polyline points="0.00,80.00 20.00,80.00 20.00,76.00"/>
 <polyline points="20.00,76.00 71.67,76.00 71.67,48.00"/>
 <polyline points="71.67,51.70 126.67,51.70 126.67,48.00"/>

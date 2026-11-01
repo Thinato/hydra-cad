@@ -1066,7 +1066,7 @@ impl SchematicEditor {
                 }
                 if ui
                     .button("Draw net automatically")
-                    .on_hover_text("Drop all of this net's drawn wires and draw it with elbows")
+                    .on_hover_text("Drop all of this net's drawn wires and draw it automatically")
                     .clicked()
                 {
                     self.apply(Command::AutoWires { net });
@@ -2414,7 +2414,7 @@ mod tests {
             Some("Delete wire 2 of net n1")
         );
 
-        // Select the first and send the net back to automatic elbows.
+        // Select the first and send the net back to automatic wires.
         click_sheet(&mut h, [12.0, -9.8], Primary);
         h.get_by_label("Draw net automatically").click();
         h.run();
