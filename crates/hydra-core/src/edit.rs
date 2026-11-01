@@ -31,8 +31,8 @@ pub enum Command {
     /// Build the circuit on a block, or on none. Mounts are kept only for a new version of the
     /// same block.
     SetBlock { block: Option<CatalogueRef> },
-    /// Mount a valve on a face of the circuit's block, taking off any valve already there, or
-    /// take it off with `None`.
+    /// Mount a valve on a face of the circuit's block, taking off any valve already there, and
+    /// put it in the block; or take it off with `None`, which leaves it in the block.
     Mount {
         component: String,
         face: Option<String>,
@@ -309,6 +309,9 @@ impl Command {
                         // A valve already on that face comes off it.
                         assembly.mounts.retain(|_, f| f != face);
                         assembly.mounts.insert(component.clone(), face.clone());
+                        // A valve on the block is in the block; unticking it later keeps the
+                        // mount and validation warns instead.
+                        circuit.in_block.insert(component.clone());
                     }
                     None => {
                         if assembly.mounts.remove(component).is_none() {
@@ -580,7 +583,16 @@ impl Document {
     pub fn apply(&mut self, command: Command) -> Result<(), String> {
         let before = self.circuit.clone();
         command.apply(&mut self.circuit)?;
-        self.undo.push((command.describe(), before));
+        let mut what = command.describe();
+        if let Command::Mount {
+            component,
+            face: Some(_),
+        } = &command
+            && !before.in_block.contains(component)
+        {
+            what.push_str(" and put it in the block");
+        }
+        self.undo.push((what, before));
         self.redo.clear();
         self.generation += 1;
         Ok(())
