@@ -10,9 +10,11 @@ use crate::{
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
+    /// Add a component, inside the manifold block if `in_block`.
     Add {
         component: Component,
         placement: Placement,
+        in_block: bool,
     },
     /// Remove a component and its connections.
     Remove { id: String },
@@ -132,6 +134,7 @@ impl Command {
             Command::Add {
                 component,
                 placement,
+                in_block,
             } => {
                 if circuit.component(&component.id).is_some() {
                     return Err(format!("{} already exists", component.id));
@@ -141,6 +144,9 @@ impl Command {
                     .layout
                     .components
                     .insert(component.id.clone(), *placement);
+                if *in_block {
+                    circuit.in_block.insert(component.id.clone());
+                }
             }
             Command::Remove { id } => {
                 exists(circuit, id)?;

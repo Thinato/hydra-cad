@@ -2,12 +2,12 @@
 source: crates/hydra-symbols/tests/fixtures.rs
 expression: svg
 ---
-<svg xmlns="http://www.w3.org/2000/svg" width="146.70mm" height="84.95mm" viewBox="-3.20 -1.75 146.70 84.95">
+<svg xmlns="http://www.w3.org/2000/svg" width="152.50mm" height="85.00mm" viewBox="-5.50 -1.75 152.50 85.00">
 <g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
 <circle cx="0.00" cy="60.00" r="1.20"/>
-<text x="0.00" y="57.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="-2.00" y="60.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">P</text>
 <circle cx="0.00" cy="80.00" r="1.20"/>
-<text x="0.00" y="77.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="-2.00" y="80.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">T</text>
 <circle cx="60.00" cy="18.00" r="1.20"/>
 <text x="60.00" y="15.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">A1</text>
 <circle cx="80.00" cy="18.00" r="1.20"/>
@@ -15,7 +15,7 @@ expression: svg
 <circle cx="115.00" cy="4.00" r="1.20"/>
 <text x="115.00" y="1.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">A2</text>
 <circle cx="140.00" cy="18.00" r="1.20"/>
-<text x="140.00" y="15.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">B2</text>
+<text x="142.00" y="18.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B2</text>
 <polygon points="25.00,73.00 15.00,73.00 15.00,63.00 25.00,63.00"/>
 <polyline points="21.50,64.00 21.50,72.00"/>
 <polygon points="21.50,72.00 20.90,70.40 22.10,70.40" fill="black"/>
@@ -156,7 +156,8 @@ expression: svg
 <polyline points="105.80,4.00 106.10,4.00"/>
 <polyline points="107.10,4.00 111.10,4.00"/>
 <polyline points="112.10,4.00 112.40,4.00"/>
-<polyline points="113.40,4.00 117.40,4.00"/>
+<polyline points="113.40,4.00 113.80,4.00"/>
+<polyline points="116.20,4.00 117.40,4.00"/>
 <polyline points="118.40,4.00 118.70,4.00"/>
 <polyline points="119.70,4.00 123.70,4.00"/>
 <polyline points="124.70,4.00 125.00,4.00"/>
@@ -169,7 +170,7 @@ expression: svg
 <polyline points="140.00,7.60 140.00,7.90"/>
 <polyline points="140.00,8.90 140.00,12.90"/>
 <polyline points="140.00,13.90 140.00,14.20"/>
-<polyline points="140.00,15.20 140.00,19.20"/>
+<polyline points="140.00,15.20 140.00,16.80"/>
 <polyline points="140.00,20.20 140.00,20.50"/>
 <polyline points="140.00,21.50 140.00,25.50"/>
 <polyline points="140.00,26.50 140.00,26.80"/>
@@ -234,15 +235,13 @@ expression: svg
 <polyline points="11.05,80.25 10.75,80.25"/>
 <polyline points="9.75,80.25 5.75,80.25"/>
 <polyline points="4.75,80.25 4.45,80.25"/>
-<polyline points="3.45,80.25 0.00,80.25"/>
-<polyline points="0.00,80.25 0.00,79.70"/>
+<polyline points="3.45,80.25 1.17,80.25"/>
 <polyline points="0.00,78.70 0.00,78.40"/>
 <polyline points="0.00,77.40 0.00,73.40"/>
 <polyline points="0.00,72.40 0.00,72.10"/>
 <polyline points="0.00,71.10 0.00,67.10"/>
 <polyline points="0.00,66.10 0.00,65.80"/>
-<polyline points="0.00,64.80 0.00,60.80"/>
-<polyline points="0.00,59.80 0.00,59.50"/>
+<polyline points="0.00,64.80 0.00,61.20"/>
 <polyline points="0.00,58.50 0.00,54.50"/>
 <polyline points="0.00,53.50 0.00,53.20"/>
 <polyline points="0.00,52.20 0.00,48.20"/>

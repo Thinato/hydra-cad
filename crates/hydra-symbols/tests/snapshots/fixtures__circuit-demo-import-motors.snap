@@ -2,10 +2,10 @@
 source: crates/hydra-symbols/tests/fixtures.rs
 expression: svg
 ---
-<svg xmlns="http://www.w3.org/2000/svg" width="271.30mm" height="115.40mm" viewBox="-3.20 -0.60 271.30 115.40">
+<svg xmlns="http://www.w3.org/2000/svg" width="273.60mm" height="115.40mm" viewBox="-5.50 -0.60 273.60 115.40">
 <g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
 <circle cx="0.00" cy="110.00" r="1.20"/>
-<text x="0.00" y="107.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="-2.00" y="110.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">P</text>
 <circle cx="20.00" cy="110.00" r="1.20"/>
 <text x="20.00" y="107.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">T</text>
 <polygon points="35.00,55.00 45.00,55.00 45.00,65.00 35.00,65.00"/>
@@ -357,7 +357,7 @@ expression: svg
 <polyline points="6.55,112.80 2.55,112.80"/>
 <polyline points="1.55,112.80 1.25,112.80"/>
 <polyline points="0.25,112.80 0.00,112.80"/>
-<polyline points="0.00,112.80 0.00,109.05"/>
+<polyline points="0.00,112.80 0.00,111.20"/>
 <polyline points="0.00,108.05 0.00,107.75"/>
 <polyline points="0.00,106.75 0.00,102.75"/>
 <polyline points="0.00,101.75 0.00,101.45"/>

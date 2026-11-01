@@ -22,6 +22,7 @@ fn add(id: &str, x: f32) -> Command {
             y: 0.0,
             ..Placement::default()
         },
+        in_block: false,
     }
 }
 
@@ -76,6 +77,25 @@ fn parts_go_in_and_out_of_the_block() {
     assert!(d.circuit.in_block.contains("T"));
     // Deleting a part takes it out of the block too.
     d.apply(Command::Remove { id: "P".into() }).unwrap();
+    assert_eq!(Vec::from_iter(&d.circuit.in_block), ["T"]);
+    // A part can be added straight into the block; one undo takes back both.
+    let Command::Add {
+        component,
+        placement,
+        ..
+    } = add("Q", 5.0)
+    else {
+        unreachable!()
+    };
+    d.apply(Command::Add {
+        component,
+        placement,
+        in_block: true,
+    })
+    .unwrap();
+    assert_eq!(Vec::from_iter(&d.circuit.in_block), ["Q", "T"]);
+    d.undo();
+    assert!(d.circuit.component("Q").is_none());
     assert_eq!(Vec::from_iter(&d.circuit.in_block), ["T"]);
     assert!(
         d.circuit
@@ -298,6 +318,7 @@ fn valve(id: &str) -> Command {
             kind: ComponentKind::valve(CatalogueRef::new("vt", 1)),
         },
         placement: Placement::default(),
+        in_block: false,
     }
 }
 
@@ -392,6 +413,7 @@ fn item(id: &str) -> Command {
             }),
         },
         placement: Placement::default(),
+        in_block: false,
     }
 }
 

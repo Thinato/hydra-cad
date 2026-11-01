@@ -546,7 +546,7 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
     outside["layout"]["components"]["HM1"]["x"] = json!(2e8);
     let e = mcp.import_circuit(import(outside)).await.unwrap_err();
     assert!(
-        e.contains("V1 is not in in_block, but its layout puts it over"),
+        e.contains("- V1 is not in in_block, but its layout puts it over"),
         "{e}"
     );
     assert!(e.contains("HM1 is placed at 200000000, 15"), "{e}");
@@ -575,6 +575,19 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
     json.as_object_mut().unwrap().remove("schema");
     let reply = mcp.import_circuit(import(json.to_string().into())).await;
     assert!(reply.is_ok(), "{reply:?}");
+    assert!(!reply.unwrap().contains("outline is cut"));
+    // A part left out of the block in an empty corner gets a notch, and a warning to check it.
+    let mut notched = demo_circuit("demo-import-motors");
+    notched["name"] = "DEMO-NOTCHED".into();
+    notched["in_block"] = json!(["P", "T", "FC2", "FC3", "RV1", "V1", "M1"]);
+    let reply = mcp.import_circuit(import(notched)).await.unwrap();
+    assert!(
+        reply.contains(
+            "FC1 is outside the block and the outline is cut round it; check the drawing shows \
+             it outside the block, otherwise add it to in_block"
+        ),
+        "{reply}"
+    );
     let err = mcp.import_circuit(import(json!([1]))).await.unwrap_err();
     assert!(err.contains("must be a JSON object"), "{err}");
 }
