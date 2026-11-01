@@ -22,7 +22,8 @@ Open work after the block outline and mirrored symbols (8e8f237). Tick items off
 
 The look is in [docs/design.md](docs/design.md) and `crates/hydra/src/theme.rs`, which installs the colours, the bundled IBM Plex fonts and the type scale.
 
-- [ ] Restyle the tabs on the theme, one PR each: Proposals first, then Schematic, Catalogue, Account and 3D. The first one adds the painted status marks (▲ ■ ⇄ ✓ ◆ ● ✕), since the fonts lack some of them.
+- [ ] Restyle the tabs on the theme, one PR each: Schematic, Catalogue, Account and 3D still to do.
+  - [x] Proposals, with the data that exists today. It added the painted status marks (▲ ■ ⇄ ✓ ◆ ● ✕, `theme::Mark`), status chips, banners, and the primary and danger buttons to `theme.rs`.
 - [ ] Schematic sheet as on the boards: the 5 mm grid and the desk around the sheet, working lines heavier than pilot and drain, a short dash of its own for drain lines, and a 2 px selection frame.
 - [ ] The installers ship no licence files for the fonts compiled into the binary: Plex's OFL is readable in the app, but egui's own fonts (Ubuntu, Hack, Noto Emoji, emoji-icon-font) aren't. Add the licences to the MSI and DMG, or show them beside Plex's.
 - [ ] Schematic: a title block in the sheet's corner (name, revision, drawn by, checked), also in the SVG and PDF exports, which still letter in Ubuntu Light rather than Plex.
