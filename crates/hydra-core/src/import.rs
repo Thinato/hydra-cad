@@ -1,6 +1,6 @@
 //! Checks on a circuit the AI assistant read from a drawing, before it is saved.
 
-use crate::{Catalogue, Circuit, ComponentKind, MAX_PROPOSAL_NOTES, Severity, SymbolDef};
+use crate::{Catalogue, Circuit, ComponentKind, Layout, MAX_PROPOSAL_NOTES, Severity, SymbolDef};
 
 /// Most components an imported circuit may have; more is not one drawing.
 pub const MAX_IMPORT_COMPONENTS: usize = 500;
@@ -16,6 +16,28 @@ pub const MAX_SHEET_MM: f32 = 10_000.0;
 pub const MAX_WIRES_PER_NET: usize = 100;
 /// Most points one wire may have.
 pub const MAX_WIRE_POINTS: usize = 100;
+/// Most points all of a circuit's wires may have together. Checking how wires meet compares
+/// every point with every wire, so this bounds that work.
+pub const MAX_IMPORT_WIRE_POINTS: usize = 5_000;
+/// Problems of one kind listed in full before the rest are summed up.
+pub const MAX_LISTED: usize = 20;
+
+impl Layout {
+    /// Whether the drawn wires are within the import caps and made of real numbers, so checking
+    /// how they meet is quick and means something. `import_problems` names whatever breaks this.
+    pub fn wires_are_bounded(&self) -> bool {
+        let mut total = 0;
+        let each = self.wires.values().all(|wires| {
+            wires.len() <= MAX_WIRES_PER_NET
+                && wires.iter().all(|w| {
+                    total += w.len();
+                    (2..=MAX_WIRE_POINTS).contains(&w.len())
+                        && w.iter().flatten().all(|v| v.is_finite())
+                })
+        });
+        each && total <= MAX_IMPORT_WIRE_POINTS
+    }
+}
 
 impl Circuit {
     /// Where a valve's valve type lists the requested part, use it: the assistant often names the
@@ -166,12 +188,29 @@ impl Circuit {
                 ComponentKind::Port { .. } => {}
             }
         }
+        let unknown: Vec<&String> = (self.layout.wires.keys())
+            .filter(|net| !self.nets.iter().any(|n| n.id == **net))
+            .collect();
+        for net in unknown.iter().take(MAX_LISTED) {
+            problems.push(format!(
+                "layout.wires names net {net:?}, which is not in nets; key each net's wires by its id"
+            ));
+        }
+        if unknown.len() > MAX_LISTED {
+            problems.push(format!(
+                "and {} more nets in layout.wires that are not in nets",
+                unknown.len() - MAX_LISTED
+            ));
+        }
+        let points: usize = self.layout.wires.values().flatten().map(Vec::len).sum();
+        if points > MAX_IMPORT_WIRE_POINTS {
+            problems.push(format!(
+                "the wires have {points} points in all, more than {MAX_IMPORT_WIRE_POINTS}; \
+                 one point per corner is enough"
+            ));
+        }
         for (net, wires) in &self.layout.wires {
-            if !self.nets.iter().any(|n| n.id == *net) {
-                problems.push(format!(
-                    "layout.wires names net {net:?}, which is not in nets; key each net's wires by \
-                     its id"
-                ));
+            if unknown.contains(&net) {
                 continue;
             }
             if wires.len() > MAX_WIRES_PER_NET {
@@ -199,6 +238,10 @@ impl Circuit {
                 } else if let Some([x, y]) = w.iter().find(|p| far(p)) {
                     problems.push(format!(
                         "{what} has point {x}, {y}; keep the layout within {MAX_SHEET_MM} mm"
+                    ));
+                } else if let Some([x, y]) = w.windows(2).find(|s| s[0] == s[1]).map(|s| s[0]) {
+                    problems.push(format!(
+                        "{what} repeats point {x}, {y}; give each point once"
                     ));
                 } else if let Some(s) = w
                     .windows(2)
