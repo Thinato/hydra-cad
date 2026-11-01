@@ -963,7 +963,12 @@ fn drawn_wires_replace_the_automatic_ones() {
     let mut circuit = motors();
     let drawn = polylines(&circuit);
     for w in circuit.layout.wires.values().flatten() {
-        assert!(drawn.contains(&w.points), "{w:?} is drawn");
+        // Every point in order, with any hop over another net's wire in between.
+        let traced = |d: &Vec<[f32; 2]>| {
+            let mut rest = d.iter();
+            d.first() == w.points.first() && w.points.iter().all(|p| rest.any(|q| q == p))
+        };
+        assert!(drawn.iter().any(traced), "{w:?} is drawn");
     }
     // FC1.Out to HM1.A: as drawn, not the automatic elbow from the net's first port.
     let auto = vec![[40.0, 52.0], [40.0, 52.0], [40.0, 23.0]];
@@ -1190,4 +1195,206 @@ fn a_wire_through_a_part_is_a_warning() {
             "a wire of net n-1 runs through FC2; check its route against the drawing",
         ]
     );
+}
+
+/// The texts of `circuit`'s parts that one of its wires runs through.
+fn texts_on_wires(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
+    let parts: Vec<Primitive> = (render_parts(circuit, catalogue).into_iter())
+        .flat_map(|(_, d)| d.primitives)
+        .collect();
+    // Without the block, all the circuit draws besides its parts is wires.
+    let mut bare = circuit.clone();
+    bare.in_block.clear();
+    let wires: Vec<Vec<[f32; 2]>> = (render_circuit(&bare, catalogue).primitives.into_iter())
+        .filter(|p| !parts.contains(p))
+        .filter_map(|p| match p {
+            Primitive::Polyline { points, .. } => Some(points),
+            _ => None,
+        })
+        .collect();
+    (parts.iter())
+        .filter_map(|p| {
+            let Primitive::Text { text, .. } = p else {
+                return None;
+            };
+            let (lo, hi) = bounds(std::slice::from_ref(p)).unwrap();
+            let on = (wires.iter()).any(|w| w.windows(2).any(|s| crosses(s[0], s[1], lo, hi)));
+            on.then(|| text.clone())
+        })
+        .collect()
+}
+
+fn golden(name: &str) -> Circuit {
+    let path = fixtures().join(format!("circuits/{name}.json"));
+    Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn labels_keep_clear_of_wires() {
+    let catalogue = catalogue();
+    // Status words, item labels, port names and port labels. In the imported manifold, M1's
+    // wire leaves its port downwards and the orifices X1 and X2 stand upright on their wires.
+    // PB10 is the label inside 9.1's box, which a wire is routed straight through.
+    assert_eq!(
+        texts_on_wires(&golden("demo-import-manifold"), &catalogue),
+        ["PB10"]
+    );
+    assert_eq!(
+        texts_on_wires(&golden("demo-manifold"), &catalogue),
+        Vec::<String>::new()
+    );
+    // The motors' column has wires on every side of these within reach, so they stay put; the
+    // port T's label, on its wire, moves beside it.
+    assert_eq!(
+        texts_on_wires(&golden("demo-import-motors"), &catalogue),
+        [
+            "PART NOT LISTED DEMO-PFC32-C3-12E",
+            "MISSING DEMO-PFC40-C3-12E",
+            "STAND-IN for DEMO-PFC25-C3-12E",
+            "DISC 1  100 bar  60 l/min",
+            "CONVEYOR 1  50 bar  60 l/min",
+            "CONVEYOR 2  50 bar  60 l/min",
+        ]
+    );
+}
+
+#[test]
+fn a_block_port_label_dodges_a_wire_leaving_the_block() {
+    let catalogue = catalogue();
+    // P sits on the block's bottom edge; its wire runs straight down to Z, outside the block.
+    let json = r#"{"schema": 5, "name": "p", "components": [
+        {"id": "X", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "Z", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "P", "kind": "port", "label": "P"}],
+        "nets": [{"id": "n", "ports": [{"component": "P", "port": "port"}, {"component": "Z", "port": "B"}]}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "Z": {"x": 0, "y": 60}, "P": {"x": 0, "y": 30}}},
+        "in_block": ["X", "P"]}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let (_, max) = bounds_of(&block_outline(&circuit, &catalogue).unwrap());
+    assert_eq!(max[1], 30.0, "P is on the bottom edge");
+    assert_eq!(texts_on_wires(&circuit, &catalogue), Vec::<String>::new());
+    let parts = render_parts(&circuit, &catalogue);
+    let (_, p) = parts.iter().find(|(id, _)| id == "P").unwrap();
+    let label = p
+        .primitives
+        .iter()
+        .find(|t| matches!(t, Primitive::Text { .. }));
+    let (lo, _) = bounds(std::slice::from_ref(label.unwrap())).unwrap();
+    assert!(lo[1] > 30.0, "still outside the block: {lo:?}");
+}
+
+#[test]
+fn block_ports_never_get_a_junction_dot() {
+    let catalogue = catalogue();
+    // A traced wire passing over the block port Y, which counts as a third line there.
+    let json = r#"{"schema": 5, "name": "d", "components": [
+        {"id": "X", "kind": "port", "label": "X"}, {"id": "Y", "kind": "port", "label": "Y"},
+        {"id": "Z", "kind": "port", "label": "Z"}],
+        "nets": [{"id": "n", "ports": [{"component": "X", "port": "port"}, {"component": "Y", "port": "port"}, {"component": "Z", "port": "port"}]}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "Y": {"x": 20, "y": 0}, "Z": {"x": 40, "y": 0}},
+                   "wires": {"n": [[[0, 0], [40, 0]]]}}}"#;
+    let mut c = Circuit::from_json(json).unwrap();
+    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
+    let y = [20.0, 0.0];
+    assert!(!dot_at(&c, y), "an open circle");
+    c.components[1].kind = hydra_core::ComponentKind::Port {
+        label: "Y".into(),
+        plugged: true,
+    };
+    assert!(!dot_at(&c, y), "a plug bar");
+    // Untraced, the elbows leave the net's first port, Y, both ways.
+    c.layout.wires.clear();
+    c.nets[0].ports.rotate_left(1);
+    for id in ["X", "Z"] {
+        c.layout.components.get_mut(id).unwrap().y = 10.0;
+    }
+    assert!(!dot_at(&c, y), "an automatic star");
+}
+
+#[test]
+fn a_wire_hops_over_another_nets_wire() {
+    // Net a runs down from A1 to A2, net b across from B1 to B2; they cross at (10, 10).
+    let json = r#"{"schema": 5, "name": "h", "components": [
+        {"id": "A1", "kind": "port", "label": "A1"}, {"id": "A2", "kind": "port", "label": "A2"},
+        {"id": "B1", "kind": "port", "label": "B1"}, {"id": "B2", "kind": "port", "label": "B2"}],
+        "nets": [{"id": "a", "ports": [{"component": "A1", "port": "port"}, {"component": "A2", "port": "port"}]},
+                 {"id": "b", "ports": [{"component": "B1", "port": "port"}, {"component": "B2", "port": "port"}]}],
+        "layout": {"components": {"A1": {"x": 10, "y": 0}, "A2": {"x": 10, "y": 20},
+                                  "B1": {"x": 0, "y": 10}, "B2": {"x": 20, "y": 10}}}}"#;
+    let mut c = Circuit::from_json(json).unwrap();
+    let lines = |c: &Circuit| -> Vec<(Vec<[f32; 2]>, bool)> {
+        (render_circuit(c, &catalogue()).primitives.into_iter())
+            .filter_map(|p| match p {
+                Primitive::Polyline { points, dashed, .. } => Some((points, dashed)),
+                _ => None,
+            })
+            .collect()
+    };
+    // The upright line hops: a half circle from 1 mm above the crossing, out to its right, to
+    // 1 mm below. The level one runs on unbroken.
+    let hopped = |points: &[[f32; 2]]| {
+        let at = |p: [f32; 2]| points.iter().position(|q| *q == p);
+        matches!(
+            (at([10.0, 9.0]), at([11.0, 10.0]), at([10.0, 11.0])),
+            (Some(a), Some(b), Some(c)) if a < b && b < c
+        ) && points.first() == Some(&[10.0, 0.0])
+            && points.last() == Some(&[10.0, 20.0])
+    };
+    let drawn = lines(&c);
+    assert!(drawn.iter().any(|(p, _)| hopped(p)), "{drawn:?}");
+    assert!(drawn.contains(&(vec![[0.0, 10.0], [20.0, 10.0], [20.0, 10.0]], false)));
+    // Traced, a pilot line hops too, and stays dashed.
+    let wires = &mut c.layout.wires;
+    wires.insert(
+        "a".into(),
+        vec![Wire {
+            kind: hydra_core::LineKind::Pilot,
+            points: vec![[10.0, 0.0], [10.0, 20.0]],
+        }],
+    );
+    wires.insert("b".into(), vec![vec![[0.0, 10.0], [20.0, 10.0]].into()]);
+    let drawn = lines(&c);
+    assert!(
+        drawn.iter().any(|(p, dashed)| *dashed && hopped(p)),
+        "{drawn:?}"
+    );
+    assert!(drawn.contains(&(vec![[0.0, 10.0], [20.0, 10.0]], false)));
+}
+
+#[test]
+fn a_plug_bar_lies_across_a_line_starting_at_or_passing_through_it() {
+    let catalogue = catalogue();
+    let json = r#"{"schema": 5, "name": "w", "components": [
+        {"id": "X", "kind": "port", "label": "X"}, {"id": "Y", "kind": "port", "label": "Y", "plugged": true},
+        {"id": "Z", "kind": "port", "label": "Z"}],
+        "nets": [{"id": "n", "ports": [{"component": "X", "port": "port"}, {"component": "Y", "port": "port"}, {"component": "Z", "port": "port"}]}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "Y": {"x": 20, "y": 0}, "Z": {"x": 40, "y": 0}},
+                   "wires": {"n": [[[20, 0], [0, 0]], [[20, 0], [40, 0]]]}}}"#;
+    let mut c = Circuit::from_json(json).unwrap();
+    // Y's bar, relative to Y, to a hundredth of a millimetre.
+    let bar = |c: &Circuit| {
+        let parts = render_parts(c, &catalogue);
+        let (_, y) = parts.iter().find(|(id, _)| id == "Y").unwrap();
+        let points = (y.primitives.iter())
+            .find_map(|p| match p {
+                Primitive::Polyline {
+                    points,
+                    filled: true,
+                    ..
+                } => Some(points.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let (lo, hi) = bounds_of(&points);
+        let r = |v: f32| (v * 100.0).round() / 100.0;
+        ([r(lo[0] - 20.0), r(lo[1])], [r(hi[0] - 20.0), r(hi[1])])
+    };
+    let upright = ([-0.35, -1.5], [0.35, 1.5]);
+    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
+    assert_eq!(bar(&c), upright, "wires starting at Y");
+    c.layout
+        .wires
+        .insert("n".into(), vec![vec![[0.0, 0.0], [40.0, 0.0]].into()]);
+    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
+    assert_eq!(bar(&c), upright, "a wire passing through Y");
 }
