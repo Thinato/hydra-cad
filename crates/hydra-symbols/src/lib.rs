@@ -968,6 +968,18 @@ fn outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<Outline> {
             [b[0].max(d[0]), b[1].max(d[1])],
         )
     })?;
+    // An outside part with block parts on all four sides is more likely left out of the block
+    // by mistake than standing in a notch, so it is flagged instead.
+    let centre = |r: Rect| [(r.0[0] + r.1[0]) / 2.0, (r.0[1] + r.1[1]) / 2.0];
+    let surrounded = |o: Rect| {
+        let o = centre(o);
+        let side = |axis: usize, sign: f32| {
+            members
+                .iter()
+                .any(|&m| (centre(m)[axis] - o[axis]) * sign > 0.0)
+        };
+        side(0, 1.0) && side(0, -1.0) && side(1, 1.0) && side(1, -1.0)
+    };
     let mut notches = [None; 4];
     for k in 0..4 {
         // Flipped so the corner is the top left, a notch runs from `c` to its inner corner.
@@ -990,7 +1002,10 @@ fn outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<Outline> {
         // ponytail: parts are taken greedily in drawing order, so two outside parts that each
         // fit a notch but not together keep the first; a staircase outline would fit both.
         let mut inner = c;
-        for &o in others.iter().filter(|&&o| overlaps(o, rect)) {
+        for &o in others
+            .iter()
+            .filter(|&&o| overlaps(o, rect) && !surrounded(o))
+        {
             let hi = flip(k, o).1;
             let want = [
                 inner[0].max(hi[0].min(far[0])),
@@ -1035,6 +1050,20 @@ fn extent(c: &Component, place: Placement, catalogue: &Catalogue) -> Option<Rect
 /// Components outside the block that are drawn over its outline, so the schematic would show
 /// them in the block.
 pub fn outline_issues(circuit: &Circuit, catalogue: &Catalogue) -> Vec<Issue> {
+    outside_parts(circuit, catalogue, false)
+        .into_iter()
+        .map(Issue::DrawnInsideBlock)
+        .collect()
+}
+
+/// Components outside the block that the outline has a corner cut out round.
+pub fn notched_parts(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
+    outside_parts(circuit, catalogue, true)
+}
+
+/// Ids of the components outside the block that reach into its bounding rectangle: those in a
+/// notch, or those drawn over the outline.
+fn outside_parts(circuit: &Circuit, catalogue: &Catalogue, notched: bool) -> Vec<String> {
     let Some(outline) = outline(circuit, catalogue) else {
         return Vec::new();
     };
@@ -1043,9 +1072,10 @@ pub fn outline_issues(circuit: &Circuit, catalogue: &Catalogue) -> Vec<Issue> {
         .iter()
         .filter(|c| !circuit.in_block.contains(&c.id))
         .filter(|c| {
-            extent(c, placement(circuit, &c.id), catalogue).is_some_and(|e| outline.covers(e))
+            extent(c, placement(circuit, &c.id), catalogue)
+                .is_some_and(|e| overlaps(e, outline.rect) && outline.covers(e) != notched)
         })
-        .map(|c| Issue::DrawnInsideBlock(c.id.clone()))
+        .map(|c| c.id.clone())
         .collect()
 }
 
@@ -1095,14 +1125,16 @@ fn dash_dot(corners: &[Point], ports: &[Point]) -> Vec<Primitive> {
                 a[1] + (b[1] - a[1]) * t / len,
             ]
         };
-        // How far along this edge each port on it sits.
-        let holes: Vec<f32> = ports
+        // Where along this edge each port circle crosses it, as (centre, half width): also a
+        // port on the next edge close to the corner.
+        let holes: Vec<(f32, f32)> = ports
             .iter()
             .filter_map(|p| {
                 let t = ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / len;
                 let q = at(t);
-                let on = (q[0] - p[0]).abs() + (q[1] - p[1]).abs() < ON_EDGE;
-                (on && (-ON_EDGE..=len + ON_EDGE).contains(&t)).then_some(t)
+                let off = (q[0] - p[0]).hypot(q[1] - p[1]);
+                let half = (PORT_RADIUS.powi(2) - off.powi(2)).sqrt();
+                (off < PORT_RADIUS && (-half..=len + half).contains(&t)).then_some((t, half))
             })
             .collect();
         let mut pos = 0.0;
@@ -1111,12 +1143,10 @@ fn dash_dot(corners: &[Point], ports: &[Point]) -> Vec<Primitive> {
             let step = (dash - used).min(len - pos);
             if on {
                 let mut pieces = vec![(pos, pos + step)];
-                for &t in &holes {
+                for &(t, half) in &holes {
                     pieces = pieces
                         .into_iter()
-                        .flat_map(|(s, e)| {
-                            [(s, e.min(t - PORT_RADIUS)), (s.max(t + PORT_RADIUS), e)]
-                        })
+                        .flat_map(|(s, e)| [(s, e.min(t - half)), (s.max(t + half), e)])
                         .filter(|(s, e)| s < e)
                         .collect();
                 }

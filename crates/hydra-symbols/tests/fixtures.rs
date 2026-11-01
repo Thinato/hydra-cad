@@ -250,7 +250,14 @@ fn block_outline_goes_round_its_parts_through_its_ports() {
     circuit.in_block.clear();
     let without = render_circuit(&circuit, &catalogue).primitives;
     let added = &with[without.len()..];
-    assert!(!added.is_empty());
+    // Everything else is drawn the same; only port P's label moves outside the block.
+    let not_p = |v: &[Primitive]| -> Vec<Primitive> {
+        v.iter()
+            .filter(|p| !matches!(p, Primitive::Text { text, .. } if text == "P"))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(not_p(&with[..without.len()]), not_p(&without));
     // Starting at the top-left corner: a 4 mm dash, a 1 mm gap, a 0.3 mm dot, a 1 mm gap.
     let first: Vec<_> = added[..3]
         .iter()
@@ -413,16 +420,150 @@ fn an_outside_part_in_an_empty_corner_gets_a_notch() {
     );
 }
 
+/// Bounds of `id` drawn on its own.
+fn alone(circuit: &Circuit, id: &str, catalogue: &Catalogue) -> ([f32; 2], [f32; 2]) {
+    let mut c = circuit.clone();
+    c.components.retain(|c| c.id == id);
+    c.in_block.clear();
+    bounds(&render_circuit(&c, catalogue).primitives).unwrap()
+}
+
+#[test]
+fn a_notch_can_be_cut_at_every_corner() {
+    let catalogue = catalogue();
+    let at = [[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]];
+    // Corners clockwise from the top left; block parts on three, outside part N on the fourth.
+    for k in 0..4 {
+        let others: Vec<usize> = (0..4).filter(|&j| j != k).collect();
+        let json = format!(
+            r#"{{"schema": 4, "name": "l", "components": [
+                {{"id": "A", "kind": "item", "symbol": {{"kind": "orifice"}}}},
+                {{"id": "B", "kind": "item", "symbol": {{"kind": "orifice"}}}},
+                {{"id": "C", "kind": "item", "symbol": {{"kind": "orifice"}}}},
+                {{"id": "N", "kind": "item", "symbol": {{"kind": "orifice"}}}}],
+                "layout": {{"components": {{"A": {{"x": {}, "y": {}}}, "B": {{"x": {}, "y": {}}},
+                    "C": {{"x": {}, "y": {}}}, "N": {{"x": {}, "y": {}}}}}}},
+                "in_block": ["A", "B", "C"]}}"#,
+            at[others[0]][0],
+            at[others[0]][1],
+            at[others[1]][0],
+            at[others[1]][1],
+            at[others[2]][0],
+            at[others[2]][1],
+            at[k][0],
+            at[k][1],
+        );
+        let circuit = Circuit::from_json(&json).unwrap();
+        // The block's rectangle: room round its three parts.
+        let (n0, n1) = alone(&circuit, "N", &catalogue);
+        let (mut min, mut max) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
+        for id in ["A", "B", "C"] {
+            let (lo, hi) = alone(&circuit, id, &catalogue);
+            min = [min[0].min(lo[0] - 4.0), min[1].min(lo[1] - 4.0)];
+            max = [max[0].max(hi[0] + 4.0), max[1].max(hi[1] + 4.0)];
+        }
+        let (tl, tr, br, bl) = (min, [max[0], min[1]], max, [min[0], max[1]]);
+        let expected = match k {
+            0 => {
+                let i = [n1[0] + 4.0, n1[1] + 4.0];
+                vec![[min[0], i[1]], i, [i[0], min[1]], tr, br, bl]
+            }
+            1 => {
+                let i = [n0[0] - 4.0, n1[1] + 4.0];
+                vec![tl, [i[0], min[1]], i, [max[0], i[1]], br, bl]
+            }
+            2 => {
+                let i = [n0[0] - 4.0, n0[1] - 4.0];
+                vec![tl, tr, [max[0], i[1]], i, [i[0], max[1]], bl]
+            }
+            _ => {
+                let i = [n1[0] + 4.0, n0[1] - 4.0];
+                vec![tl, tr, br, [i[0], max[1]], i, [min[0], i[1]]]
+            }
+        };
+        assert_eq!(
+            block_outline(&circuit, &catalogue).unwrap(),
+            expected,
+            "corner {k}"
+        );
+        assert!(
+            outline_issues(&circuit, &catalogue).is_empty(),
+            "corner {k}"
+        );
+        assert_eq!(hydra_symbols::notched_parts(&circuit, &catalogue), ["N"]);
+    }
+}
+
+#[test]
+fn notches_never_meet_and_surrounded_parts_stay_flagged() {
+    let catalogue = catalogue();
+    // Ports L, P, R are the block; N1 and N2 stand outside it on either side of P on the top
+    // edge. N1's notch, with room, ends exactly at P, so N2's notch can't have room there too:
+    // it would meet N1's at P and leave the top edge a spike.
+    let json = r#"{"schema": 4, "name": "n", "components": [
+        {"id": "L", "kind": "port", "label": "L"}, {"id": "P", "kind": "port", "label": "P"},
+        {"id": "R", "kind": "port", "label": "R"},
+        {"id": "N1", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "N2", "kind": "item", "symbol": {"kind": "orifice"}}],
+        "layout": {"components": {"L": {"x": 0, "y": 40}, "P": {"x": 26.5, "y": 0},
+            "R": {"x": 100, "y": 40}, "N1": {"x": 20, "y": 0},
+            "N2": {"x": 36.0287523, "y": 0}}},
+        "in_block": ["L", "P", "R"]}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let (n1, n2) = (
+        alone(&circuit, "N1", &catalogue),
+        alone(&circuit, "N2", &catalogue),
+    );
+    assert_eq!(
+        (n1.1[0] + 4.0, n2.0[0] - 4.0),
+        (26.5, 26.5),
+        "set up to meet at P"
+    );
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            [0.0, n1.1[1] + 4.0],
+            [26.5, n1.1[1] + 4.0],
+            [26.5, 0.0],
+            // N2's notch keeps clear of N1's: no room on its P side.
+            [n2.0[0], 0.0],
+            [n2.0[0], n2.1[1] + 4.0],
+            [100.0, n2.1[1] + 4.0],
+            [100.0, 40.0],
+            [0.0, 40.0],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+
+    // Block parts at opposite corners and an outside part between them: a mistake, not a notch.
+    let json = r#"{"schema": 4, "name": "d", "components": [
+        {"id": "A", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "B", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "O", "kind": "item", "symbol": {"kind": "orifice"}}],
+        "layout": {"components": {"A": {"x": 0, "y": 0}, "B": {"x": 50, "y": 70},
+            "O": {"x": 25, "y": 35}}},
+        "in_block": ["A", "B"]}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    assert_eq!(block_outline(&circuit, &catalogue).unwrap().len(), 4);
+    assert_eq!(
+        outline_issues(&circuit, &catalogue),
+        [hydra_core::Issue::DrawnInsideBlock("O".into())]
+    );
+    assert!(hydra_symbols::notched_parts(&circuit, &catalogue).is_empty());
+}
+
 #[test]
 fn block_port_labels_sit_outside_and_the_outline_breaks_round_ports() {
     let catalogue = catalogue();
     let json = r#"{"schema": 4, "name": "p", "components": [
         {"id": "X", "kind": "item", "symbol": {"kind": "orifice"}},
         {"id": "T", "kind": "port", "label": "TOP"}, {"id": "B", "kind": "port", "label": "BOTTOM"},
-        {"id": "L", "kind": "port", "label": "LEFT"}, {"id": "R", "kind": "port", "label": "RIGHT"}],
+        {"id": "L", "kind": "port", "label": "LEFT"}, {"id": "R", "kind": "port", "label": "RIGHT"},
+        {"id": "C", "kind": "port", "label": "C"}],
         "layout": {"components": {"X": {"x": 0, "y": 0}, "T": {"x": 0, "y": -30},
-            "B": {"x": 5, "y": 30}, "L": {"x": -30, "y": 3}, "R": {"x": 30, "y": -3}}},
-        "in_block": ["X", "T", "B", "L", "R"]}"#;
+            "B": {"x": 5, "y": 30}, "L": {"x": -30, "y": 3}, "R": {"x": 30, "y": -3},
+            "C": {"x": 29.5, "y": 30}}},
+        "in_block": ["X", "T", "B", "L", "R", "C"]}"#;
     let circuit = Circuit::from_json(json).unwrap();
     let (min, max) = bounds_of(&block_outline(&circuit, &catalogue).unwrap());
     assert_eq!((min, max), ([-30.0, -30.0], [30.0, 30.0]));
@@ -436,9 +577,15 @@ fn block_port_labels_sit_outside_and_the_outline_breaks_round_ports() {
         let inside = lo[0] < max[0] && min[0] < hi[0] && lo[1] < max[1] && min[1] < hi[1];
         assert!(!inside, "{label} at {lo:?}..{hi:?} is inside the block");
     }
-    // No dash runs into a port's circle.
+    // No dash runs into a port's circle, not even on the next edge round a corner (C).
     let lines = outline_lines(&circuit, &catalogue);
-    for port in [[0.0, -30.0], [5.0, 30.0], [-30.0, 3.0], [30.0, -3.0]] {
+    for port in [
+        [0.0, -30.0],
+        [5.0, 30.0],
+        [-30.0, 3.0],
+        [30.0, -3.0],
+        [29.5, 30.0],
+    ] {
         let near = |[a, b]: &[[f32; 2]; 2]| {
             let clamp = |v: f32, a: f32, b: f32| v.clamp(a.min(b), a.max(b));
             let q = [clamp(port[0], a[0], b[0]), clamp(port[1], a[1], b[1])];
