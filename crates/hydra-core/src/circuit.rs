@@ -1,15 +1,16 @@
 //! The circuit document: components, nets and layout, saved whole as one JSON revision.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{Catalogue, CatalogueRef, SymbolDef, ValveFunction};
 
-/// Circuit JSON version this build writes. It also reads version 1, which had no assembly, and
-/// version 2, which had only catalogue valves and no import data.
-pub const SCHEMA_VERSION: u32 = 3;
+/// Circuit JSON version this build writes. It also reads version 1, which had no assembly,
+/// version 2, which had only catalogue valves and no import data, and version 3, which had no
+/// block outline and no mirrored parts.
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Circuit {
@@ -22,6 +23,10 @@ pub struct Circuit {
     pub layout: Layout,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assembly: Option<Assembly>,
+    /// Ids of the components inside the manifold block, its ports included. The schematic draws
+    /// the block's outline around them.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub in_block: BTreeSet<String>,
     /// Bill-of-materials lines that aren't components, such as plugs, seals and the block.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bom_extra: Vec<ExtraBomLine>,
@@ -196,6 +201,10 @@ pub struct Placement {
     pub y: f32,
     #[serde(default)]
     pub rotation: Rotation,
+    /// Drawn flipped left to right, before the rotation, e.g. a relief valve with its spring on
+    /// the left.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirror: bool,
 }
 
 /// Clockwise rotation in quarter turns, written in degrees in JSON.
@@ -342,6 +351,11 @@ impl Circuit {
                 if !seen.contains_key(&p) {
                     issues.push(Issue::Unconnected(p));
                 }
+            }
+        }
+        for id in &self.in_block {
+            if self.component(id).is_none() {
+                issues.push(Issue::InBlockUnknown(id.clone()));
             }
         }
         if let Some(assembly) = &self.assembly {
@@ -494,6 +508,12 @@ pub enum Issue {
     },
     #[error("{0} is not mounted on the block")]
     Unmounted(String),
+    #[error("the block holds component {0}, which is not in the circuit")]
+    InBlockUnknown(String),
+    #[error(
+        "{0} is outside the block but drawn inside its outline; move it out or put it in the block"
+    )]
+    DrawnInsideBlock(String),
     #[error("{component} ({code}) is missing from the catalogue")]
     ValveMissing { component: String, code: String },
     #[error("{component}: part {code} is not listed for its valve type")]
@@ -519,6 +539,7 @@ impl Issue {
         match self {
             Issue::Unconnected(_)
             | Issue::Unmounted(_)
+            | Issue::DrawnInsideBlock(_)
             | Issue::ValveMissing { .. }
             | Issue::PartNotListed { .. }
             | Issue::StandIn { .. }

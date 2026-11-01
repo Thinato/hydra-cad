@@ -2263,6 +2263,7 @@ dependencies = [
  "hayro",
  "hydra-core",
  "hydra-db",
+ "hydra-symbols",
  "libc",
  "lopdf",
  "pdf-extract",

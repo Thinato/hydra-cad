@@ -13,6 +13,7 @@ use hydra_core::{
     ValveType,
 };
 use hydra_db::{LoadedCatalogue, PgPool, ProposalStatus};
+use hydra_symbols::outline_issues;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
@@ -138,6 +139,7 @@ Send a circuit read from a drawing with import_circuit:
   ],
   "nets": [{"id": "n1", "ports": [{"component": "P", "port": "port"}, {"component": "7.1", "port": "P"}]}],
   "layout": {"components": {"P": {"x": 0, "y": 100}, "7.1": {"x": 40, "y": 60, "rotation": 0}}},
+  "in_block": ["P", "7.1", "5.2", "X1", "M1"],
   "bom_extra": [{"position": "1", "quantity": 1, "code": "...", "description": "Manifold block"}],
   "import": {"notes": ["row 12 of the parts table is illegible"]}
 }
@@ -148,7 +150,10 @@ Rules:
 - Fixed orifices, test points, hydraulic motors and pumps are items, never valves; give them code, description and position when the parts table lists them. The block, plugs, coils and seals are bom_extra lines.
 - A part with no symbol of its own (e.g. a 3-port pressure compensator) is a valve missing from the catalogue whose display is a labelled box with its ports.
 - External connections (P, T, A1, MP...) are ports; their single port is "port".
-- Every connection on the schematic is a net of component ports. Port names are the symbol's (see above). Draw the layout in millimetres, x right and y down, roughly as on the drawing, with about 30 mm between parts.
+- Every connection on the schematic is a net of component ports. Port names are the symbol's (see above). Draw the layout in millimetres, x right and y down, as on the drawing: keep every part in the same place relative to the others (same row, same column, same order along a line), with about 30 mm between parts so their labels don't overlap.
+- Every symbol must look exactly as it does on the drawing: the engineer compares the two side by side. Place it with "rotation" (0, 90, 180 or 270 degrees clockwise) and "mirror" (true flips it left to right, before the rotation). Unrotated and unmirrored, symbols stand upright with flow running up: inlets (P, A, In, the motor's A) at the bottom, outlets (T, B, Out) at the top, a relief valve's spring on the right and its pilot line on the left, a check valve's spring on top, a test point's M at the bottom; directional valves show their positions side by side, ports above and below, actuators at the ends as listed in left/right. 90 puts the bottom port on the left, 180 at the top, 270 on the right.
+- For each symbol, find the one of the eight placements (four rotations, each with or without mirror) where both of these match the drawing: (1) which side every port leaves the symbol, and (2) which side the spring, solenoid, lever, adjustment arrow, pilot line and drain are on. Ports alone are not enough. Examples for a relief valve: P bottom, T top, spring right: rotation 0. Spring left instead: mirror. P left, T right, spring below: 90. P left, T right, spring on top: 90 with mirror. P right, T left, spring on top: 270. P right, T left, spring below: 270 with mirror. A check valve whose flow runs downwards is 180. If no placement matches, say which symbol and how it differs in import.notes.
+- in_block lists every component inside the manifold block: what the drawing's dash-dot boundary encloses, with the ports on its edge. Parts outside it (motors, cylinders, pumps, valves mounted elsewhere) are left out, and their layout places them clear of the block's parts, since Hydra draws the block's outline around everything in in_block. Leave in_block out when the drawing shows no block.
 - What you can't read goes in import.notes, never guessed.
 
 # Existing symbol definitions
@@ -418,7 +423,15 @@ impl HydraMcp {
         circuit.import.get_or_insert_with(Import::default);
         let catalogue = self.load().await?.catalogue;
         circuit.choose_requested_parts(&catalogue);
-        let problems = circuit.import_problems(&catalogue);
+        let mut problems = circuit.import_problems(&catalogue);
+        // The assistant drew the layout, so a part shown in the wrong place is its to fix.
+        problems.extend(outline_issues(&circuit, &catalogue).iter().map(|i| match i {
+            hydra_core::Issue::DrawnInsideBlock(id) => format!(
+                "{id} is not in in_block, but its layout puts it over the block's outline; move it \
+                 clear of the block's parts (change in_block only if the drawing shows it inside)"
+            ),
+            i => i.to_string(),
+        }));
         if !problems.is_empty() {
             tracing::warn!(
                 name = circuit.name,

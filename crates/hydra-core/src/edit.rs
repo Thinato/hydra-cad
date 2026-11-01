@@ -44,6 +44,8 @@ pub enum Command {
     },
     /// Forget that the circuit was imported, e.g. for a copy.
     ClearImport,
+    /// Put a component inside the manifold block, or take it out.
+    SetInBlock { id: String, inside: bool },
 }
 
 impl Command {
@@ -75,6 +77,8 @@ impl Command {
             } => format!("Use {valve_type} as a stand-in for {id}"),
             Command::Use { id, valve_type, .. } => format!("Use {valve_type} for {id}"),
             Command::ClearImport => "Clear the import marks".into(),
+            Command::SetInBlock { id, inside: true } => format!("Put {id} in the block"),
+            Command::SetInBlock { id, inside: false } => format!("Take {id} out of the block"),
         }
     }
 
@@ -119,6 +123,7 @@ impl Command {
                 exists(circuit, id)?;
                 circuit.components.retain(|c| &c.id != id);
                 circuit.layout.components.remove(id);
+                circuit.in_block.remove(id);
                 if let Some(a) = &mut circuit.assembly {
                     a.mounts.remove(id);
                 }
@@ -302,6 +307,18 @@ impl Command {
             Command::ClearImport => {
                 if circuit.import.take().is_none() {
                     return Err("the circuit was not imported".into());
+                }
+            }
+            Command::SetInBlock { id, inside } => {
+                exists(circuit, id)?;
+                let changed = if *inside {
+                    circuit.in_block.insert(id.clone())
+                } else {
+                    circuit.in_block.remove(id)
+                };
+                if !changed {
+                    let where_ = if *inside { "in" } else { "out of" };
+                    return Err(format!("{id} is already {where_} the block"));
                 }
             }
         }

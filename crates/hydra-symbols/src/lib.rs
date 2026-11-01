@@ -5,7 +5,7 @@
 //! the nets. The canvas, SVG and PDF export all draw the same primitives.
 
 use hydra_core::{
-    Actuator, Catalogue, Circuit, Component, ComponentKind, DirectionalValve, FlowActuator,
+    Actuator, Catalogue, Circuit, Component, ComponentKind, DirectionalValve, FlowActuator, Issue,
     PORT_PIN, Placement, Rotation, Side, SymbolDef, ValveStatus,
 };
 
@@ -661,8 +661,9 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
         ComponentKind::Port { label } => port_marker(label),
         ComponentKind::Item(item) => render_symbol(&item.symbol),
     };
-    let at = |p: Point| {
-        let [x, y] = rotate(p, place.rotation);
+    let at = |[x, y]: Point| {
+        let flipped = if place.mirror { [-x, y] } else { [x, y] };
+        let [x, y] = rotate(flipped, place.rotation);
         [x + place.x, y + place.y]
     };
     let mut d = Drawing::default();
@@ -695,9 +696,10 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
                 size,
                 align,
             } => {
-                let align = match (place.rotation, align) {
-                    (Rotation::R180, Align::Start) => Align::End,
-                    (Rotation::R180, Align::End) => Align::Start,
+                // A mirror and a half turn each swap the side; both together cancel out.
+                let align = match (place.mirror != (place.rotation == Rotation::R180), align) {
+                    (true, Align::Start) => Align::End,
+                    (true, Align::End) => Align::Start,
                     _ => align,
                 };
                 Primitive::Text {
@@ -837,5 +839,119 @@ pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
         }
     }
     d.primitives.extend(wires);
+    if let Some((min, max)) = block_outline(circuit, catalogue) {
+        let corners = [min, [max[0], min[1]], max, [min[0], max[1]]];
+        d.primitives.extend(dash_dot(&corners));
+    }
     d
+}
+
+/// Space between the block's outline and the parts inside it.
+const OUTLINE_PAD: f32 = 4.0;
+
+/// The block's outline `(min, max)`: around every part in the block, through the block's ports.
+/// `None` when no drawn component is in the block.
+pub fn block_outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<(Point, Point)> {
+    let mut min = [f32::INFINITY; 2];
+    let mut max = [f32::NEG_INFINITY; 2];
+    for c in circuit
+        .components
+        .iter()
+        .filter(|c| circuit.in_block.contains(&c.id))
+    {
+        // Ports set the edge exactly, as block ports sit on it; parts get room around them.
+        let (lo, hi) = match extent(circuit, c, catalogue) {
+            Some(e) if matches!(c.kind, ComponentKind::Port { .. }) => e,
+            Some((lo, hi)) => (
+                [lo[0] - OUTLINE_PAD, lo[1] - OUTLINE_PAD],
+                [hi[0] + OUTLINE_PAD, hi[1] + OUTLINE_PAD],
+            ),
+            None => continue,
+        };
+        min = [min[0].min(lo[0]), min[1].min(lo[1])];
+        max = [max[0].max(hi[0]), max[1].max(hi[1])];
+    }
+    (min[0] <= max[0]).then_some((min, max))
+}
+
+/// Where a component is on the sheet: a port's point, or the box round anything else's drawing.
+fn extent(circuit: &Circuit, c: &Component, catalogue: &Catalogue) -> Option<(Point, Point)> {
+    let place = circuit
+        .layout
+        .components
+        .get(&c.id)
+        .copied()
+        .unwrap_or_default();
+    match c.kind {
+        ComponentKind::Port { .. } => Some(([place.x, place.y], [place.x, place.y])),
+        _ => bounds(&render_component(c, place, catalogue)?.primitives),
+    }
+}
+
+/// Components outside the block that are drawn over its outline, so the schematic would show
+/// them in the block.
+pub fn outline_issues(circuit: &Circuit, catalogue: &Catalogue) -> Vec<Issue> {
+    let Some((min, max)) = block_outline(circuit, catalogue) else {
+        return Vec::new();
+    };
+    circuit
+        .components
+        .iter()
+        .filter(|c| !circuit.in_block.contains(&c.id))
+        .filter(|c| {
+            extent(circuit, c, catalogue).is_some_and(|(lo, hi)| {
+                lo[0] < max[0] && min[0] < hi[0] && lo[1] < max[1] && min[1] < hi[1]
+            })
+        })
+        .map(|c| Issue::DrawnInsideBlock(c.id.clone()))
+        .collect()
+}
+
+/// Longest outline drawn dash-dot; a longer one (a part placed far off by mistake) is drawn
+/// dashed, so a typo can't make millions of dashes.
+const MAX_DASH_DOT: f32 = 20_000.0;
+
+/// A closed dash-dot line through `corners`, the ISO 1219 boundary of a block or assembly.
+fn dash_dot(corners: &[Point]) -> Vec<Primitive> {
+    let perimeter: f32 = (0..corners.len())
+        .map(|k| {
+            let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
+            ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt()
+        })
+        .sum();
+    if perimeter.is_nan() || perimeter > MAX_DASH_DOT {
+        return vec![Primitive::Polyline {
+            points: corners.to_vec(),
+            closed: true,
+            dashed: true,
+            filled: false,
+        }];
+    }
+    const PATTERN: [(f32, bool); 4] = [(4.0, true), (1.0, false), (0.3, true), (1.0, false)];
+    let (mut i, mut used) = (0, 0.0);
+    let mut out = Vec::new();
+    for (k, &a) in corners.iter().enumerate() {
+        let b = corners[(k + 1) % corners.len()];
+        let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+        let at = |t: f32| {
+            [
+                a[0] + (b[0] - a[0]) * t / len,
+                a[1] + (b[1] - a[1]) * t / len,
+            ]
+        };
+        let mut pos = 0.0;
+        while pos < len {
+            let (dash, on) = PATTERN[i];
+            let step = (dash - used).min(len - pos);
+            if on {
+                out.push(line(at(pos), at(pos + step)));
+            }
+            pos += step;
+            used += step;
+            if used >= dash {
+                (i, used) = ((i + 1) % PATTERN.len(), 0.0);
+            }
+        }
+    }
+    out
 }

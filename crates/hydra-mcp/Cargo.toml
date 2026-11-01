@@ -10,6 +10,7 @@ repository.workspace = true
 base64 = "0.22"
 hayro.workspace = true
 hydra-core.workspace = true
+hydra-symbols.workspace = true
 hydra-db.workspace = true
 pdf-extract.workspace = true
 png = "0.18"

@@ -20,7 +20,7 @@ fn add(id: &str, x: f32) -> Command {
         placement: Placement {
             x,
             y: 0.0,
-            rotation: Rotation::R0,
+            ..Placement::default()
         },
     }
 }
@@ -36,6 +36,7 @@ fn doc(ids: &[&str]) -> Document {
     let mut d = Document::new(Circuit {
         schema: SCHEMA_VERSION,
         assembly: None,
+        in_block: Default::default(),
         name: "t".into(),
         components: vec![],
         nets: vec![],
@@ -47,6 +48,55 @@ fn doc(ids: &[&str]) -> Document {
         d.apply(add(id, i as f32 * 10.0)).unwrap();
     }
     d
+}
+
+#[test]
+fn parts_go_in_and_out_of_the_block() {
+    let mut d = doc(&["P", "T"]);
+    let put = |id: &str, inside| Command::SetInBlock {
+        id: id.into(),
+        inside,
+    };
+    d.apply(put("P", true)).unwrap();
+    assert_eq!(
+        d.apply(put("P", true)).unwrap_err(),
+        "P is already in the block"
+    );
+    assert_eq!(
+        d.apply(put("T", false)).unwrap_err(),
+        "T is already out of the block"
+    );
+    assert_eq!(
+        d.apply(put("Q", true)).unwrap_err(),
+        "Q is not in the circuit"
+    );
+    d.apply(put("T", true)).unwrap();
+    d.apply(put("T", false)).unwrap();
+    assert_eq!(d.undo().as_deref(), Some("Take T out of the block"));
+    assert!(d.circuit.in_block.contains("T"));
+    // Deleting a part takes it out of the block too.
+    d.apply(Command::Remove { id: "P".into() }).unwrap();
+    assert_eq!(Vec::from_iter(&d.circuit.in_block), ["T"]);
+    assert!(
+        d.circuit
+            .validate(&Catalogue::default())
+            .iter()
+            .all(|i| !matches!(i, Issue::InBlockUnknown(_)))
+    );
+
+    // Older documents have nothing in the block; an unknown id is an error.
+    let mut c = Circuit::from_json(r#"{"schema": 3, "name": "t", "components": []}"#).unwrap();
+    assert!(c.in_block.is_empty());
+    c.in_block.insert("Z".into());
+    let issues = c.validate(&Catalogue::default());
+    assert_eq!(issues, [Issue::InBlockUnknown("Z".into())]);
+    assert_eq!(issues[0].severity(), Severity::Error);
+    assert!(
+        Circuit::from_json(&c.to_json())
+            .unwrap()
+            .in_block
+            .contains("Z")
+    );
 }
 
 fn nets(d: &Document) -> Vec<(String, Vec<String>)> {
@@ -139,6 +189,7 @@ fn moving_rotating_and_relabelling() {
         x: 5.0,
         y: 7.5,
         rotation: Rotation::R90,
+        mirror: false,
     };
     d.apply(Command::Place {
         id: "A".into(),

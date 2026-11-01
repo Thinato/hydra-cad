@@ -11,7 +11,7 @@ use hydra_core::{
     ValveStatus, next_id, stand_ins,
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
-use hydra_symbols::{Drawing, bounds, render_circuit, render_component};
+use hydra_symbols::{Drawing, bounds, outline_issues, render_circuit, render_component};
 
 use crate::catalogue::Shared;
 use crate::db::Request;
@@ -358,7 +358,7 @@ impl SchematicEditor {
         let placement = Placement {
             x: snap(centre[0]),
             y: snap(centre[1]),
-            rotation: Rotation::R0,
+            ..Placement::default()
         };
         self.apply(Command::Add {
             component: Component {
@@ -381,6 +381,15 @@ impl SchematicEditor {
             Rotation::R180 => Rotation::R270,
             Rotation::R270 => Rotation::R0,
         };
+        self.apply(Command::Place { id, placement });
+    }
+
+    fn mirror_selected(&mut self) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let mut placement = self.placement(&id);
+        placement.mirror = !placement.mirror;
         self.apply(Command::Place { id, placement });
     }
 
@@ -772,8 +781,24 @@ impl SchematicEditor {
                 }
                 ComponentKind::Item(_) => {}
             }
+            let mut inside = self.doc.circuit.in_block.contains(&c.id);
+            if ui
+                .checkbox(&mut inside, "In block")
+                .on_hover_text(
+                    "Inside the manifold block: the schematic draws the block's outline around it",
+                )
+                .changed()
+            {
+                self.apply(Command::SetInBlock {
+                    id: c.id.clone(),
+                    inside,
+                });
+            }
             if ui.button("Rotate").clicked() {
                 self.rotate_selected();
+            }
+            if ui.button("Mirror").clicked() {
+                self.mirror_selected();
             }
             if ui.button("Delete").clicked() {
                 self.delete_selected();
@@ -893,6 +918,7 @@ impl SchematicEditor {
                     .circuit
                     .validate(catalogue)
                     .iter()
+                    .chain(&outline_issues(&self.doc.circuit, catalogue))
                     .chain(&status.issues)
                     .map(|i| (i.severity(), i.to_string())),
             )
@@ -1058,7 +1084,7 @@ impl SchematicEditor {
         if self.dialog.is_some() || ui.ctx().egui_wants_keyboard_input() {
             return;
         }
-        let (save, redo, undo, delete, rotate, escape) = ui.input_mut(|i| {
+        let (save, redo, undo, delete, rotate, mirror, escape) = ui.input_mut(|i| {
             let redo = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
                 || i.consume_key(Modifiers::CTRL, Key::Y);
             (
@@ -1068,6 +1094,7 @@ impl SchematicEditor {
                 i.consume_key(Modifiers::NONE, Key::Delete)
                     || i.consume_key(Modifiers::NONE, Key::Backspace),
                 i.consume_key(Modifiers::NONE, Key::R),
+                i.consume_key(Modifiers::NONE, Key::M),
                 i.consume_key(Modifiers::NONE, Key::Escape),
             )
         });
@@ -1084,6 +1111,9 @@ impl SchematicEditor {
         }
         if rotate {
             self.rotate_selected();
+        }
+        if mirror {
+            self.mirror_selected();
         }
         if escape {
             self.drag = None;
@@ -1331,6 +1361,7 @@ pub fn empty_circuit() -> Circuit {
     Circuit {
         schema: SCHEMA_VERSION,
         assembly: None,
+        in_block: Default::default(),
         name: "Untitled circuit".into(),
         components: Vec::new(),
         nets: Vec::new(),
@@ -2137,6 +2168,54 @@ mod tests {
         // A later revision of an imported circuit isn't marked.
         let h = import_harness(Some(3), false);
         assert!(h.query_by_label("Mark checked").is_none());
+    }
+
+    #[test]
+    fn in_block_puts_parts_inside_the_outline_and_flags_parts_drawn_inside_it() {
+        let mut h = import_harness(None, false);
+        let toggle = |h: &mut Harness<State>, id: &str| {
+            h.state_mut().0.selected = Some(id.into());
+            h.run_steps(2);
+            h.get_by_label("In block").click();
+            h.run_steps(2);
+        };
+        let flagged = |h: &Harness<State>| {
+            h.query_by_label_contains("6.1 is outside the block but drawn inside")
+                .is_some()
+        };
+        h.get_by_label_contains("Validation").click();
+        h.run_steps(2);
+        // P (bottom left) and 4.1 (top right) span the sheet, so 6.1 stands inside the outline.
+        toggle(&mut h, "P");
+        toggle(&mut h, "4.1");
+        assert_eq!(
+            Vec::from_iter(&h.state().0.doc.circuit.in_block),
+            ["4.1", "P"]
+        );
+        assert!(flagged(&h));
+        toggle(&mut h, "P");
+        assert_eq!(Vec::from_iter(&h.state().0.doc.circuit.in_block), ["4.1"]);
+        assert!(!flagged(&h));
+        h.state_mut().0.undo();
+        h.run_steps(2);
+        assert!(flagged(&h));
+    }
+
+    #[test]
+    fn mirror_flips_the_selected_part_and_undoes() {
+        let mut h = import_harness(None, false);
+        let mirrored = |h: &Harness<State>| h.state().0.placement("7.1").mirror;
+        h.state_mut().0.selected = Some("7.1".into());
+        h.run_steps(2);
+        h.key_press(Key::M);
+        h.run_steps(2);
+        assert!(mirrored(&h));
+        h.get_by_label("Mirror").click();
+        h.run_steps(2);
+        assert!(!mirrored(&h));
+        h.state_mut().0.undo();
+        h.run_steps(2);
+        assert!(mirrored(&h));
     }
 
     #[test]

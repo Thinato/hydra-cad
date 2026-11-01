@@ -519,6 +519,16 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
     let err = mcp.import_circuit(import(json)).await.unwrap_err();
     assert!(err.contains("give requested.function"), "{err}");
     assert!(err.contains("item X1 is drawn as a valve"), "{err}");
+    // A valve left out of the block but drawn between parts that are in it, and a typo far off.
+    let mut outside = demo_circuit("demo-import-motors");
+    outside["in_block"] = json!(["P", "T", "FC1", "FC2", "FC3", "RV1", "M1"]);
+    outside["layout"]["components"]["HM1"]["x"] = json!(2e8);
+    let e = mcp.import_circuit(import(outside)).await.unwrap_err();
+    assert!(
+        e.contains("V1 is not in in_block, but its layout puts it over"),
+        "{e}"
+    );
+    assert!(e.contains("HM1 is placed at 200000000, 15"), "{e}");
     assert!(list_circuits(&pool).await.unwrap().is_empty());
     // A JSON string holding the object works, and a missing schema is filled in.
     let mut json = demo_circuit("demo-import-motors");

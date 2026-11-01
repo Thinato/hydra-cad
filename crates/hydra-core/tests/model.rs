@@ -104,6 +104,7 @@ fn circuit() -> Circuit {
     Circuit {
         schema: SCHEMA_VERSION,
         assembly: None,
+        in_block: Default::default(),
         name: "test".into(),
         components: vec![
             valve("V1", "rpe3-z11@1"),
@@ -141,6 +142,7 @@ fn json_round_trip_is_lossless() {
             x: 10.0,
             y: 20.5,
             rotation: Rotation::R270,
+            mirror: true,
         },
     );
     c.layout
@@ -154,6 +156,9 @@ fn json_round_trip_is_lossless() {
     assert_eq!(value["schema"], SCHEMA_VERSION);
     assert_eq!(value["components"][0]["valve_type"], "rpe3-z11@1");
     assert_eq!(value["layout"]["components"]["V1"]["rotation"], 270);
+    assert_eq!(value["layout"]["components"]["V1"]["mirror"], true);
+    // Unmirrored parts don't write the flag, and older documents read as unmirrored.
+    assert!(json.matches("\"mirror\"").count() == 1, "{json}");
 }
 
 #[test]

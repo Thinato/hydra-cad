@@ -3,7 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use hydra_core::{Catalogue, Circuit, SCHEMA_VERSION, Severity};
-use hydra_symbols::{Align, Primitive, bounds, render_circuit, render_symbol, to_pdf, to_svg};
+use hydra_symbols::{
+    Align, Primitive, block_outline, bounds, outline_issues, render_circuit, render_symbol, to_pdf,
+    to_svg,
+};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
@@ -47,6 +50,8 @@ fn golden_circuits_load_validate_round_trip_and_render() {
 
         let issues = circuit.validate(&catalogue);
         assert!(issues.is_empty(), "{name}: {issues:?}");
+        let misplaced = outline_issues(&circuit, &catalogue);
+        assert!(misplaced.is_empty(), "{name}: {misplaced:?}");
         assert_eq!(
             Circuit::from_json(&circuit.to_json()).unwrap(),
             circuit,
@@ -124,6 +129,66 @@ fn rotation_moves_port_anchors_clockwise() {
 }
 
 #[test]
+fn mirror_flips_a_symbol_left_to_right_before_turning_it() {
+    let catalogue = catalogue();
+    let relief = |rotation: u16, mirror: bool| {
+        let json = format!(
+            r#"{{"schema": 4, "name": "m", "components": [
+            {{"id": "R", "kind": "valve", "valve_type": "vt-demo-cartridge-relief@1"}}],
+            "layout": {{"components": {{"R": {{"x": 0, "y": 0, "rotation": {rotation}, "mirror": {mirror}}}}}}}}}"#
+        );
+        render_circuit(&Circuit::from_json(&json).unwrap(), &catalogue)
+    };
+    let symbol = catalogue
+        .symbol_of(&hydra_core::CatalogueRef::new(
+            "vt-demo-cartridge-relief",
+            1,
+        ))
+        .unwrap();
+    let n = render_symbol(symbol).primitives.len();
+    let (plain, flipped) = (relief(0, false), relief(0, true));
+    // Every line and circle of the symbol lands on the other side; text keeps reading forwards.
+    for (a, b) in plain.primitives[..n].iter().zip(&flipped.primitives[..n]) {
+        match (a, b) {
+            (Primitive::Polyline { points: p, .. }, Primitive::Polyline { points: q, .. }) => {
+                let back: Vec<_> = q.iter().map(|[x, y]| [-x, *y]).collect();
+                assert_eq!(p, &back);
+            }
+            (Primitive::Circle { center: c, .. }, Primitive::Circle { center: d, .. }) => {
+                assert_eq!(*c, [-d[0], d[1]]);
+            }
+            (
+                Primitive::Text { at, align, .. },
+                Primitive::Text {
+                    at: at2,
+                    align: align2,
+                    ..
+                },
+            ) => {
+                assert_eq!(*at, [-at2[0], at2[1]]);
+                let swapped = match align {
+                    Align::Start => Align::End,
+                    Align::End => Align::Start,
+                    Align::Middle => Align::Middle,
+                };
+                assert_eq!(*align2, swapped);
+            }
+            _ => panic!("{a:?} / {b:?}"),
+        }
+    }
+    // Mirrored, then a quarter turn: P on the left, T on the right, the spring on top.
+    let turned = relief(90, true);
+    let anchor = |name: &str| turned.ports.iter().find(|(n, _)| n == name).unwrap().1;
+    assert!(anchor("R.P")[0] < 0.0 && anchor("R.T")[0] > 0.0);
+    let (lo, hi) = bounds(&turned.primitives[..n]).unwrap();
+    let (plain_lo, plain_hi) = bounds(&relief(90, false).primitives[..n]).unwrap();
+    assert!(
+        -lo[1] > hi[1] && plain_hi[1] > -plain_lo[1],
+        "{lo:?} {hi:?}"
+    );
+}
+
+#[test]
 fn nets_are_drawn_between_port_anchors() {
     let catalogue = catalogue();
     let json = r#"{"schema": 1, "name": "w", "components": [
@@ -138,6 +203,115 @@ fn nets_are_drawn_between_port_anchors() {
         filled: false,
     };
     assert!(drawing.primitives.contains(&wire));
+}
+
+#[test]
+fn block_outline_goes_round_its_parts_through_its_ports() {
+    let catalogue = catalogue();
+    let json = r#"{"schema": 4, "name": "b", "components": [
+        {"id": "P", "kind": "port", "label": "P"},
+        {"id": "X1", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "X2", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "X3", "kind": "item", "symbol": {"kind": "orifice"}}],
+        "layout": {"components": {"P": {"x": 0, "y": 60}, "X1": {"x": 30, "y": 30},
+                                  "X2": {"x": 10, "y": 45}, "X3": {"x": 100, "y": 30}}},
+        "in_block": ["P", "X1"]}"#;
+    let mut circuit = Circuit::from_json(json).unwrap();
+    let (min, max) = block_outline(&circuit, &catalogue).unwrap();
+    // The port beyond the parts sits on the edge; the part has room inside.
+    assert_eq!((min[0], max[1]), (0.0, 60.0));
+    let x1 = render_circuit(
+        &Circuit {
+            in_block: Default::default(),
+            components: vec![circuit.components[1].clone()],
+            ..circuit.clone()
+        },
+        &catalogue,
+    );
+    let (lo, hi) = bounds(&x1.primitives).unwrap();
+    assert!(
+        min[1] < lo[1] - 3.0 && hi[0] + 3.0 < max[0],
+        "{min:?} {max:?}"
+    );
+    // X2 is drawn inside but isn't in the block; X3 is clear of it.
+    let issues: Vec<String> = outline_issues(&circuit, &catalogue)
+        .iter()
+        .map(|i| i.to_string())
+        .collect();
+    assert_eq!(
+        issues,
+        [
+            "X2 is outside the block but drawn inside its outline; move it out or put it in the block"
+        ]
+    );
+
+    // The outline is drawn as dash-dot segments on its four edges.
+    let with = render_circuit(&circuit, &catalogue).primitives;
+    circuit.in_block.clear();
+    let without = render_circuit(&circuit, &catalogue).primitives;
+    let added = &with[without.len()..];
+    assert_eq!(&with[..without.len()], &without[..]);
+    // Starting at the top-left corner: a 4 mm dash, a 1 mm gap, a 0.3 mm dot, a 1 mm gap.
+    let first: Vec<_> = added[..3]
+        .iter()
+        .map(|p| match p {
+            Primitive::Polyline { points, .. } => points.clone(),
+            _ => panic!("{p:?}"),
+        })
+        .collect();
+    let [x, y] = min;
+    let close = |a: &[[f32; 2]], b: [[f32; 2]; 2]| {
+        a.len() == 2
+            && a.iter()
+                .zip(b)
+                .all(|(p, q)| (p[0] - q[0]).abs() < 1e-3 && p[1] == q[1])
+    };
+    assert!(close(&first[0], [[x, y], [x + 4.0, y]]), "{first:?}");
+    assert!(close(&first[1], [[x + 5.0, y], [x + 5.3, y]]), "{first:?}");
+    assert!(close(&first[2], [[x + 6.3, y], [x + 10.3, y]]), "{first:?}");
+    let on_edge = |[x, y]: [f32; 2]| {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        (near(x, min[0]) || near(x, max[0])) && (min[1]..=max[1]).contains(&y)
+            || (near(y, min[1]) || near(y, max[1])) && (min[0]..=max[0]).contains(&x)
+    };
+    for p in added {
+        let Primitive::Polyline { points, .. } = p else {
+            panic!("{p:?}")
+        };
+        assert!(points.iter().all(|q| on_edge(*q)), "{points:?}");
+    }
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+
+    // A part's drawing reaching over the outline counts, not only its origin.
+    circuit.in_block = ["P".to_string(), "X1".to_string()].into();
+    circuit.layout.components.get_mut("X2").unwrap().y = 60.0 + 3.0;
+    let issues = outline_issues(&circuit, &catalogue);
+    assert_eq!(issues, [hydra_core::Issue::DrawnInsideBlock("X2".into())]);
+
+    // A block of one port is a point, and draws nothing.
+    circuit.in_block = ["P".to_string()].into();
+    assert_eq!(
+        block_outline(&circuit, &catalogue),
+        Some(([0.0, 60.0], [0.0, 60.0]))
+    );
+    assert_eq!(
+        render_circuit(&circuit, &catalogue).primitives.len(),
+        without.len()
+    );
+
+    // A part placed far off by mistake gets one dashed outline, not millions of dashes.
+    circuit.in_block = ["P".to_string(), "X3".to_string()].into();
+    circuit.layout.components.get_mut("X3").unwrap().x = 2e8;
+    let far = render_circuit(&circuit, &catalogue).primitives;
+    assert_eq!(far.len(), without.len() + 1);
+    assert!(matches!(
+        far.last(),
+        Some(Primitive::Polyline {
+            dashed: true,
+            closed: true,
+            ..
+        })
+    ));
 }
 
 /// Page size in points from the first `/MediaBox [0 0 w h]`.

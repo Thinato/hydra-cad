@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "name": "DEMO-03 disc and conveyor block (made-up fixture shaped like an imported drawing)",
   "components": [
     {"id": "P", "kind": "port", "label": "P"},
@@ -36,6 +36,7 @@
       "M1": {"x": 255, "y": 100}
     }
   },
+  "in_block": ["FC1", "FC2", "FC3", "M1", "P", "RV1", "T", "V1"],
   "bom_extra": [
     {"position": "1", "quantity": 1, "code": "DEMO-BLOCK-03", "description": "Manifold block"},
     {"position": "8", "quantity": 3, "code": "DEMO-COIL-12DC", "description": "Coil 12 V DC"},

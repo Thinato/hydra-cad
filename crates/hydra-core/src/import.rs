@@ -10,6 +10,8 @@ pub const MAX_IMPORT_EXTRA_LINES: usize = 200;
 pub const MAX_CIRCUIT_NAME: usize = 200;
 /// Longest code, description, label or position, in characters.
 pub const MAX_IMPORT_TEXT: usize = 200;
+/// Farthest a part may sit from the sheet's origin, in millimetres: well beyond an A0 sheet.
+pub const MAX_SHEET_MM: f32 = 10_000.0;
 
 impl Circuit {
     /// Where a valve's valve type lists the requested part, use it: the assistant often names the
@@ -81,8 +83,15 @@ impl Circuit {
             }
         };
         for c in &self.components {
-            if !self.layout.components.contains_key(&c.id) {
-                problems.push(format!("{} has no place on the sheet (layout)", c.id));
+            match self.layout.components.get(&c.id) {
+                None => problems.push(format!("{} has no place on the sheet (layout)", c.id)),
+                Some(p) if p.x.abs() > MAX_SHEET_MM || p.y.abs() > MAX_SHEET_MM => {
+                    problems.push(format!(
+                        "{} is placed at {}, {}; keep the layout within {MAX_SHEET_MM} mm",
+                        c.id, p.x, p.y
+                    ));
+                }
+                Some(_) => {}
             }
             match &c.kind {
                 ComponentKind::Valve(v) => {

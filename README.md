@@ -8,7 +8,7 @@ Status: early development. The circuit model, symbol rendering, the schematic ed
 
 | Crate | What it holds |
 | --- | --- |
-| `crates/hydra-core` | Domain model: catalogue rows and manifold blocks with their mount faces, symbol definitions, circuit JSON (schema v2; v1 still reads), validation, and the edit commands with undo/redo. No UI or database code. |
+| `crates/hydra-core` | Domain model: catalogue rows and manifold blocks with their mount faces, symbol definitions, circuit JSON (schema v4; v1 to v3 still read), validation, and the edit commands with undo/redo. No UI or database code. |
 | `crates/hydra-symbols` | Turns symbol definitions into lines, circles and text, lays out whole circuits, and writes SVG. |
 | `crates/hydra-mesh` | Loads glTF models into triangle meshes in Hydra's model space (millimetres, Z up) and runs the 3D smoke test. |
 | `crates/hydra-db` | Postgres migrations (`migrations/`), the schema guard, the catalogue and circuit repositories, and the `hydra-admin` tool. |
@@ -67,7 +67,7 @@ Any other MCP client works the same way. Its tools are `list_valve_types`, `get_
 
 `read_datasheet` gives the assistant the datasheet's pages as images (two per call by default, up to four), with their text, so tables, symbols and ordering codes are read as printed whatever the layout. Pages are rendered in a separate `hydra-mcp` process with a time limit, so a broken PDF can't hang the server. Valve types record what they do (`function`), their ratings (`max_pressure_bar`, `max_flow_l_min`, `setting_range_bar`) and, for cartridges, their cavity; the reviewer can correct these in the Proposals tab.
 
-**Update the app and `hydra-mcp` together.** This release adds symbol kinds (pilot-operated check, counterbalance, flow control, test point, hydraulic motor, pump, box) that older builds can't read, so migration 0007 makes older builds refuse to connect with "update the app".
+**Update the app and `hydra-mcp` together.** This release adds symbol kinds (pilot-operated check, counterbalance, flow control, test point, hydraulic motor, pump, box) that older builds can't read, so migration 0007 makes older builds refuse to connect with "update the app". Likewise migration 0008: circuits now record which parts are inside the block, which older builds would drop on save.
 
 ## Circuit import with an AI assistant
 
@@ -81,6 +81,8 @@ Every valve keeps what the drawing asked for (the code as printed) next to what 
 - **violet**: a temporary stand-in an engineer chose.
 
 Select one to see catalogue valves that could stand in: the same function, the same mounting or cavity, and ratings that cover what the drawing asks for (a relief valve's setting must lie in the candidate's setting range). Pick one, confirm how its ports connect, and it is swapped in (undo works). When the requested valve is added to the catalogue later, the circuit says it is now available. Missing valves are warnings, never errors: the circuit saves and exports, and the PDF and the bill of materials say MISSING or STAND-IN in words. Test points, fixed orifices, motors and pumps are drawn as generic parts, and parts-table rows such as the block, plugs and coils go into the bill of materials as extra lines.
+
+The schematic draws the manifold block's outline as a dash-dot line around the parts inside it, with the block's ports on its edge, so the drawing shows what is in the block and what isn't (motors, cylinders, pumps). Tick **In block** on a selected part to put it inside; the assistant marks them from the drawing's own boundary. A part outside the block that stands inside the outline is a warning in the editor, and the import refuses it, so the drawing can't mislead.
 
 ## Installing and configuring
 
@@ -144,7 +146,7 @@ In the Catalogue tab, search by manufacturer, series, code or mounting, and sele
 In the Schematic tab:
 
 - Place a valve type from the toolbar (or "Place in schematic" in the Catalogue tab), or add an external port such as P or A1.
-- Drag a part to move it; it snaps to a 2.5 mm grid. R rotates the selected part, Delete removes it.
+- Drag a part to move it; it snaps to a 2.5 mm grid. R rotates the selected part, M mirrors it (e.g. a relief valve with its spring on the other side), Delete removes it.
 - Drag from a valve port to another port to connect them; Shift-drag starts a connection from an external port. Right-click a port to disconnect it.
 - Undo and redo with Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z (or the buttons). Validation problems are listed above the sheet.
 - Drag the empty sheet to pan, scroll to zoom, double-click to fit.
