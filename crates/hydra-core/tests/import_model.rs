@@ -104,6 +104,10 @@ fn relief_valves_and_flow_controls_can_have_a_pilot_port() {
     );
     let remote = json(r#"{"kind": "relief", "adjustable": true, "pilot_port": true}"#);
     assert_eq!(remote.ports(), ["P", "T", "X"]);
+    assert_eq!(
+        serde_json::to_value(&remote).unwrap(),
+        serde_json::json!({"kind": "relief", "adjustable": true, "pilot_port": true})
+    );
     assert_eq!(remote.problems(), Vec::<String>::new());
 
     let fc = json(

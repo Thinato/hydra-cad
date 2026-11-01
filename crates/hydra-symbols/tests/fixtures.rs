@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use hydra_core::{Catalogue, Circuit, SCHEMA_VERSION, Severity};
+use hydra_core::{Catalogue, Circuit, NetKind, SCHEMA_VERSION, Severity};
 use hydra_symbols::{
     Align, Primitive, block_outline, bounds, outline_issues, render_circuit, render_parts,
     render_symbol, to_pdf, to_svg, wire_problems, wire_warnings,
@@ -333,6 +333,48 @@ fn nets_are_drawn_between_port_anchors() {
         filled: false,
     };
     assert!(drawing.primitives.contains(&wire));
+}
+
+#[test]
+fn pilot_and_drain_lines_are_dashed_and_plugged_ports_filled() {
+    let catalogue = catalogue();
+    let json = r#"{"schema": 5, "name": "w", "components": [
+        {"id": "X", "kind": "port", "label": "X"}, {"id": "Y", "kind": "port", "label": "Y", "plugged": true},
+        {"id": "Z", "kind": "port", "label": "Z"}, {"id": "W", "kind": "port", "label": "W"}],
+        "nets": [{"id": "n", "kind": "pilot", "ports": [{"component": "X", "port": "port"}, {"component": "Y", "port": "port"}]},
+                 {"id": "m", "kind": "drain", "ports": [{"component": "Z", "port": "port"}, {"component": "W", "port": "port"}]}],
+        "layout": {"components": {"X": {"x": 0, "y": 0}, "Y": {"x": 10, "y": 5}, "Z": {"x": 0, "y": 20}, "W": {"x": 10, "y": 20}},
+                   "wires": {"m": [[[0, 20], [10, 20]]]}}}"#;
+    let mut circuit = Circuit::from_json(json).unwrap();
+    let wires = |c: &Circuit| {
+        let drawing = render_circuit(c, &catalogue);
+        let lines: Vec<(Vec<[f32; 2]>, bool)> = (drawing.primitives.into_iter())
+            .filter_map(|p| match p {
+                Primitive::Polyline { points, dashed, .. } => Some((points, dashed)),
+                _ => None,
+            })
+            .collect();
+        lines
+    };
+    // Automatic elbows and traced wires alike.
+    let elbow = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]];
+    let traced = vec![[0.0, 20.0], [10.0, 20.0]];
+    assert!(wires(&circuit).contains(&(elbow.clone(), true)));
+    assert!(wires(&circuit).contains(&(traced.clone(), true)));
+    for net in &mut circuit.nets {
+        net.kind = NetKind::Working;
+    }
+    assert!(wires(&circuit).contains(&(elbow, false)));
+    assert!(wires(&circuit).contains(&(traced, false)));
+
+    let filled = |id: &str| {
+        let parts = render_parts(&circuit, &catalogue);
+        let (_, d) = parts.iter().find(|(p, _)| p == id).unwrap();
+        d.primitives
+            .iter()
+            .any(|p| matches!(p, Primitive::Circle { filled: true, .. }))
+    };
+    assert!(filled("Y") && !filled("X"));
 }
 
 #[test]

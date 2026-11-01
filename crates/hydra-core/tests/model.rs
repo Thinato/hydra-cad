@@ -165,7 +165,7 @@ fn json_round_trip_is_lossless() {
     assert!(json.matches("\"mirror\"").count() == 1, "{json}");
     // Likewise working lines and open ports write no kind or plug.
     assert!(
-        !json.contains("\"plugged\"") && !json.contains("\"pilot"),
+        !json.contains("\"plugged\"") && !json.contains("\"working\""),
         "{json}"
     );
     let net_kinds = |c: &Circuit| c.nets.iter().map(|n| n.kind).collect::<Vec<_>>();

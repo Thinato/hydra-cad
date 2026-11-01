@@ -276,8 +276,25 @@ fn flow_controls_must_match_actuator_compensation_and_bypass() {
         t.symbol = Some(r(&format!("sym-fc-{key}@1")));
         cat.valve_types.push(t);
     }
-    let motors = Circuit::from_json(&fixture("circuits/demo-import-motors.json")).unwrap();
-    // FC2 is missing, drawn as a proportional compensated 3-port flow control.
+    let mut motors = Circuit::from_json(&fixture("circuits/demo-import-motors.json")).unwrap();
+    // FC2 is missing, drawn with a second pilot X that no catalogue flow control has.
+    assert!(stand_ins(&motors, "FC2", &cat).is_err());
+    let Some(Valve {
+        display: Some(SymbolDef::FlowControl { pilot_port, .. }),
+        ..
+    }) = motors
+        .components
+        .iter_mut()
+        .find(|c| c.id == "FC2")
+        .and_then(|c| match &mut c.kind {
+            ComponentKind::Valve(v) => Some(v),
+            _ => None,
+        })
+    else {
+        panic!("FC2 is drawn as a flow control");
+    };
+    *pilot_port = false;
+    // Without it, a proportional compensated 3-port flow control.
     assert_eq!(
         keys(&stand_ins(&motors, "FC2", &cat).unwrap()),
         ["vt-demo-flow-control-prop@1"]
