@@ -105,7 +105,15 @@ async fn engineers_role_does_what_the_app_does(admin: PgPool) {
     }))
     .unwrap();
     let id = submit_proposal(&pool, &proposal).await.unwrap();
-    let other = submit_proposal(&pool, &proposal).await.unwrap();
+    // submit_proposal refuses a second pending one, so queue the duplicate directly.
+    let other: String = sqlx::query_scalar(
+        "INSERT INTO catalogue_proposals (proposal) \
+         SELECT proposal FROM catalogue_proposals WHERE id = $1::uuid RETURNING id::text",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     approve_proposal(&pool, &id, &proposal).await.unwrap();
 
     // Authors come from the signed-in role, whatever the client writes.

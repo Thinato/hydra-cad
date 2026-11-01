@@ -153,7 +153,7 @@ In the Schematic tab:
 - Save writes a new revision; nothing is overwritten. If someone else saved first, you're offered a reload or a save as copy. History lists every revision with a preview, and Restore makes an old revision the newest one, so a restore can itself be undone.
 - Export writes the circuit as it is on screen, unsaved changes included, as SVG, PDF, or a bill of materials in CSV (one line per valve type version, part and status, then coded parts, the block and the extra lines, with designators, the part number used or the valve type's only one, and what the drawing requested).
 
-In the 3D tab, choose the circuit's block and which valve sits on each face; only valves whose mounting pattern fits a face are offered. The view shows the block with its valves mounted, the valve selected in the schematic highlighted. Without a block it shows the selected valve alone. Drag to orbit, scroll to zoom, double-click to see everything. Models download once and are cached locally by hash; offline there are none.
+In the 3D tab, choose the circuit's block and which valve sits on each face; only valves whose mounting pattern fits a face are offered. Only the valves ticked **In block** in the schematic are expected on the block: one of them left off it is a warning, and so is a valve on the block that the schematic draws outside it. The view shows the block with its valves mounted, the valve selected in the schematic highlighted. Without a block it shows the selected valve alone. Drag to orbit, scroll to zoom, double-click to see everything. Models download once and are cached locally by hash; offline there are none.
 
 ## Test
 

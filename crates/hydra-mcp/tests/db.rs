@@ -217,6 +217,21 @@ async fn proposals_are_checked_then_queued(pool: PgPool) {
     assert_eq!(queued[0].status, ProposalStatus::Pending);
     assert_eq!(queued[0].proposal.parts.len(), 2);
 
+    let e = mcp
+        .submit_proposal(submit(good_proposal()))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        e,
+        format!(
+            "The proposal was not accepted: proposal {id} for vt-demo-10@1 is still waiting for \
+             review, and only one of them could be approved. Don't submit it again. Tell the \
+             engineer to approve or reject proposal {id} in Hydra's Proposals tab; if they \
+             reject it, read their note with proposal_status and submit a corrected proposal."
+        )
+    );
+    assert_eq!(list_proposals(&pool, true).await.unwrap().len(), 1);
+
     let status = mcp
         .proposal_status(Parameters(IdParams { id: id.into() }))
         .await

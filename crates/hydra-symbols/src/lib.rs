@@ -658,6 +658,16 @@ pub fn bounds(primitives: &[Primitive]) -> Option<(Point, Point)> {
 ///
 /// `None` when a valve's catalogue rows are missing; [`Circuit::validate`] reports those.
 pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) -> Option<Drawing> {
+    draw_component(c, place, catalogue, &[])
+}
+
+/// [`render_component`], with the designator clear of `wires` where it can be.
+fn draw_component(
+    c: &Component,
+    place: Placement,
+    catalogue: &Catalogue,
+    wires: &[Primitive],
+) -> Option<Drawing> {
     let symbol = match &c.kind {
         ComponentKind::Valve(v) => render_symbol(v.symbol(catalogue)?),
         ComponentKind::Port { label } => port_marker(label),
@@ -713,15 +723,41 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
             }
         });
     }
+    for (name, p) in symbol.ports {
+        d.ports.push((name, at(p)));
+    }
     if !matches!(c.kind, ComponentKind::Port { .. })
         && let Some((min, max)) = bounds(&d.primitives)
     {
-        // Designator beside the symbol's top-left corner, clear of its port lines.
-        d.primitives.push(text(
-            [min[0] - 1.0, min[1] + LABEL / 2.0],
-            &c.id,
-            Align::End,
-        ));
+        let status = status_words(c, catalogue);
+        let pad = 1.5;
+        // Outside the status frame, when there is one.
+        let gap = if status.is_some() { pad + 1.0 } else { 1.0 };
+        let mid = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0];
+        // Designator beside the middle of a side no port leaves from, so no wire of this part
+        // starts there: left, right, then top, skipping a side any of `wires` crosses.
+        // ponytail: when ports or wires take every one of those sides it goes on the first free
+        // one, or on the left, even over a wire; a crowded layout needs a part moved.
+        let side_of = |[x, y]: Point| {
+            let edges = [x - min[0], max[0] - x, y - min[1], max[1] - y];
+            (0..4).min_by(|&a, &b| edges[a].total_cmp(&edges[b]))
+        };
+        let taken: Vec<_> = d.ports.iter().map(|(_, p)| side_of(*p)).collect();
+        let label = |side| match side {
+            1 => text([max[0] + gap, mid[1]], &c.id, Align::Start),
+            2 => text([mid[0], min[1] - gap - LABEL / 2.0], &c.id, Align::Middle),
+            _ => text([min[0] - gap, mid[1]], &c.id, Align::End),
+        };
+        let free: Vec<_> = (0..3)
+            .filter(|s| !taken.contains(&Some(*s)))
+            .map(label)
+            .collect();
+        let clear = |l: &&Primitive| {
+            let (lo, hi) = bounds(std::slice::from_ref(*l)).unwrap_or_default();
+            !wires.iter().any(|w| crosses(w, lo, hi))
+        };
+        let designator = free.iter().find(clear).or(free.first()).cloned();
+        d.primitives.push(designator.unwrap_or_else(|| label(0)));
         let mut below = max[1] + LABEL;
         if let ComponentKind::Item(item) = &c.kind
             && let Some(label) = item.label.as_deref().filter(|l| !l.is_empty())
@@ -730,9 +766,8 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
                 .push(text([(min[0] + max[0]) / 2.0, below], label, Align::Middle));
             below += LABEL * 1.4;
         }
-        if let Some(words) = status_words(c, catalogue) {
+        if let Some(words) = status {
             // A dashed frame and the status in words, so a black-and-white print shows it too.
-            let pad = 1.5;
             d.primitives.push(Primitive::Polyline {
                 points: vec![
                     [min[0] - pad, min[1] - pad],
@@ -750,9 +785,6 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
                 Align::Middle,
             ));
         }
-    }
-    for (name, p) in symbol.ports {
-        d.ports.push((name, at(p)));
     }
     Some(d)
 }
@@ -778,31 +810,45 @@ pub fn status_words(c: &Component, catalogue: &Catalogue) -> Option<String> {
 /// Components without a placement sit at the origin. Components whose catalogue rows are
 /// missing are skipped; [`Circuit::validate`] reports them.
 pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
-    let corners = block_outline(circuit, catalogue).unwrap_or_default();
-    let mut on_outline = Vec::new();
+    let (parts, wires, outline) = parts_and_wires(circuit, catalogue);
+    let mut d = Drawing {
+        primitives: parts.into_iter().flat_map(|(_, p)| p.primitives).collect(),
+        ports: wires.ports,
+    };
+    d.primitives.extend(wires.primitives);
+    if let Some(outline) = outline {
+        let corners = outline.corners();
+        let ports: Vec<Point> = circuit
+            .components
+            .iter()
+            .filter(|c| matches!(c.kind, ComponentKind::Port { .. }))
+            .map(|c| placement(circuit, &c.id))
+            .map(|p| [p.x, p.y])
+            .filter(|&p| outward(&corners, p).is_some())
+            .collect();
+        d.primitives.extend(dash_dot(&corners, &ports));
+    }
+    d
+}
+
+/// Each drawn part by id, exactly as [`render_circuit`] draws it: its designator keeps clear of
+/// the circuit's wires, so anything measuring or hit-testing parts should use this.
+pub fn render_parts(circuit: &Circuit, catalogue: &Catalogue) -> Vec<(String, Drawing)> {
+    parts_and_wires(circuit, catalogue).0
+}
+
+/// The parts by id, the wires with every port anchor named `component.port`, and the block's
+/// outline.
+fn parts_and_wires(
+    circuit: &Circuit,
+    catalogue: &Catalogue,
+) -> (Vec<(String, Drawing)>, Drawing, Option<Outline>) {
+    let place = |c: &Component| placement(circuit, &c.id);
     let mut d = Drawing::default();
     for c in &circuit.components {
-        let place = placement(circuit, &c.id);
-        let Some(mut part) = render_component(c, place, catalogue) else {
+        let Some(part) = render_component(c, place(c), catalogue) else {
             continue;
         };
-        // A port on the block's edge has its label outside the block.
-        let at = [place.x, place.y];
-        if let (ComponentKind::Port { .. }, Some([nx, ny])) = (&c.kind, outward(&corners, at)) {
-            on_outline.push(at);
-            for prim in &mut part.primitives {
-                if let Primitive::Text { at: t, align, .. } = prim {
-                    (*t, *align) = if nx == 0.0 {
-                        ([at[0], at[1] + 2.5 * ny.signum()], Align::Middle)
-                    } else if nx < 0.0 {
-                        ([at[0] - 2.0, at[1]], Align::End)
-                    } else {
-                        ([at[0] + 2.0, at[1]], Align::Start)
-                    };
-                }
-            }
-        }
-        d.primitives.extend(part.primitives);
         for (name, p) in part.ports {
             d.ports.push((format!("{}.{name}", c.id), p));
         }
@@ -853,11 +899,67 @@ pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
             });
         }
     }
-    d.primitives.extend(wires);
-    if !corners.is_empty() {
-        d.primitives.extend(dash_dot(&corners, &on_outline));
+    // The parts again, now that their designators can keep clear of the wires.
+    let mut parts: Vec<(String, Drawing)> = circuit
+        .components
+        .iter()
+        .filter_map(|c| {
+            Some((
+                c.id.clone(),
+                draw_component(c, place(c), catalogue, &wires)?,
+            ))
+        })
+        .collect();
+    d.primitives = wires;
+    // A port on the block's edge has its label outside the block.
+    let outline = outline(circuit, &parts);
+    let corners = outline.as_ref().map(Outline::corners).unwrap_or_default();
+    for (id, part) in &mut parts {
+        let Some(c) = circuit.component(id) else {
+            continue;
+        };
+        let at = [place(c).x, place(c).y];
+        let (ComponentKind::Port { .. }, Some([nx, ny])) = (&c.kind, outward(&corners, at)) else {
+            continue;
+        };
+        for prim in &mut part.primitives {
+            if let Primitive::Text { at: t, align, .. } = prim {
+                (*t, *align) = if nx == 0.0 {
+                    ([at[0], at[1] + 2.5 * ny.signum()], Align::Middle)
+                } else if nx < 0.0 {
+                    ([at[0] - 2.0, at[1]], Align::End)
+                } else {
+                    ([at[0] + 2.0, at[1]], Align::Start)
+                };
+            }
+        }
     }
-    d
+    (parts, d, outline)
+}
+
+/// Whether a line of `p` passes through the box `lo`-`hi` (Liang-Barsky clipping per segment).
+fn crosses(p: &Primitive, lo: Point, hi: Point) -> bool {
+    let Primitive::Polyline { points, .. } = p else {
+        return false;
+    };
+    points.windows(2).any(|s| {
+        let (mut t0, mut t1) = (0.0f32, 1.0f32);
+        for k in 0..2 {
+            let d = s[1][k] - s[0][k];
+            for (p, q) in [(-d, s[0][k] - lo[k]), (d, hi[k] - s[0][k])] {
+                if p == 0.0 {
+                    if q < 0.0 {
+                        return false;
+                    }
+                } else if p < 0.0 {
+                    t0 = t0.max(q / p);
+                } else {
+                    t1 = t1.min(q / p);
+                }
+            }
+        }
+        t0 <= t1
+    })
 }
 
 /// Space between the block's outline and the parts inside it.
@@ -875,7 +977,7 @@ type Rect = (Point, Point);
 /// corner cut out round any part outside the block that stands in a corner holding no block
 /// part, so an L-shaped block keeps the part in its notch outside.
 pub fn block_outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<Vec<Point>> {
-    Some(outline(circuit, catalogue)?.corners())
+    Some(parts_and_wires(circuit, catalogue).2?.corners())
 }
 
 /// Whether `c`, placed at `place`, would be drawn over the block's outline as it is now.
@@ -885,10 +987,15 @@ pub fn drawn_inside_outline(
     place: Placement,
     catalogue: &Catalogue,
 ) -> bool {
-    let Some(outline) = outline(circuit, catalogue) else {
+    let Some(outline) = parts_and_wires(circuit, catalogue).2 else {
         return false;
     };
-    extent(c, place, catalogue).is_some_and(|e| outline.covers(e))
+    // Not drawn yet, so measured on its own: no wire reaches it to move its designator.
+    let e = match c.kind {
+        ComponentKind::Port { .. } => Some(([place.x, place.y], [place.x, place.y])),
+        _ => render_component(c, place, catalogue).and_then(|d| bounds(&d.primitives)),
+    };
+    e.is_some_and(|e| outline.covers(e))
 }
 
 /// The block's bounding rectangle and the corners cut out of it, top left, top right, bottom
@@ -946,10 +1053,11 @@ fn overlaps(a: Rect, b: Rect) -> bool {
     a.0[0] < b.1[0] && b.0[0] < a.1[0] && a.0[1] < b.1[1] && b.0[1] < a.1[1]
 }
 
-fn outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<Outline> {
+/// The outline round the block's parts, measured in `parts` from [`render_parts`].
+fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
     let (mut members, mut others) = (Vec::new(), Vec::new());
     for c in &circuit.components {
-        let Some((lo, hi)) = extent(c, placement(circuit, &c.id), catalogue) else {
+        let Some((lo, hi)) = extent(circuit, c, parts) else {
             continue;
         };
         match (circuit.in_block.contains(&c.id), &c.kind) {
@@ -1040,10 +1148,14 @@ fn placement(circuit: &Circuit, id: &str) -> Placement {
 }
 
 /// Where a component is on the sheet: a port's point, or the box round anything else's drawing.
-fn extent(c: &Component, place: Placement, catalogue: &Catalogue) -> Option<Rect> {
+/// `parts` comes from [`render_parts`], so a designator counts where it is drawn.
+fn extent(circuit: &Circuit, c: &Component, parts: &[(String, Drawing)]) -> Option<Rect> {
     match c.kind {
-        ComponentKind::Port { .. } => Some(([place.x, place.y], [place.x, place.y])),
-        _ => bounds(&render_component(c, place, catalogue)?.primitives),
+        ComponentKind::Port { .. } => {
+            let place = placement(circuit, &c.id);
+            Some(([place.x, place.y], [place.x, place.y]))
+        }
+        _ => bounds(&parts.iter().find(|(id, _)| *id == c.id)?.1.primitives),
     }
 }
 
@@ -1064,7 +1176,7 @@ pub fn notched_parts(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
 /// Ids of the components outside the block that reach into its bounding rectangle: those in a
 /// notch, or those drawn over the outline.
 fn outside_parts(circuit: &Circuit, catalogue: &Catalogue, notched: bool) -> Vec<String> {
-    let Some(outline) = outline(circuit, catalogue) else {
+    let (parts, _, Some(outline)) = parts_and_wires(circuit, catalogue) else {
         return Vec::new();
     };
     circuit
@@ -1072,7 +1184,7 @@ fn outside_parts(circuit: &Circuit, catalogue: &Catalogue, notched: bool) -> Vec
         .iter()
         .filter(|c| !circuit.in_block.contains(&c.id))
         .filter(|c| {
-            extent(c, placement(circuit, &c.id), catalogue)
+            extent(circuit, c, &parts)
                 .is_some_and(|e| overlaps(e, outline.rect) && outline.covers(e) != notched)
         })
         .map(|c| c.id.clone())
@@ -1147,7 +1259,8 @@ fn dash_dot(corners: &[Point], ports: &[Point]) -> Vec<Primitive> {
                     pieces = pieces
                         .into_iter()
                         .flat_map(|(s, e)| [(s, e.min(t - half)), (s.max(t + half), e)])
-                        .filter(|(s, e)| s < e)
+                        // Not a sliver left by rounding at a gap's edge.
+                        .filter(|(s, e)| e - s > 0.01)
                         .collect();
                 }
                 out.extend(pieces.into_iter().map(|(s, e)| line(at(s), at(e))));

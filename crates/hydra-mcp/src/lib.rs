@@ -402,6 +402,14 @@ impl HydraMcp {
                 "The proposal was not accepted. Fix these problems and submit again:\n- {}",
                 problems.join("\n- ")
             )),
+            Err(hydra_db::Error::AlreadyPending { id }) => Err(format!(
+                "The proposal was not accepted: proposal {id} for {} is still waiting for \
+                 review, and only one of them could be approved. Don't submit it again. Tell \
+                 the engineer to approve or reject proposal {id} in Hydra's Proposals tab; if \
+                 they reject it, read their note with proposal_status and submit a corrected \
+                 proposal.",
+                proposal.valve_type.reference()
+            )),
             Err(e) => Err(db_error(e)),
         }
     }

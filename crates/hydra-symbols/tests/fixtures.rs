@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use hydra_core::{Catalogue, Circuit, SCHEMA_VERSION, Severity};
 use hydra_symbols::{
-    Align, Primitive, block_outline, bounds, outline_issues, render_circuit, render_symbol, to_pdf,
-    to_svg,
+    Align, Primitive, block_outline, bounds, outline_issues, render_circuit, render_parts,
+    render_symbol, to_pdf, to_svg,
 };
 
 fn fixtures() -> PathBuf {
@@ -90,6 +90,131 @@ fn golden_circuits_load_validate_round_trip_and_render() {
         );
     }
     assert!(count > 0, "no golden circuits found");
+}
+
+#[test]
+fn designators_are_clear_of_wires_frames_and_the_outline() {
+    let catalogue = catalogue();
+    for entry in std::fs::read_dir(fixtures().join("circuits")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let circuit = Circuit::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let drawn = render_parts(&circuit, &catalogue);
+        let parts: Vec<&Primitive> = drawn.iter().flat_map(|(_, d)| &d.primitives).collect();
+        let all = render_circuit(&circuit, &catalogue).primitives;
+        let frame = |p: &&Primitive| {
+            matches!(
+                p,
+                Primitive::Polyline {
+                    closed: true,
+                    dashed: true,
+                    ..
+                }
+            )
+        };
+        // Wires and the block outline (all the circuit draws besides its parts), and status
+        // frames (the parts' closed dashed outlines).
+        let lines: Vec<(&[[f32; 2]], bool)> = all
+            .iter()
+            .filter(|p| !parts.contains(p))
+            .chain(parts.iter().copied().filter(frame))
+            .filter_map(|p| match p {
+                Primitive::Polyline { points, closed, .. } => Some((points.as_slice(), *closed)),
+                _ => None,
+            })
+            .collect();
+        for c in circuit
+            .components
+            .iter()
+            .filter(|c| !matches!(c.kind, hydra_core::ComponentKind::Port { .. }))
+        {
+            let (_, part) = drawn.iter().find(|(id, _)| *id == c.id).unwrap();
+            let label = part
+                .primitives
+                .iter()
+                .find(|p| matches!(p, Primitive::Text { text, .. } if *text == c.id))
+                .unwrap_or_else(|| panic!("{}: no designator", c.id));
+            let (lo, hi) = bounds(std::slice::from_ref(label)).unwrap();
+            for &(points, closed) in &lines {
+                // A closed outline runs back to its first point.
+                let back = if closed { &points[..1] } else { &[] };
+                let ring: Vec<_> = points.iter().chain(back).collect();
+                for seg in ring.windows(2) {
+                    assert!(
+                        !crosses(*seg[0], *seg[1], lo, hi),
+                        "{}: designator {} {lo:?}-{hi:?} touches {seg:?}",
+                        path.display(),
+                        c.id
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_designator_moved_by_a_wire_counts_where_it_is_drawn() {
+    let catalogue = catalogue();
+    // The wire from Q to R runs down just left of X100, so its designator goes on the right.
+    let json = r#"{"schema": 4, "name": "w", "components": [
+        {"id": "Q", "kind": "port", "label": "Q"}, {"id": "R", "kind": "port", "label": "R"},
+        {"id": "X100", "kind": "item", "symbol": {"kind": "orifice"}},
+        {"id": "Z1", "kind": "item", "symbol": {"kind": "orifice"}}],
+        "nets": [{"id": "n", "ports": [{"component": "Q", "port": "port"}, {"component": "R", "port": "port"}]}],
+        "layout": {"components": {"Q": {"x": 26, "y": 0}, "R": {"x": 26, "y": 60},
+                                  "X100": {"x": 30, "y": 30}, "Z1": {"x": 46, "y": 30}}},
+        "in_block": ["X100"]}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let parts = render_parts(&circuit, &catalogue);
+    let (_, x100) = parts.iter().find(|(id, _)| id == "X100").unwrap();
+    let label = x100
+        .primitives
+        .iter()
+        .find(|p| matches!(p, Primitive::Text { text, .. } if text == "X100"))
+        .unwrap();
+    let (lo, hi) = bounds(std::slice::from_ref(label)).unwrap();
+    assert!(lo[0] > 30.0, "drawn on the right: {lo:?}");
+    // What hit testing and the outline see is what render_circuit draws.
+    assert!(
+        render_circuit(&circuit, &catalogue)
+            .primitives
+            .contains(label)
+    );
+    let (min, max) = bounds_of(&block_outline(&circuit, &catalogue).unwrap());
+    assert!(
+        min[0] < lo[0] && min[1] < lo[1] && hi[0] < max[0] && hi[1] < max[1],
+        "label {lo:?}-{hi:?} outside the outline {min:?}-{max:?}"
+    );
+    // Z1 is clear of X100's drawing without its designator, but not of the outline round it.
+    assert_eq!(
+        outline_issues(&circuit, &catalogue),
+        [hydra_core::Issue::DrawnInsideBlock("Z1".into())]
+    );
+}
+
+/// Whether segment `a`-`b` passes through the box `lo`-`hi` (Liang-Barsky clipping).
+fn crosses(a: [f32; 2], b: [f32; 2], lo: [f32; 2], hi: [f32; 2]) -> bool {
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for k in 0..2 {
+        let d = b[k] - a[k];
+        for (p, q) in [(-d, a[k] - lo[k]), (d, hi[k] - a[k])] {
+            if p == 0.0 {
+                if q < 0.0 {
+                    return false;
+                }
+            } else {
+                let t = q / p;
+                if p < 0.0 {
+                    t0 = t0.max(t);
+                } else {
+                    t1 = t1.min(t);
+                }
+            }
+        }
+    }
+    t0 <= t1
 }
 
 /// Every value in `file` survives in `saved`; `saved` may add defaults.
@@ -576,6 +701,13 @@ fn block_port_labels_sit_outside_and_the_outline_breaks_round_ports() {
         let (lo, hi) = bounds(std::slice::from_ref(text)).unwrap();
         let inside = lo[0] < max[0] && min[0] < hi[0] && lo[1] < max[1] && min[1] < hi[1];
         assert!(!inside, "{label} at {lo:?}..{hi:?} is inside the block");
+        // Hit testing sees the label where it is drawn.
+        assert!(
+            render_parts(&circuit, &catalogue)
+                .iter()
+                .any(|(_, d)| d.primitives.contains(text)),
+            "{label}"
+        );
     }
     // No dash runs into a port's circle, not even on the next edge round a corner (C).
     let lines = outline_lines(&circuit, &catalogue);
