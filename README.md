@@ -191,6 +191,8 @@ The shared database is a single point of failure, so `ops/backup/` has a nightly
 - it runs the database tests and the backup/restore test on Linux against a `postgres:15` service container, because GitHub only offers service containers on Linux runners;
 - it checks that a changed version goes up.
 
+A pull request that changes only Markdown files skips the builds and tests; their checks show as skipped, which counts as passed.
+
 `converter.yml` builds the STEP converter only when `tools/step2gltf` changes.
 
 The Rust version is pinned in `rust-toolchain.toml`, so CI and local builds run the same clippy.

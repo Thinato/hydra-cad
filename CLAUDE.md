@@ -81,7 +81,7 @@ Snapshots: after an intended drawing change, run `INSTA_UPDATE=always cargo test
 - Commit subjects are short and lower-case after a type prefix, matching the history: `feat: block outline and mirrored symbols`, `fix: …`, `docs: …`, `test: …`, `chore: …`. Put the why in the body when it isn't obvious.
 - Never commit directly on `main`. Create a branch per task (`feat/<topic>`, `fix/<topic>`), commit there, push it, and open a PR against `main` with `gh pr create`. Never force-push `main`, never rewrite pushed history others may have pulled, and never push tags or create releases.
 - CI:
-  - `.github/workflows/pr.yml` runs the full suite on every PR; `converter.yml` runs only when `tools/step2gltf` changes.
+  - `.github/workflows/pr.yml` runs the full suite on every PR that changes more than Markdown (docs-only PRs skip it); `converter.yml` runs only when `tools/step2gltf` changes.
   - Merges don't re-test. `main.yml` acts only when a merge changed the workspace version: it tags `vX.Y.Z` and calls `release.yml`, which opens a draft release.
 - Releases are their own PR, changing only the version. Follow the `version-bump` skill in `.claude/skills/version-bump/SKILL.md`. Major bumps happen only on demand; minor means a feature release; patch covers fixes and everything else.
 - Parallel sessions work in separate git worktrees (`git worktree add ../hydra-cad-<topic> -b feat/<topic> main`), never in the same checkout.

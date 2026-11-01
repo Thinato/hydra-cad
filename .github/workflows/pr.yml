@@ -1,7 +1,8 @@
 name: PR checks
 
-# The full test suite, on every pull request into main. Merges don't re-run it (see main.yml),
-# so keep "Require branches to be up to date before merging" on in the branch protection.
+# The full test suite, on every pull request into main that changes more than Markdown. Merges
+# don't re-run it (see main.yml), so keep "Require branches to be up to date before merging" on
+# in the branch protection.
 on:
   pull_request:
     branches: [main]
@@ -15,14 +16,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  # Whether the PR changes anything besides Markdown. A docs-only PR skips the builds below; a
+  # skipped job counts as passed for the required checks, which a workflow filtered out with
+  # paths-ignore would never report, leaving the PR unmergeable.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --name-only "$BASE" HEAD | grep -qv '\.md$'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Only Markdown changed; skipping the builds."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Two jobs sharing their steps, not one matrix job: a skipped matrix job reports its name
+  # unexpanded, so the required windows-latest and macos-latest checks would never arrive.
+  windows:
+    name: windows-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: windows-latest
+    steps: &check
       - uses: actions/checkout@v4
       # Installs the toolchain pinned in rust-toolchain.toml, with clippy and rustfmt.
       - run: rustup toolchain install
@@ -44,8 +67,17 @@ jobs:
           }
           if ($failed) { exit 1 }
 
+  macos:
+    name: macos-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: macos-latest
+    steps: *check
+
   # Service containers only run on Linux runners, so database tests live here.
   database:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
