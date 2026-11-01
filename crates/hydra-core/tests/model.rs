@@ -81,6 +81,7 @@ fn net(id: &str, ports: &[(&str, &str)]) -> Net {
     Net {
         id: id.into(),
         name: None,
+        kind: NetKind::Working,
         ports: ports.iter().map(|(c, p)| pr(c, p)).collect(),
     }
 }
@@ -95,7 +96,10 @@ fn valve(id: &str, valve_type: &str) -> Component {
 fn port(id: &str) -> Component {
     Component {
         id: id.into(),
-        kind: ComponentKind::Port { label: id.into() },
+        kind: ComponentKind::Port {
+            label: id.into(),
+            plugged: false,
+        },
     }
 }
 
@@ -159,6 +163,24 @@ fn json_round_trip_is_lossless() {
     assert_eq!(value["layout"]["components"]["V1"]["mirror"], true);
     // Unmirrored parts don't write the flag, and older documents read as unmirrored.
     assert!(json.matches("\"mirror\"").count() == 1, "{json}");
+    // Likewise working lines and open ports write no kind or plug.
+    assert!(
+        !json.contains("\"plugged\"") && !json.contains("\"pilot"),
+        "{json}"
+    );
+    let net_kinds = |c: &Circuit| c.nets.iter().map(|n| n.kind).collect::<Vec<_>>();
+    assert!(net_kinds(&c).iter().all(NetKind::is_working));
+
+    c.nets[0].kind = NetKind::Pilot;
+    let ComponentKind::Port { plugged, .. } = &mut c.components[2].kind else {
+        panic!("components[2] is a port");
+    };
+    *plugged = true;
+    let json = c.to_json();
+    assert_eq!(Circuit::from_json(&json).unwrap(), c);
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["nets"][0]["kind"], "pilot");
+    assert_eq!(value["components"][2]["plugged"], true);
 }
 
 #[test]

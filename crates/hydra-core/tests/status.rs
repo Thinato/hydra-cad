@@ -315,7 +315,10 @@ fn relief_need(setting: Option<f64>, flow: Option<f64>) -> Circuit {
                 max_flow_l_min: flow,
                 ..Requested::default()
             }),
-            display: Some(SymbolDef::Relief { adjustable: true }),
+            display: Some(SymbolDef::Relief {
+                adjustable: true,
+                pilot_port: false,
+            }),
             ..Valve::default()
         },
     )])

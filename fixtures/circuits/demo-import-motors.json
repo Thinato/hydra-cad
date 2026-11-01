@@ -1,11 +1,13 @@
 {
-  "schema": 4,
+  "schema": 5,
   "name": "DEMO-03 disc and conveyor block (made-up fixture shaped like an imported drawing)",
   "components": [
     {"id": "P", "kind": "port", "label": "P"},
     {"id": "T", "kind": "port", "label": "T"},
+    {"id": "X", "kind": "port", "label": "X"},
+    {"id": "P2", "kind": "port", "label": "P2", "plugged": true},
     {"id": "FC1", "kind": "valve", "valve_type": "vt-demo-flow-control-prop@1", "requested": {"code": "DEMO-PFC32-C3-12E", "description": "Proportional flow control, compensated, 3 ports", "function": "flow_control", "mounting": "DEMO-C10-3", "max_flow_l_min": 60}},
-    {"id": "FC2", "kind": "valve", "requested": {"code": "DEMO-PFC40-C3-12E", "description": "Proportional flow control, compensated, 3 ports", "function": "flow_control", "mounting": "DEMO-C10-3", "max_flow_l_min": 60}, "display": {"kind": "flow_control", "actuator": "proportional", "compensated": true, "bypass": true}},
+    {"id": "FC2", "kind": "valve", "requested": {"code": "DEMO-PFC40-C3-12E", "description": "Proportional flow control, compensated, 3 ports", "function": "flow_control", "mounting": "DEMO-C10-3", "max_flow_l_min": 60}, "display": {"kind": "flow_control", "actuator": "proportional", "compensated": true, "bypass": true, "pilot_port": true}},
     {"id": "FC3", "kind": "valve", "valve_type": "vt-demo-flow-control-prop@1", "stand_in": true, "requested": {"code": "DEMO-PFC25-C3-12E", "description": "Proportional flow control, compensated, 3 ports", "function": "flow_control", "mounting": "DEMO-C10-3", "max_flow_l_min": 20}},
     {"id": "RV1", "kind": "valve", "valve_type": "vt-demo-cartridge-relief@1", "part": "DEMO-CR10-210", "requested": {"code": "DEMO-CR10-210", "description": "Relief cartridge 190 bar", "function": "relief", "mounting": "DEMO-C10-2", "setting_bar": 190}},
     {"id": "V1", "kind": "valve", "requested": {"code": "DEMO-PS10-2N-12DC", "description": "2/2 poppet solenoid cartridge", "function": "directional", "mounting": "DEMO-C10-2"}, "display": {"kind": "directional_valve", "ports": [{"name": "A", "side": "top"}, {"name": "P", "side": "bottom"}], "positions": [{"flows": [["P", "A"]]}, {"blocked": ["A", "P"]}], "normal_position": 1, "left": ["solenoid"], "right": ["spring"]}},
@@ -15,16 +17,19 @@
     {"id": "M1", "kind": "item", "symbol": {"kind": "test_point"}, "label": "MP SAE-04", "code": "DEMO-MP-04", "description": "Test point SAE-04", "position": "9"}
   ],
   "nets": [
-    {"id": "n-p", "ports": [{"component": "P", "port": "port"}, {"component": "FC1", "port": "In"}, {"component": "FC2", "port": "In"}, {"component": "FC3", "port": "In"}, {"component": "RV1", "port": "P"}, {"component": "M1", "port": "M"}, {"component": "V1", "port": "P"}]},
+    {"id": "n-p", "ports": [{"component": "P", "port": "port"}, {"component": "FC1", "port": "In"}, {"component": "FC2", "port": "In"}, {"component": "FC3", "port": "In"}, {"component": "RV1", "port": "P"}, {"component": "M1", "port": "M"}, {"component": "V1", "port": "P"}, {"component": "P2", "port": "port"}]},
     {"id": "n-t", "ports": [{"component": "T", "port": "port"}, {"component": "RV1", "port": "T"}, {"component": "V1", "port": "A"}, {"component": "FC1", "port": "Bypass"}, {"component": "FC2", "port": "Bypass"}, {"component": "FC3", "port": "Bypass"}, {"component": "HM1", "port": "B"}, {"component": "HM2", "port": "B"}, {"component": "HM3", "port": "B"}]},
     {"id": "n-1", "ports": [{"component": "FC1", "port": "Out"}, {"component": "HM1", "port": "A"}]},
     {"id": "n-2", "ports": [{"component": "FC2", "port": "Out"}, {"component": "HM2", "port": "A"}]},
-    {"id": "n-3", "ports": [{"component": "FC3", "port": "Out"}, {"component": "HM3", "port": "A"}]}
+    {"id": "n-3", "ports": [{"component": "FC3", "port": "Out"}, {"component": "HM3", "port": "A"}]},
+    {"id": "n-x", "kind": "pilot", "ports": [{"component": "X", "port": "port"}, {"component": "FC2", "port": "X"}]}
   ],
   "layout": {
     "components": {
       "P": {"x": 0, "y": 110},
       "T": {"x": 20, "y": 110},
+      "X": {"x": 116, "y": 115},
+      "P2": {"x": 275, "y": 106},
       "FC1": {"x": 40, "y": 60},
       "FC2": {"x": 90, "y": 60},
       "FC3": {"x": 140, "y": 60},
@@ -42,7 +47,8 @@
         [[90, 106], [90, 68]],
         [[140, 106], [140, 68]],
         [[185, 106], [185, 88]],
-        [[230, 106], [230, 88]]
+        [[230, 106], [230, 88]],
+        [[255, 106], [275, 106]]
       ],
       "n-t": [
         [[20, 110], [20, 2], [230, 2], [230, 72]],
@@ -56,10 +62,11 @@
       ],
       "n-1": [[[40, 52], [40, 23]]],
       "n-2": [[[90, 52], [90, 23]]],
-      "n-3": [[[140, 52], [140, 23]]]
+      "n-3": [[[140, 52], [140, 23]]],
+      "n-x": [[[102, 58], [116, 58], [116, 115]]]
     }
   },
-  "in_block": ["FC1", "FC2", "FC3", "M1", "P", "RV1", "T", "V1"],
+  "in_block": ["FC1", "FC2", "FC3", "M1", "P", "P2", "RV1", "T", "V1", "X"],
   "bom_extra": [
     {"position": "1", "quantity": 1, "code": "DEMO-BLOCK-03", "description": "Manifold block"},
     {"position": "8", "quantity": 3, "code": "DEMO-COIL-12DC", "description": "Coil 12 V DC"},

@@ -6,7 +6,7 @@
 
 use hydra_core::{
     Actuator, Catalogue, Circuit, Component, ComponentKind, DirectionalValve, FlowActuator, Issue,
-    MAX_LISTED, Net, PORT_PIN, Placement, Rotation, Side, SymbolDef, ValveStatus,
+    MAX_LISTED, Net, NetKind, PORT_PIN, Placement, Rotation, Side, SymbolDef, ValveStatus,
 };
 
 mod svg;
@@ -164,13 +164,17 @@ pub fn render_symbol(def: &SymbolDef) -> Drawing {
     match def {
         SymbolDef::DirectionalValve(v) => directional_valve(v),
         SymbolDef::Check { spring: has_spring } => check(*has_spring),
-        SymbolDef::Relief { adjustable: adj } => relief(*adj),
+        SymbolDef::Relief {
+            adjustable: adj,
+            pilot_port,
+        } => relief(*adj, *pilot_port),
         SymbolDef::Orifice { adjustable: adj } => orifice(*adj),
         SymbolDef::FlowControl {
             actuator,
             compensated,
             bypass,
-        } => flow_control(*actuator, *compensated, *bypass),
+            pilot_port,
+        } => flow_control(*actuator, *compensated, *bypass, *pilot_port),
         SymbolDef::PilotCheck { spring: has_spring } => pilot_check(*has_spring),
         SymbolDef::Counterbalance => counterbalance(),
         SymbolDef::TestPoint => test_point(),
@@ -221,8 +225,14 @@ fn triangle(tip: Point, base_mid: Point, half: f32) -> Primitive {
     }
 }
 
-/// Flow control from In (bottom) to Out (top), with Bypass on the right when `bypass`.
-fn flow_control(actuator: FlowActuator, compensated: bool, bypass: bool) -> Drawing {
+/// Flow control from In (bottom) to Out (top), with Bypass on the right when `bypass`, and a
+/// second pilot X on the right above it when `pilot_port`.
+fn flow_control(
+    actuator: FlowActuator,
+    compensated: bool,
+    bypass: bool,
+    pilot_port: bool,
+) -> Drawing {
     let mut d = Drawing::default();
     let h = ENVELOPE / 2.0;
     d.primitives.push(rect(-h, -h, ENVELOPE, ENVELOPE));
@@ -248,6 +258,13 @@ fn flow_control(actuator: FlowActuator, compensated: bool, bypass: bool) -> Draw
     if bypass {
         d.primitives.push(line([0.0, h - 2.0], [h, h - 2.0]));
         side_port(&mut d, "Bypass", h, h - 2.0, false);
+    }
+    if pilot_port {
+        // Dashed pilot from the right into the box, on the compensator's side.
+        let (x, tip) = (h + 4.0, [h, -2.0]);
+        d.primitives.push(dashed(vec![[x, tip[1]], tip]));
+        d.primitives.push(arrow_head([x, tip[1]], tip));
+        side_port(&mut d, "X", x, tip[1], false);
     }
     vertical_ports(&mut d, "Out", "In", h);
     d
@@ -545,8 +562,9 @@ fn check(has_spring: bool) -> Drawing {
     d
 }
 
-/// Pressure relief valve, P at the bottom, T at the top, normally closed.
-fn relief(adj: bool) -> Drawing {
+/// Pressure relief valve, P at the bottom, T at the top, normally closed. Piloted from P, or
+/// with `pilot_port` from X on the left.
+fn relief(adj: bool, pilot_port: bool) -> Drawing {
     let mut d = Drawing::default();
     let h = ENVELOPE / 2.0;
     d.primitives.push(rect(-h, -h, ENVELOPE, ENVELOPE));
@@ -561,14 +579,18 @@ fn relief(adj: bool) -> Drawing {
     if adj {
         d.primitives.extend(adjustable([h + 2.5, 0.0], 2.5));
     }
-    // Pilot line from P to the left end.
-    d.primitives.push(dashed(vec![
-        [0.0, h + 1.5],
-        [-h - 2.0, h + 1.5],
-        [-h - 2.0, 0.0],
-        [-h, 0.0],
-    ]));
-    d.primitives.push(arrow_head([-h - 2.0, 0.0], [-h, 0.0]));
+    if pilot_port {
+        pilot_from_left(&mut d, "X", -h - 4.0, [-h, 0.0]);
+    } else {
+        // Pilot line from P to the left end.
+        d.primitives.push(dashed(vec![
+            [0.0, h + 1.5],
+            [-h - 2.0, h + 1.5],
+            [-h - 2.0, 0.0],
+            [-h, 0.0],
+        ]));
+        d.primitives.push(arrow_head([-h - 2.0, 0.0], [-h, 0.0]));
+    }
     vertical_ports(&mut d, "T", "P", h);
     d
 }
@@ -589,14 +611,14 @@ fn orifice(adj: bool) -> Drawing {
 
 const PORT_RADIUS: f32 = 1.2;
 
-/// External connection, e.g. manifold port P.
-fn port_marker(label: &str) -> Drawing {
+/// External connection, e.g. manifold port P; a plugged one is a solid circle.
+fn port_marker(label: &str, plugged: bool) -> Drawing {
     Drawing {
         primitives: vec![
             Primitive::Circle {
                 center: [0.0, 0.0],
                 radius: PORT_RADIUS,
-                filled: false,
+                filled: plugged,
             },
             text([0.0, -2.5], label, Align::Middle),
         ],
@@ -670,7 +692,7 @@ fn draw_component(
 ) -> Option<Drawing> {
     let symbol = match &c.kind {
         ComponentKind::Valve(v) => render_symbol(v.symbol(catalogue)?),
-        ComponentKind::Port { label } => port_marker(label),
+        ComponentKind::Port { label, plugged } => port_marker(label, *plugged),
         ComponentKind::Item(item) => render_symbol(&item.symbol),
     };
     let at = |[x, y]: Point| {
@@ -862,8 +884,13 @@ fn parts_and_wires(
     // Finding dots compares points with wires, so only for wires an import could save.
     let dotted = circuit.layout.wires_are_bounded();
     for net in &circuit.nets {
+        // Pilot and drain lines are dashed.
+        let wire = |points| match net.kind {
+            NetKind::Working => open(points),
+            NetKind::Pilot | NetKind::Drain => dashed(points),
+        };
         if let Some(drawn) = circuit.layout.wires.get(&net.id) {
-            wires.extend(drawn.iter().map(|w| open(w.clone())));
+            wires.extend(drawn.iter().map(|w| wire(w.clone())));
             if !dotted {
                 continue;
             }
@@ -900,7 +927,7 @@ fn parts_and_wires(
         // Star from the first port: across along a trunk, then straight into each port.
         for &p in rest {
             let elbow = [p[0], first[1]];
-            wires.push(open(vec![first, elbow, p]));
+            wires.push(wire(vec![first, elbow, p]));
             // Junction dot where the trunk carries on past this branch.
             let further = |q: &Point| {
                 (q[0] - first[0]).signum() == (p[0] - first[0]).signum()

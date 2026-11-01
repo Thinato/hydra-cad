@@ -134,7 +134,10 @@ fn codes_must_be_trimmed_and_present() {
 #[test]
 fn valves_are_not_items_except_a_fixed_orifice() {
     let mut c = manifold();
-    item_mut(&mut c, "X1").symbol = SymbolDef::Relief { adjustable: false };
+    item_mut(&mut c, "X1").symbol = SymbolDef::Relief {
+        adjustable: false,
+        pilot_port: false,
+    };
     has(&c, "item X1 is drawn as a valve");
     let mut c = manifold();
     item_mut(&mut c, "X1").symbol = SymbolDef::Orifice { adjustable: true };

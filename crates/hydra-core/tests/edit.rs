@@ -10,7 +10,10 @@ fn pr(component: &str, port: &str) -> PortRef {
 fn port(id: &str) -> Component {
     Component {
         id: id.into(),
-        kind: ComponentKind::Port { label: id.into() },
+        kind: ComponentKind::Port {
+            label: id.into(),
+            plugged: false,
+        },
     }
 }
 
@@ -228,7 +231,10 @@ fn moving_rotating_and_relabelling() {
     .unwrap();
     assert_eq!(
         d.circuit.component("A").unwrap().kind,
-        ComponentKind::Port { label: "P".into() }
+        ComponentKind::Port {
+            label: "P".into(),
+            plugged: false
+        }
     );
     assert!(
         d.apply(Command::Place {
@@ -295,6 +301,7 @@ fn edits_leave_untouched_nets_alone_and_merging_keeps_names() {
     d.circuit.nets.push(Net {
         id: "lone".into(),
         name: None,
+        kind: NetKind::Working,
         ports: vec![pr("E", PORT_PIN)],
     });
     d.apply(connect("A", "B")).unwrap();
@@ -598,4 +605,71 @@ fn import_notes_are_edited_only_on_imported_circuits() {
     d.undo();
     d.undo();
     assert_eq!(notes(&d), ["Row 12 is illegible (demo)."]);
+}
+
+#[test]
+fn nets_become_pilot_or_drain_lines_and_merging_keeps_the_kind() {
+    let mut d = doc(&["A", "B", "C", "D"]);
+    d.apply(connect("A", "B")).unwrap();
+    d.apply(connect("C", "D")).unwrap();
+    let kind = |net: &str, kind| Command::SetNetKind {
+        net: net.into(),
+        kind,
+    };
+    assert_eq!(
+        d.apply(kind("n9", NetKind::Pilot)),
+        Err("net n9 is not in the circuit".into())
+    );
+    // New nets are working lines.
+    assert_eq!(
+        d.apply(kind("n1", NetKind::Working)),
+        Err("net n1 is already a working line".into())
+    );
+    d.apply(kind("n2", NetKind::Drain)).unwrap();
+    assert_eq!(d.undo_label(), Some("Make net n2 a drain line"));
+    assert_eq!(d.circuit.nets[1].kind, NetKind::Drain);
+    // Joining a working line to a drain line keeps the drain, whichever comes first.
+    d.apply(connect("A", "C")).unwrap();
+    assert_eq!(d.circuit.nets.len(), 1);
+    assert_eq!(d.circuit.nets[0].kind, NetKind::Drain);
+    d.undo();
+    d.undo();
+    assert_eq!(d.circuit.nets[1].kind, NetKind::Working);
+    // A pilot line merged into a working one stays a pilot line.
+    d.apply(kind("n1", NetKind::Pilot)).unwrap();
+    d.apply(connect("C", "A")).unwrap();
+    assert_eq!(d.circuit.nets[0].kind, NetKind::Pilot);
+}
+
+#[test]
+fn only_external_connections_are_plugged() {
+    let mut d = doc(&["P"]);
+    d.apply(item("X1")).unwrap();
+    let plug = |id: &str, plugged| Command::SetPlugged {
+        id: id.into(),
+        plugged,
+    };
+    assert_eq!(
+        d.apply(plug("X1", true)),
+        Err("X1 is not an external connection in the circuit".into())
+    );
+    assert_eq!(d.apply(plug("P", false)), Err("P is already open".into()));
+    d.apply(plug("P", true)).unwrap();
+    assert_eq!(d.undo_label(), Some("Plug P"));
+    assert_eq!(
+        d.circuit.component("P").unwrap().kind,
+        ComponentKind::Port {
+            label: "P".into(),
+            plugged: true
+        }
+    );
+    assert_eq!(d.apply(plug("P", true)), Err("P is already plugged".into()));
+    d.undo();
+    assert_eq!(
+        d.circuit.component("P").unwrap().kind,
+        ComponentKind::Port {
+            label: "P".into(),
+            plugged: false
+        }
+    );
 }

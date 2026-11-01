@@ -67,6 +67,7 @@ fn new_symbol_kinds_have_their_ports() {
         actuator: FlowActuator::Proportional,
         compensated: true,
         bypass,
+        pilot_port: false,
     };
     assert_eq!(fc(true).ports(), ["In", "Out", "Bypass"]);
     assert_eq!(fc(false).ports(), ["In", "Out"]);
@@ -89,6 +90,37 @@ fn new_symbol_kinds_have_their_ports() {
     assert!(SymbolDef::Orifice { adjustable: false }.is_valve());
     assert!(!SymbolDef::TestPoint.is_valve() && !motor(false).is_valve());
     assert!(!SymbolDef::Pump { variable: false }.is_valve());
+}
+
+#[test]
+fn relief_valves_and_flow_controls_can_have_a_pilot_port() {
+    let json = |j: &str| serde_json::from_str::<SymbolDef>(j).unwrap();
+    // Older definitions have no pilot port, and save as they were.
+    let relief = json(r#"{"kind": "relief", "adjustable": true}"#);
+    assert_eq!(relief.ports(), ["P", "T"]);
+    assert_eq!(
+        serde_json::to_value(&relief).unwrap(),
+        serde_json::json!({"kind": "relief", "adjustable": true})
+    );
+    let remote = json(r#"{"kind": "relief", "adjustable": true, "pilot_port": true}"#);
+    assert_eq!(remote.ports(), ["P", "T", "X"]);
+    assert_eq!(remote.problems(), Vec::<String>::new());
+
+    let fc = json(
+        r#"{"kind": "flow_control", "compensated": true, "bypass": true, "pilot_port": true}"#,
+    );
+    assert_eq!(fc.ports(), ["In", "Out", "Bypass", "X"]);
+    assert_eq!(fc.problems(), Vec::<String>::new());
+    // The second pilot works the compensator, so a plain flow control can't have one.
+    let plain = json(r#"{"kind": "flow_control", "pilot_port": true}"#);
+    assert_eq!(plain.ports(), ["In", "Out", "X"]);
+    assert_eq!(
+        plain.problems(),
+        [
+            "a flow control's pilot port X works its pressure compensator, so it needs \
+          compensated: true"
+        ]
+    );
 }
 
 #[test]

@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 use crate::{Catalogue, CatalogueRef, SymbolDef, ValveFunction};
 
 /// Circuit JSON version this build writes. It also reads version 1, which had no assembly,
-/// version 2, which had only catalogue valves and no import data, and version 3, which had no
-/// block outline and no mirrored parts.
-pub const SCHEMA_VERSION: u32 = 4;
+/// version 2, which had only catalogue valves and no import data, version 3, which had no
+/// block outline and no mirrored parts, and version 4, which had no pilot or drain lines, no
+/// plugged ports and no pilot ports on relief valves and flow controls.
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Circuit {
@@ -81,6 +82,10 @@ pub enum ComponentKind {
     /// An external connection such as a manifold port `P` or `A1`. Its single port is [`PORT_PIN`].
     Port {
         label: String,
+        /// Closed with a plug, e.g. the end of a rail drilled out to the block's edge, so
+        /// nothing connects to it from outside.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        plugged: bool,
     },
     /// A part of the circuit that isn't a catalogue valve, e.g. a test point, a fixed orifice or a
     /// motor.
@@ -177,7 +182,40 @@ pub struct Net {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Pilot and drain lines are drawn dashed.
+    #[serde(default, skip_serializing_if = "NetKind::is_working")]
+    pub kind: NetKind,
     pub ports: Vec<PortRef>,
+}
+
+/// What a net carries, which sets how its lines are drawn.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetKind {
+    /// Working line, drawn solid.
+    #[default]
+    Working,
+    /// Pilot (control) line, drawn dashed.
+    Pilot,
+    /// Drain or leakage line, drawn dashed.
+    Drain,
+}
+
+impl NetKind {
+    pub const ALL: [NetKind; 3] = [NetKind::Working, NetKind::Pilot, NetKind::Drain];
+
+    pub fn is_working(&self) -> bool {
+        *self == NetKind::Working
+    }
+
+    /// E.g. "pilot line".
+    pub fn words(self) -> &'static str {
+        match self {
+            NetKind::Working => "working line",
+            NetKind::Pilot => "pilot line",
+            NetKind::Drain => "drain line",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
