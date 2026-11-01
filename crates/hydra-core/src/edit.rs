@@ -220,7 +220,8 @@ impl Command {
                             return Err(format!(
                                 "joining these nets would give one net more than \
                                  {MAX_WIRES_PER_NET} drawn wires, more than Hydra checks; \
-                                 delete or join some wires first"
+                                 choose Draw net automatically on one of them first, or \
+                                 delete some of their wires"
                             ));
                         }
                         // Merge the second net into the first, drawn wires included.
@@ -470,7 +471,8 @@ impl Command {
                     return Err(format!(
                         "that would be more wires than Hydra checks (at most \
                          {MAX_WIRES_PER_NET} wires a net, {MAX_WIRE_POINTS} points a wire and \
-                         {MAX_IMPORT_WIRE_POINTS} points in all); delete or join some wires"
+                         {MAX_IMPORT_WIRE_POINTS} points in all); choose Draw net \
+                         automatically, or delete or join some wires"
                     ));
                 }
                 *circuit = c;

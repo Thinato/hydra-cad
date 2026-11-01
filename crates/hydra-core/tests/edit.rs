@@ -190,7 +190,13 @@ fn joining_named_nets_keeps_the_first_name_and_both_nets_wires() {
     d.undo();
     assert_eq!(d.circuit.nets[1].name.as_deref(), Some("T"));
     assert_eq!(d.circuit.layout.wires.len(), 2);
-    // Refused, changing nothing, when the joined net would have more wires than are checked.
+    // Up to the cap the wires are joined; past it the join is refused, changing nothing.
+    let half = vec![vec![[0.0, 0.0], [10.0, 0.0]]; MAX_WIRES_PER_NET / 2];
+    d.circuit.layout.wires.insert("n1".into(), half.clone());
+    d.circuit.layout.wires.insert("n2".into(), half);
+    let mut joined = d.circuit.clone();
+    connect("A", "C").apply(&mut joined).unwrap();
+    assert_eq!(joined.layout.wires["n1"].len(), MAX_WIRES_PER_NET);
     let many = vec![vec![[0.0, 0.0], [10.0, 0.0]]; MAX_WIRES_PER_NET / 2 + 1];
     d.circuit.layout.wires.insert("n1".into(), many.clone());
     d.circuit.layout.wires.insert("n2".into(), many);
