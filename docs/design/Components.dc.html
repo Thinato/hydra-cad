@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hydra components</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans+Condensed:wght@500;600;700&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0;background:#E9ECEF}
+a{color:#1F5FAD}a:hover{color:#174C8C}
+</style>
+</helmet>
+<div style="font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif; color: #14181F; background: #E9ECEF; min-height: 1760px; box-sizing: border-box; padding: 48px 5%; display: flex; flex-direction: column; gap: 36px">
+
+  <header style="display: flex; flex-direction: column; gap: 6px; border-bottom: 2px solid #14181F; padding-bottom: 20px">
+    <div style="font-family: 'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Hydra design system · sheet 2 of 2</div>
+    <h1 style="margin: 0; font-size: 40px; line-height: 46px; font-weight: 600; letter-spacing: -0.01em">Components</h1>
+    <p style="margin: 0; font-size: 16px; line-height: 24px; color: #4A5361; max-width: 760px; text-wrap: pretty">One look for every control, so a new tab is built from these parts and nothing else. Each maps to an egui widget or a small helper in a shared <span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px">theme.rs</span>.</p>
+  </header>
+
+  <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(560px, 100%), 1fr)); gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 12px">
+      <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Buttons</h2>
+      <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; padding: 20px; display: flex; flex-direction: column; gap: 16px">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+          <button type="button" style="height: 32px; padding: 0 16px; border-radius: 3px; border: 1px solid #174C8C; background: #1F5FAD; color: #FFFFFF; font: 600 13px 'IBM Plex Sans', sans-serif">Approve</button>
+          <button type="button" style="height: 32px; padding: 0 14px; border-radius: 3px; border: 1px solid #8A93A0; background: #FFFFFF; color: #14181F; font: 500 13px 'IBM Plex Sans', sans-serif">Open datasheet</button>
+          <button type="button" style="height: 32px; padding: 0 12px; border-radius: 3px; border: 1px solid transparent; background: transparent; color: #1F5FAD; font: 500 13px 'IBM Plex Sans', sans-serif">Show reviewed</button>
+          <button type="button" style="height: 32px; padding: 0 14px; border-radius: 3px; border: 1px solid #A3201A; background: #FFFFFF; color: #A3201A; font: 600 13px 'IBM Plex Sans', sans-serif">Reject</button>
+          <button type="button" disabled="" style="height: 32px; padding: 0 16px; border-radius: 3px; border: 1px solid #C3C9D1; background: #E9ECEF; color: #6B7380; font: 600 13px 'IBM Plex Sans', sans-serif">Approve</button>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; font-size: 12px; line-height: 16px; color: #4A5361">
+          <div><b style="color: #14181F">Primary</b><br>One per view: the action that commits.</div>
+          <div><b style="color: #14181F">Secondary</b><br>Everything else.</div>
+          <div><b style="color: #14181F">Quiet</b><br>Toggles and links inside panels.</div>
+          <div><b style="color: #14181F">Danger</b><br>Reject, delete, discard. Outlined, never filled.</div>
+          <div><b style="color: #14181F">Disabled</b><br>Always with a tooltip saying why.</div>
+        </div>
+      </div>
+
+      <h2 style="margin: 12px 0 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Toolbar groups</h2>
+      <div style="background: #E9ECEF; border: 1px solid #C3C9D1; padding: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+        <div style="display: flex; border: 1px solid #8A93A0; border-radius: 3px; background: #FFFFFF; overflow: hidden">
+          <button type="button" style="height: 28px; padding: 0 10px; border: 0; border-right: 1px solid #C3C9D1; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">New</button>
+          <button type="button" style="height: 28px; padding: 0 10px; border: 0; border-right: 1px solid #C3C9D1; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">Open…</button>
+          <button type="button" style="height: 28px; padding: 0 10px; border: 0; background: #FFFFFF; font: 600 13px 'IBM Plex Sans', sans-serif; color: #14181F">Save</button>
+        </div>
+        <div style="display: flex; border: 1px solid #8A93A0; border-radius: 3px; background: #FFFFFF; overflow: hidden">
+          <button type="button" aria-label="Undo" style="height: 28px; width: 32px; border: 0; border-right: 1px solid #C3C9D1; background: #FFFFFF; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#14181F" stroke-width="1.75" aria-hidden="true"><path d="M5 3 2 6l3 3"></path><path d="M2 6h7.5a4 4 0 0 1 0 8H7"></path></svg></button>
+          <button type="button" aria-label="Redo" style="height: 28px; width: 32px; border: 0; background: #FFFFFF; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#14181F" stroke-width="1.75" aria-hidden="true"><path d="m11 3 3 3-3 3"></path><path d="M14 6H6.5a4 4 0 0 0 0 8H9"></path></svg></button>
+        </div>
+        <button type="button" aria-pressed="true" style="height: 28px; padding: 0 10px; border-radius: 3px; border: 1px solid #1F5FAD; background: #E3ECF7; color: #174C8C; font: 600 13px 'IBM Plex Sans', sans-serif; display: flex; align-items: center; gap: 6px">Draw wires <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; border: 1px solid #1F5FAD; border-radius: 2px; padding: 0 4px">W</span></button>
+        <span style="font-size: 12px; color: #4A5361">Grouped by job, joined edges; toggles show their key and turn blue while on.</span>
+      </div>
+
+      <h2 style="margin: 12px 0 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Tabs</h2>
+      <div style="background: #E9ECEF; border: 1px solid #C3C9D1; display: flex; align-items: flex-end; gap: 2px; padding: 8px 8px 0">
+        <div style="height: 34px; padding: 0 16px; display: flex; align-items: center; background: #F4F5F7; border: 1px solid #C3C9D1; border-bottom: 0; border-top: 3px solid #1F5FAD; font-size: 14px; font-weight: 600">Schematic</div>
+        <div style="height: 32px; padding: 0 16px; display: flex; align-items: center; font-size: 14px; color: #4A5361">Catalogue</div>
+        <div style="height: 32px; padding: 0 16px; display: flex; align-items: center; gap: 8px; font-size: 14px; color: #4A5361">Proposals <span style="min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: 10px; background: #0E7C86; color: #FFFFFF; font: 600 12px 'IBM Plex Mono', monospace; display: inline-flex; align-items: center; justify-content: center">3</span></div>
+        <div style="height: 32px; padding: 0 16px; display: flex; align-items: center; font-size: 14px; color: #4A5361">3D</div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px">
+      <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Fields</h2>
+      <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <label for="f-series" style="font-size: 13px; font-weight: 500">Series</label>
+          <input id="f-series" value="DEMO-RV" style="height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #8A93A0; border-radius: 3px; font: 400 14px 'IBM Plex Sans', sans-serif; color: #14181F; background: #FFFFFF">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <label for="f-code" style="font-size: 13px; font-weight: 500">Code</label>
+          <input id="f-code" value="DEMO-RV10-210" style="height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #1F5FAD; outline: 2px solid #1F5FAD; outline-offset: 0; border-radius: 3px; font: 500 13px 'IBM Plex Mono', monospace; color: #14181F; background: #FFFFFF">
+          <span style="font-size: 12px; color: #4A5361">Codes and refs are mono.</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <label for="f-mount" style="font-size: 13px; font-weight: 500; display: flex; gap: 8px; align-items: center">Mounting <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: #8A5300; background: #FFF1D6; border: 1px solid #D98A00; border-radius: 2px; padding: 0 5px">CHANGED</span></label>
+          <input id="f-mount" value="DEMO-CAV-10" style="height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #D98A00; background: #FFFBF2; border-radius: 3px; font: 500 13px 'IBM Plex Mono', monospace; color: #14181F">
+          <span style="font-size: 12px; color: #4A5361">Was <s style="font-family: 'IBM Plex Mono', monospace">DEMO-CAV-08</s></span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <label for="f-sym" style="font-size: 13px; font-weight: 500">Symbol</label>
+          <input id="f-sym" value="" placeholder="Choose a symbol" style="height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #C4291C; border-radius: 3px; font: 400 14px 'IBM Plex Sans', sans-serif; background: #FFFFFF">
+          <span style="font-size: 12px; color: #A3201A; font-weight: 500">■ A valve type needs a symbol before it can be approved.</span>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 14px"><input type="checkbox" checked="" style="width: 16px; height: 16px; accent-color: #1F5FAD; margin: 0">In block</label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 14px"><input type="checkbox" style="width: 16px; height: 16px; accent-color: #1F5FAD; margin: 0">Plugged</label>
+      </div>
+
+      <h2 style="margin: 12px 0 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Status chips</h2>
+      <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; padding: 20px; display: flex; flex-direction: column; gap: 14px">
+        <div style="display: flex; flex-wrap: wrap; gap: 8px">
+          <sc-for list="{{chips}}" as="c" hint-placeholder-count="9">
+            <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 3px; border: 1px solid {{c.strong}}; background: {{c.tint}}; color: {{c.text}}; font-size: 12px; font-weight: 600; white-space: nowrap">{{c.glyph}} {{c.label}}</span>
+          </sc-for>
+        </div>
+        <p style="margin: 0; font-size: 12px; line-height: 16px; color: #4A5361">Valve status (top row) is about the catalogue; review status (bottom row) is about a person's decision. A normal valve gets no chip at all, so a chip always means look here.</p>
+      </div>
+
+      <h2 style="margin: 12px 0 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Banners</h2>
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 14px; background: #FFF1D6; border: 1px solid #D98A00; color: #14181F; font-size: 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#8A5300" stroke-width="1.75" aria-hidden="true"><path d="M8 1.8 15 14H1z"></path><path d="M8 6v4M8 11.6v.4"></path></svg>
+          <span style="flex: 1 1 320px"><b>Imported by the assistant, not checked yet.</b> Compare it with the source drawing, then mark it checked.</span>
+          <button type="button" style="height: 28px; padding: 0 12px; border-radius: 3px; border: 1px solid #8A93A0; background: #FFFFFF; font: 600 13px 'IBM Plex Sans', sans-serif; color: #14181F">Mark checked</button>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 14px; background: #FDE7E5; border: 1px solid #C4291C; font-size: 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#A3201A" stroke-width="1.75" aria-hidden="true"><rect x="2" y="2" width="12" height="12"></rect><path d="m5.5 5.5 5 5m0-5-5 5"></path></svg>
+          <span style="flex: 1 1 320px"><b>Database connection lost.</b> Your edits are kept here; Save works again once it reconnects.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(560px, 100%), 1fr)); gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 12px">
+      <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Panel, list rows and issues</h2>
+      <div style="background: #F4F5F7; border: 1px solid #C3C9D1; display: flex; flex-direction: column">
+        <div style="height: 36px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #C3C9D1; background: #E9ECEF">
+          <span style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase">Issues</span>
+          <span style="display: flex; gap: 12px; font-size: 12px; font-weight: 600"><span style="color: #A3201A">■ 1 error</span><span style="color: #8A5300">▲ 2 warnings</span></span>
+        </div>
+        <div style="display: grid; grid-template-columns: 96px 56px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 36px; padding: 6px 12px; border-bottom: 1px solid #DDE1E6; background: #FFFFFF; font-size: 14px">
+          <span style="font-size: 12px; font-weight: 600; color: #A3201A">■ Error</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: #1F5FAD">V3</span><span>V3 port T is not connected; connect it or plug it.</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 96px 56px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 36px; padding: 6px 12px; border-bottom: 1px solid #DDE1E6; background: #FFFFFF; font-size: 14px">
+          <span style="font-size: 12px; font-weight: 600; color: #8A5300">▲ Warning</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: #1F5FAD">V1</span><span>V1 is outside the block but drawn inside its outline; move it out or put it in the block.</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 96px 56px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 36px; padding: 6px 12px; background: #FFFFFF; font-size: 14px">
+          <span style="font-size: 12px; font-weight: 600; color: #8A5300">▲ Warning</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: #1F5FAD">net 4</span><span>Net 4 is still being drawn; its last wire is not in.</span>
+        </div>
+      </div>
+      <p style="margin: 0; font-size: 12px; line-height: 16px; color: #4A5361">Severity is a word plus a shape, then the part as a link that selects it on the sheet, then the plain-language message. Errors sort first.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px">
+      <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Title block</h2>
+      <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; border: 2px solid #14181F; background: #FFFFFF; max-width: 560px">
+        <div style="grid-column: 1 / 4; padding: 8px 12px; border-bottom: 1px solid #14181F; display: flex; justify-content: space-between; align-items: baseline; gap: 12px">
+          <span style="font-size: 18px; font-weight: 600">DEMO-MAN-01 manifold</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">schema 5</span>
+        </div>
+        <div style="padding: 6px 12px; border-right: 1px solid #14181F; border-bottom: 1px solid #14181F"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">DRAWN BY</div><div style="font-size: 14px">r.costa</div></div>
+        <div style="padding: 6px 12px; border-right: 1px solid #14181F; border-bottom: 1px solid #14181F"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">REVISION</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 600">4</div></div>
+        <div style="padding: 6px 12px; border-bottom: 1px solid #14181F"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">DATE</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px">2026-11-01</div></div>
+        <div style="padding: 6px 12px; border-right: 1px solid #14181F"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">CHECKED</div><div style="font-size: 14px; color: #1E6B3E; font-weight: 600">✓ m.silva, rev 3</div></div>
+        <div style="grid-column: 2 / 4; padding: 6px 12px"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">STATE</div><div style="font-size: 14px; color: #8A5300; font-weight: 600">▲ Unsaved changes</div></div>
+      </div>
+      <p style="margin: 0; font-size: 12px; line-height: 16px; color: #4A5361">The corner of every sheet, like the paper drawings: name, revision, who drew and checked it. It replaces the toolbar's "revision 4, unsaved changes" text and also prints in the SVG and PDF.</p>
+
+      <h2 style="margin: 12px 0 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Dialog</h2>
+      <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; box-shadow: 0 2px 0 rgba(20, 24, 31, 0.12), 0 8px 24px rgba(20, 24, 31, 0.16); max-width: 520px; display: flex; flex-direction: column">
+        <div style="padding: 20px 24px 8px; font-size: 16px; font-weight: 600">Someone saved revision 5 while you were editing</div>
+        <div style="padding: 0 24px 20px; font-size: 14px; line-height: 20px; color: #4A5361">Your changes are based on revision 4. Nothing has been lost; choose what to keep.</div>
+        <div style="padding: 12px 24px; border-top: 1px solid #DDE1E6; background: #F4F5F7; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px">
+          <button type="button" style="height: 32px; padding: 0 14px; border-radius: 3px; border: 1px solid transparent; background: transparent; color: #14181F; font: 500 13px 'IBM Plex Sans', sans-serif">Cancel</button>
+          <button type="button" style="height: 32px; padding: 0 14px; border-radius: 3px; border: 1px solid #A3201A; background: #FFFFFF; color: #A3201A; font: 600 13px 'IBM Plex Sans', sans-serif">Reload, discarding mine</button>
+          <button type="button" style="height: 32px; padding: 0 16px; border-radius: 3px; border: 1px solid #174C8C; background: #1F5FAD; color: #FFFFFF; font: 600 13px 'IBM Plex Sans', sans-serif">Save mine as a copy</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      chips: [
+        { glyph: '▲', label: 'Part not listed', strong: '#D98A00', tint: '#FFF1D6', text: '#8A5300' },
+        { glyph: '■', label: 'Missing', strong: '#C4291C', tint: '#FDE7E5', text: '#A3201A' },
+        { glyph: '⇄', label: 'Stand-in', strong: '#6A3FC9', tint: '#EEE8FB', text: '#5B33B8' },
+        { glyph: '▲', label: 'Unchecked import', strong: '#D98A00', tint: '#FFF1D6', text: '#8A5300' },
+        { glyph: '◆', label: 'Assistant draft', strong: '#0E7C86', tint: '#E0F2F3', text: '#0B5F67' },
+        { glyph: '●', label: 'Waiting for review', strong: '#1F5FAD', tint: '#E3ECF7', text: '#174C8C' },
+        { glyph: '✓', label: 'Approved', strong: '#2A8A52', tint: '#E2F2E8', text: '#1E6B3E' },
+        { glyph: '✕', label: 'Rejected', strong: '#8A93A0', tint: '#F4F5F7', text: '#3A424E' },
+        { glyph: '✓', label: 'Checked', strong: '#2A8A52', tint: '#E2F2E8', text: '#1E6B3E' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

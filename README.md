@@ -13,7 +13,7 @@ Status: early development. The circuit model, symbol rendering, the schematic ed
 | `crates/hydra-mesh` | Loads glTF models into triangle meshes in Hydra's model space (millimetres, Z up) and runs the 3D smoke test. |
 | `crates/hydra-db` | Postgres migrations (`migrations/`), the schema guard, the catalogue and circuit repositories, and the `hydra-admin` tool. |
 | `crates/hydra-mcp` | The `hydra-mcp` MCP server: lets an AI assistant read datasheets and the catalogue and submit catalogue proposals for review. |
-| `crates/hydra` | The `hydra` desktop binary: docked Schematic, Catalogue, Proposals and 3D tabs. |
+| `crates/hydra` | The `hydra` desktop binary: docked Schematic, Catalogue, Proposals and 3D tabs, in the look described in [docs/design.md](docs/design.md) with IBM Plex fonts bundled (`crates/hydra/fonts/`, SIL Open Font License). |
 
 `tools/step2gltf` is the STEP to glTF converter, a small C++ program on OpenCascade that runs outside the app (see its README).
 

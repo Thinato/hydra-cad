@@ -10,6 +10,7 @@ mod models;
 mod proposals;
 mod schematic;
 mod signin;
+mod theme;
 mod update;
 mod viewer3d;
 
@@ -351,6 +352,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let ctx = &cc.egui_ctx;
+            theme::apply(ctx, &theme::LIGHT);
             let mut shared = Shared::new(Catalogue::default());
             let mut errors = problems;
             let mut signin = None;

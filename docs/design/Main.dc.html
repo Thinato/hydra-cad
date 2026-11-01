@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hydra foundations</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans+Condensed:wght@500;600;700&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0;background:#E9ECEF}
+a{color:#1F5FAD}a:hover{color:#174C8C}
+</style>
+</helmet>
+<div style="font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif; color: #14181F; background: #E9ECEF; min-height: 1760px; box-sizing: border-box; padding: 48px 5%; display: flex; flex-direction: column; gap: 40px">
+
+  <header style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 24px; border-bottom: 2px solid #14181F; padding-bottom: 20px">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <div style="font-family: 'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">Hydra design system · sheet 1 of 2</div>
+      <h1 style="margin: 0; font-size: 40px; line-height: 46px; font-weight: 600; letter-spacing: -0.01em">Foundations</h1>
+      <p style="margin: 0; font-size: 16px; line-height: 24px; color: #4A5361; max-width: 720px; text-wrap: pretty">A light drawing-sheet look: the schematic is white paper in ink, the app around it is calm grey chrome, and colour is kept for meaning: blue for what you are acting on, amber, red and violet for valve status.</p>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, auto); border: 2px solid #14181F; background: #FFFFFF; font-size: 12px">
+      <div style="padding: 6px 12px; border-right: 1px solid #14181F"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">STANDARD</div><div style="font-family: 'IBM Plex Mono', monospace; font-weight: 500">ISO 1219</div></div>
+      <div style="padding: 6px 12px; border-right: 1px solid #14181F"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">UNITS</div><div style="font-family: 'IBM Plex Mono', monospace; font-weight: 500">mm</div></div>
+      <div style="padding: 6px 12px"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">REV</div><div style="font-family: 'IBM Plex Mono', monospace; font-weight: 500">A</div></div>
+    </div>
+  </header>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">01 · Surfaces and ink</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 12px">
+      <sc-for list="{{neutrals}}" as="c" hint-placeholder-count="8">
+        <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; overflow: hidden; display: flex; flex-direction: column">
+          <div style="height: 72px; background: {{c.hex}}; border-bottom: 1px solid #C3C9D1"></div>
+          <div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 2px">
+            <div style="font-size: 14px; font-weight: 600">{{c.name}}</div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{c.token}} · {{c.hex}}</div>
+            <div style="font-size: 12px; line-height: 16px; color: #4A5361">{{c.use}}</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">02 · Accent and status</h2>
+    <p style="margin: 0; font-size: 14px; line-height: 20px; color: #4A5361; max-width: 820px">Status colours keep their current meanings. Each one always comes with a word and its own shape, so it reads in a black-and-white printout and for colour-blind engineers. Amber and red also differ in lightness.</p>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 12px">
+      <sc-for list="{{status}}" as="s" hint-placeholder-count="6">
+        <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+          <div style="display: flex; gap: 6px">
+            <div style="flex: 1; height: 40px; border-radius: 2px; background: {{s.strong}}"></div>
+            <div style="flex: 1; height: 40px; border-radius: 2px; background: {{s.tint}}; border: 1px solid {{s.strong}}"></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px">
+            <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 3px; background: {{s.tint}}; color: {{s.text}}; font-size: 12px; font-weight: 600; border: 1px solid {{s.strong}}">{{s.chip}}</span>
+          </div>
+          <div style="font-size: 14px; font-weight: 600">{{s.name}}</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{s.token}} · {{s.strong}} / {{s.tint}} / text {{s.text}}</div>
+          <div style="font-size: 12px; line-height: 16px; color: #4A5361">{{s.use}}</div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(560px, 100%), 1fr)); gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 16px">
+      <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">03 · Type: IBM Plex</h2>
+      <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; display: flex; flex-direction: column">
+        <sc-for list="{{type}}" as="t" hint-placeholder-count="7">
+          <div style="display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; align-items: baseline; padding: 12px 16px; border-bottom: 1px solid #DDE1E6">
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <div style="font-size: 13px; font-weight: 600">{{t.name}}</div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{t.spec}}</div>
+            </div>
+            <div style="font-family: {{t.family}}; font-size: {{t.size}}; line-height: {{t.lh}}; font-weight: {{t.weight}}; letter-spacing: {{t.track}}; text-transform: {{t.case}}">{{t.sample}}</div>
+          </div>
+        </sc-for>
+      </div>
+      <p style="margin: 0; font-size: 12px; line-height: 16px; color: #4A5361">Body is 14 px, up from egui's 12.5 px default; nothing in the UI goes below 12 px. Numbers use tabular figures so columns of pressures and flows line up. Plex is open-licensed (OFL), so its TTF files can be bundled in the binary.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 16px">
+      <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">04 · Drawing lines (on the sheet)</h2>
+      <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; display: flex; flex-direction: column">
+        <sc-for list="{{lines}}" as="l" hint-placeholder-count="6">
+          <div style="display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 16px; align-items: center; padding: 14px 16px; border-bottom: 1px solid #DDE1E6">
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <div style="font-size: 13px; font-weight: 600">{{l.name}}</div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{l.spec}}</div>
+            </div>
+            <svg width="100%" height="16" viewBox="0 0 300 16" preserveAspectRatio="none" aria-hidden="true"><line x1="0" y1="8" x2="300" y2="8" stroke="{{l.color}}" stroke-width="{{l.w}}" stroke-dasharray="{{l.dash}}"></line></svg>
+          </div>
+        </sc-for>
+      </div>
+      <p style="margin: 0; font-size: 12px; line-height: 16px; color: #4A5361">The sheet keeps ISO 1219 conventions exactly as drawn on paper: black ink, line kinds by dash pattern. UI colour only appears on the sheet as an overlay (selection, status halo), never on the lines themselves.</p>
+    </div>
+  </section>
+
+  <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 16px">
+      <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">05 · Spacing (4 px grid)</h2>
+      <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+        <sc-for list="{{space}}" as="s" hint-placeholder-count="7">
+          <div style="display: grid; grid-template-columns: 72px 56px minmax(0, 1fr); align-items: center; gap: 12px">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500">{{s.token}}</div>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{s.px}} px</div>
+            <div style="display: flex; align-items: center; gap: 12px"><div style="width: {{s.px}}px; height: 14px; background: #1F5FAD"></div><span style="font-size: 12px; color: #4A5361">{{s.use}}</span></div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 16px">
+      <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">06 · Shape and weight</h2>
+      <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 16px">
+        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #8A93A0; border-radius: 3px; background: #F4F5F7"></div><div style="font-size: 13px; font-weight: 600">Radius 3 px</div><div style="font-size: 12px; color: #4A5361">Controls, cards, chips. Crisp, never pill-shaped.</div></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #8A93A0; border-radius: 0; background: #FFFFFF"></div><div style="font-size: 13px; font-weight: 600">Radius 0</div><div style="font-size: 12px; color: #4A5361">Panels, the sheet, title blocks, tables.</div></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #C3C9D1; background: #FFFFFF; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px">1 px #C3C9D1</div><div style="font-size: 13px; font-weight: 600">Border</div><div style="font-size: 12px; color: #4A5361">Dividers and card edges.</div></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #8A93A0; background: #FFFFFF; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px">1 px #8A93A0</div><div style="font-size: 13px; font-weight: 600">Border, strong</div><div style="font-size: 12px; color: #4A5361">Inputs and buttons: edges you can see at a glance.</div></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #1F5FAD; outline: 2px solid #1F5FAD; outline-offset: 1px; background: #FFFFFF"></div><div style="font-size: 13px; font-weight: 600">Focus 2 px</div><div style="font-size: 12px; color: #4A5361">Keyboard focus and the selected part.</div></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #C3C9D1; background: #FFFFFF; box-shadow: 0 2px 0 rgba(20, 24, 31, 0.12), 0 8px 24px rgba(20, 24, 31, 0.16)"></div><div style="font-size: 13px; font-weight: 600">One shadow</div><div style="font-size: 12px; color: #4A5361">Only for menus and dialogs that float.</div></div>
+      </div>
+      <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 16px">
+        <div style="display: flex; flex-direction: column; gap: 4px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 600">28 px</div><div style="font-size: 12px; color: #4A5361">Toolbar and inline controls</div></div>
+        <div style="display: flex; flex-direction: column; gap: 4px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 600">32 px</div><div style="font-size: 12px; color: #4A5361">Form fields and dialog buttons</div></div>
+        <div style="display: flex; flex-direction: column; gap: 4px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 600">36 px</div><div style="font-size: 12px; color: #4A5361">Rows in lists and the issue panel</div></div>
+        <div style="display: flex; flex-direction: column; gap: 4px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 600">16 px</div><div style="font-size: 12px; color: #4A5361">Icons, 1.75 px stroke</div></div>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const mono = "'IBM Plex Mono', 'Cascadia Mono', monospace";
+    const sans = "'IBM Plex Sans', 'Segoe UI', sans-serif";
+    const cond = "'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif";
+    return {
+      neutrals: [
+        { name: 'Chrome', token: 'bg.chrome', hex: '#E9ECEF', use: 'App frame, tab strip, toolbars.' },
+        { name: 'Panel', token: 'bg.panel', hex: '#F4F5F7', use: 'Side panels, inspector, issue list.' },
+        { name: 'Surface', token: 'bg.surface', hex: '#FFFFFF', use: 'Inputs, cards, tables, dialogs.' },
+        { name: 'Sheet', token: 'bg.sheet', hex: '#FFFFFF', use: 'The drawing paper. Grid lines #E4E8ED every 5 mm, #CFD5DC every 25 mm.' },
+        { name: 'Desk', token: 'bg.desk', hex: '#CDD3DA', use: 'Around the sheet, so its edge reads like paper on a desk.' },
+        { name: 'Ink', token: 'fg.ink', hex: '#14181F', use: 'Text and drawing lines. 16:1 on white.' },
+        { name: 'Ink, secondary', token: 'fg.secondary', hex: '#4A5361', use: 'Labels, meta, hints. 7.6:1 on white.' },
+        { name: 'Border', token: 'line.border', hex: '#C3C9D1', use: 'Card edges and dividers. Strong: #8A93A0.' }
+      ],
+      status: [
+        { name: 'Accent: drawing blue', token: 'accent', chip: 'Selected', strong: '#1F5FAD', tint: '#E3ECF7', text: '#174C8C', use: 'Primary buttons, selection, focus, links, the active tab. Never a status.' },
+        { name: 'Part not listed', token: 'status.unlisted', chip: '▲ Part not listed', strong: '#D98A00', tint: '#FFF1D6', text: '#8A5300', use: 'The valve type is in the catalogue but this part number is not. Also warnings and unchecked imports.' },
+        { name: 'Missing', token: 'status.missing', chip: '■ Missing', strong: '#C4291C', tint: '#FDE7E5', text: '#A3201A', use: 'Not in the catalogue at all. Also errors that block a save or an approval.' },
+        { name: 'Stand-in', token: 'status.standin', chip: '⇄ Stand-in', strong: '#6A3FC9', tint: '#EEE8FB', text: '#5B33B8', use: 'Drawn with another valve in place of the one asked for.' },
+        { name: 'Approved and checked', token: 'status.ok', chip: '✓ Checked', strong: '#2A8A52', tint: '#E2F2E8', text: '#1E6B3E', use: 'Only for finished human decisions: approved proposals, checked revisions. A normal valve shows no colour.' },
+        { name: 'Assistant', token: 'agent', chip: '◆ Assistant', strong: '#0E7C86', tint: '#E0F2F3', text: '#0B5F67', use: 'Marks work done by the AI assistant: drafted proposals, imported circuits, its activity feed.' }
+      ],
+      type: [
+        { name: 'Title', spec: '20/26 · 600', family: sans, size: '20px', lh: '26px', weight: 600, track: '-0.005em', case: 'none', sample: 'DEMO-RV10 relief valve' },
+        { name: 'Heading', spec: '16/22 · 600', family: sans, size: '16px', lh: '22px', weight: 600, track: '0', case: 'none', sample: 'Parts of the new version' },
+        { name: 'Body', spec: '14/20 · 400', family: sans, size: '14px', lh: '20px', weight: 400, track: '0', case: 'none', sample: 'V1 is outside the block but drawn inside its outline; move it out or put it in the block.' },
+        { name: 'Label', spec: '13/18 · 500', family: sans, size: '13px', lh: '18px', weight: 500, track: '0', case: 'none', sample: 'Mounting pattern' },
+        { name: 'Caption', spec: '12/16 · 400', family: sans, size: '12px', lh: '16px', weight: 400, track: '0', case: 'none', sample: 'Drafted by the assistant for r.costa, 14:02' },
+        { name: 'Overline', spec: 'Condensed 12/16 · 600 · caps', family: cond, size: '12px', lh: '16px', weight: 600, track: '0.08em', case: 'uppercase', sample: 'Drawn by · Checked by · Revision' },
+        { name: 'Data', spec: 'Mono 13/18 · 500', family: mono, size: '13px', lh: '18px', weight: 500, track: '0', case: 'none', sample: 'demo-rv10@2 · P → A · 210 bar · 40 L/min' }
+      ],
+      lines: [
+        { name: 'Working line', spec: '0.50 mm · solid', color: '#14181F', w: 2.4, dash: 'none' },
+        { name: 'Pilot line', spec: '0.35 mm · dash 6 3', color: '#14181F', w: 1.6, dash: '10 5' },
+        { name: 'Drain line', spec: '0.35 mm · dash 2 2', color: '#14181F', w: 1.6, dash: '4 4' },
+        { name: 'Block outline', spec: '0.35 mm · dash-dot', color: '#14181F', w: 1.6, dash: '18 4 3 4' },
+        { name: 'Selection overlay', spec: 'UI · 2 px accent', color: '#1F5FAD', w: 2.4, dash: 'none' },
+        { name: 'Status halo', spec: 'UI · 3 px status, 30% fill', color: '#D98A00', w: 3, dash: 'none' }
+      ],
+      space: [
+        { token: 'space.1', px: 4, use: 'Icon to label' },
+        { token: 'space.2', px: 8, use: 'Inside controls, between chips' },
+        { token: 'space.3', px: 12, use: 'Between fields in a row' },
+        { token: 'space.4', px: 16, use: 'Panel padding' },
+        { token: 'space.5', px: 24, use: 'Between sections' },
+        { token: 'space.6', px: 32, use: 'Dialog padding' },
+        { token: 'space.8', px: 48, use: 'Page margins (docs only)' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

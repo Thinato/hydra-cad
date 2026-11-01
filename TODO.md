@@ -18,6 +18,15 @@ Open work after the block outline and mirrored symbols (8e8f237). Tick items off
 - [x] **Connect the drawn block to the 3D block.** Only parts in `in_block` are expected on the 3D block (#3), and mounting a valve on a face ticks it In block in the same undo step; unticking never unmounts, it warns (#13).
 - [x] **New parts inside the outline** join the block in the same undo step (#8).
 
+## Design system
+
+The look is in [docs/design.md](docs/design.md) and `crates/hydra/src/theme.rs`, which installs the colours, the bundled IBM Plex fonts and the type scale.
+
+- [ ] Restyle the tabs on the theme, one PR each: Proposals first, then Schematic, Catalogue, Account and 3D. The first one adds the painted status marks (▲ ■ ⇄ ✓ ◆ ● ✕), since the fonts lack some of them.
+- [ ] Schematic: a title block in the sheet's corner (name, revision, drawn by, checked), also in the SVG and PDF exports, which still letter in Ubuntu Light rather than Plex.
+- [ ] Proposals, "What the assistant did": hydra-mcp records each step of a proposal (datasheet read, symbol matched, fields filled, parts listed, checks run) with the datasheet page it came from, and the detail view lists them with their result. Each field then shows its source page, and parameters show as a table instead of raw JSON. Stored with the proposal, it changes a stored shape: schema bump and gate migration (rule 2).
+- [ ] Proposals, assistant activity feed: hydra-mcp logs each tool call that matters to an engineer (datasheet read, proposal submitted, circuit imported, rejection read and resubmitted) in a new table; a panel on the Proposals tab lists today's, linking to the proposal or circuit, with when the assistant last called.
+
 ## Smaller
 
 - [x] Block outlines are cut round outside parts: L notches (#8), stepped corners and U cuts from an edge (#16). The editor warns about each part the outline is cut round.
