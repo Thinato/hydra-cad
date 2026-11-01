@@ -765,8 +765,10 @@ impl SchematicEditor {
                 .show(ui, |ui| self.inspector(ui, &shared.catalogue, &status));
             self.canvas(ui, shared, &status);
         });
-        // A part picked in the parts list or the issues is selected once the inspector has
-        // drawn, so a field it lost focus from still lands on the part it belongs to.
+        // A part picked in the parts list or the issues is selected once everything has drawn.
+        // The inspector's fields finish their edits through `settle` today, so nothing tests
+        // this; it guards any future widget that commits on losing focus, so a pick never
+        // lands in the middle of that commit.
         if let Some(id) = self.pick.take() {
             self.select(id);
         }
@@ -2348,12 +2350,18 @@ fn button_width(ui: &egui::Ui, text: &str) -> f32 {
 }
 
 /// Space that pushes the next `width` of widgets to the right edge of the row, so they are
-/// still read and tabbed to last.
+/// still read and tabbed to last. In a wrapping row with no room left, they go to the right of
+/// the next row.
 fn push_right(ui: &mut egui::Ui, width: f32) {
     // A few points to spare, so rounding never wraps them onto a row of their own.
-    let rest = ui.available_size_before_wrap().x - width - 2.0 * ui.spacing().item_spacing.x - 4.0;
-    if rest > 0.0 {
-        ui.add_space(rest);
+    let rest = |ui: &egui::Ui| {
+        ui.available_size_before_wrap().x - width - 2.0 * ui.spacing().item_spacing.x - 4.0
+    };
+    if rest(ui) <= 0.0 && ui.layout().main_wrap {
+        ui.end_row();
+    }
+    if rest(ui) > 0.0 {
+        ui.add_space(rest(ui));
     }
 }
 
@@ -4805,6 +4813,44 @@ mod tests {
             h.get_by_role_and_label(Role::Link, "X2").click();
             h.run();
         });
+    }
+
+    #[test]
+    fn a_ports_label_is_one_undo_step_never_empty_and_escape_keeps_it() {
+        let mut h = harness();
+        h.get_by_label("Add port").click();
+        h.run();
+        let label =
+            |h: &Harness<State>| match &h.state().0.doc.circuit.component("X1").unwrap().kind {
+                ComponentKind::Port { label, .. } => label.clone(),
+                _ => unreachable!(),
+            };
+        // Typed a key at a time, committed once.
+        retype(&mut h, "Label", 0, "PX", Some(Key::Enter));
+        assert_eq!(label(&h), "PX");
+        assert_eq!(h.state().0.doc.undo_label(), Some("Rename X1 to PX"));
+        h.get_by_label("Undo").click();
+        h.run();
+        assert_eq!(label(&h), "X1");
+        // Cleared: refused in words, the old label kept.
+        text_field(&h, "Label", 0).click();
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+        h.key_press(Key::Backspace);
+        h.run_steps(2);
+        h.key_press(Key::Enter);
+        h.run_steps(2);
+        assert_eq!(label(&h), "X1");
+        assert!(
+            h.query_by_label("X1 needs a label, so its old one is kept.")
+                .is_some()
+        );
+        // Escape drops what was typed.
+        let before = h.state().0.doc.undo_label().map(String::from);
+        retype(&mut h, "Label", 0, "QQ", Some(Key::Escape));
+        assert_eq!(label(&h), "X1");
+        assert_eq!(h.state().0.doc.undo_label().map(String::from), before);
+        assert_eq!(text_field(&h, "Label", 0).value().as_deref(), Some("X1"));
     }
 
     #[test]
