@@ -14,6 +14,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # No debug info: faster links and smaller caches. cache.yml sets the same, so its caches match.
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
   # Whether the PR changes anything besides Markdown. A docs-only PR skips the builds below; a
@@ -49,10 +51,13 @@ jobs:
       - uses: actions/checkout@v4
       # Installs the toolchain pinned in rust-toolchain.toml, with clippy and rustfmt.
       - run: rustup toolchain install
+      # Shares its cache with cache.yml, which saves one from main after every merge, so a new
+      # PR starts warm.
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
+        with:
+          shared-key: check
+      # clippy --all-targets compiles every target; cargo test builds and runs the tests.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo build --workspace --all-targets --locked
       - run: cargo test --workspace --locked
       # The backup scripts for Windows Server can't run here; at least make sure they parse.
       - name: Parse the PowerShell scripts
@@ -93,7 +98,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install
+      # Formatting is the same on every OS, so it's checked once, here.
+      - run: cargo fmt --all -- --check
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: database
       - run: cargo test -p hydra-db -p hydra-mcp -- --ignored
       # The app's database-worker test runs against a migrated database holding the fixtures.
       - run: cargo run -p hydra-db --bin hydra-admin -- migrate

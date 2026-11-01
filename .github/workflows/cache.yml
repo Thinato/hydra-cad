@@ -1,0 +1,45 @@
+name: Cache
+
+# Merges don't run the PR checks (see main.yml), and a PR can only read caches saved on its own
+# branch or on main. This builds what pr.yml builds, after every merge, and saves the caches on
+# main, so a new PR's first run starts warm instead of compiling everything.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: cache
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  check:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo test --workspace --locked --no-run
+
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: database
+      - run: cargo test -p hydra-db -p hydra-mcp -p hydra --locked --no-run
+      - run: cargo build -p hydra-db --bin hydra-admin --locked
