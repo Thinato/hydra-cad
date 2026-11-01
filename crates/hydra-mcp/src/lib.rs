@@ -13,7 +13,7 @@ use hydra_core::{
     ValveType,
 };
 use hydra_db::{LoadedCatalogue, PgPool, ProposalStatus};
-use hydra_symbols::{notched_parts, outline_issues};
+use hydra_symbols::{notched_parts, outline_issues, wire_problems, wire_warnings};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
@@ -138,7 +138,8 @@ Send a circuit read from a drawing with import_circuit:
      "code": "...", "description": "Test point", "position": "14"}
   ],
   "nets": [{"id": "n1", "ports": [{"component": "P", "port": "port"}, {"component": "7.1", "port": "P"}]}],
-  "layout": {"components": {"P": {"x": 0, "y": 100}, "7.1": {"x": 40, "y": 60, "rotation": 0}}},
+  "layout": {"components": {"P": {"x": 0, "y": 100}, "7.1": {"x": 40, "y": 60, "rotation": 0}},
+             "wires": {"n1": [[[0, 100], [0, 84], [40, 84], [40, 68]]]}},
   "in_block": ["P", "7.1", "5.2", "X1", "M1"],
   "bom_extra": [{"position": "1", "quantity": 1, "code": "...", "description": "Manifold block"}],
   "import": {"notes": ["row 12 of the parts table is illegible"]}
@@ -153,6 +154,7 @@ Rules:
 - Every connection on the schematic is a net of component ports. Port names are the symbol's (see above). Draw the layout in millimetres, x right and y down, as on the drawing: keep every part in the same place relative to the others (same row, same column, same order along a line), with about 30 mm between parts so their labels don't overlap.
 - Every symbol must look exactly as it does on the drawing: the engineer compares the two side by side. Place it with "rotation" (0, 90, 180 or 270 degrees clockwise) and "mirror" (true flips it left to right, before the rotation). Unrotated and unmirrored, symbols stand upright with flow running up: inlets (P, A, In, the motor's A) at the bottom, outlets (T, B, Out) at the top, a relief valve's spring on the right and its pilot line on the left, a check valve's spring on top, a test point's M at the bottom; directional valves show their positions side by side, ports above and below, actuators at the ends as listed in left/right. 90 puts the bottom port on the left, 180 at the top, 270 on the right.
 - For each symbol, find the one of the eight placements (four rotations, each with or without mirror) where both of these match the drawing: (1) which side every port leaves the symbol, and (2) which side the spring, solenoid, lever, adjustment arrow, pilot line and drain are on. Ports alone are not enough. Examples for a relief valve: P bottom, T top, spring right: rotation 0. Spring left instead: mirror. P left, T right, spring below: 90. P left, T right, spring on top: 90 with mirror. P right, T left, spring on top: 270. P right, T left, spring below: 270 with mirror. A check valve whose flow runs downwards is 180. If no placement matches, say which symbol and how it differs in import.notes.
+- layout.wires traces each net's lines as the drawing routes them: per net id, a list of wires, each a list of [x, y] points in the same millimetres. A wire runs horizontally or vertically from point to point; where the line turns, add the corner point. Each wire ends on a port of its net or on another wire of the same net (a T-junction, drawn with a dot), and together a net's wires reach every port of the net in one connected piece: wires that only cross are not joined, so end one on the other. A wire never touches a port or wire of another net, except to cross it, and never runs through a part's symbol. Keep the drawing's corners, junctions and crossings, and the side of each part a line passes. Trace every net: a net left out of wires is drawn with automatic elbows, which rarely match the drawing. Hydra works out where each port is from the symbol and its placement; when a wire end misses a port, the problem says where the net's ports are, so move the end, and the corner before it, there.
 - in_block lists every component inside the manifold block: what the drawing's dash-dot boundary encloses, with the ports on its edge. Parts outside it (motors, cylinders, pumps, valves mounted elsewhere) are left out, and their layout places them clear of the block's parts, since Hydra draws the block's outline around everything in in_block. For an L-shaped block, place the outside parts in the notch, clear of every block part: Hydra cuts a corner with no block parts out of the outline around them, and lists each such part in the reply's warnings to check. Leave in_block out when the drawing shows no block.
 - What you can't read goes in import.notes, never guessed.
 
@@ -440,6 +442,7 @@ impl HydraMcp {
             ),
             i => i.to_string(),
         }));
+        problems.extend(wire_problems(&circuit, &catalogue));
         if !problems.is_empty() {
             tracing::warn!(
                 name = circuit.name,
@@ -483,6 +486,7 @@ impl HydraMcp {
             .chain(status.issues)
             .filter(|i| i.severity() == Severity::Warning)
             .map(|i| i.to_string())
+            .chain(wire_warnings(&circuit, &catalogue))
             // A notch is right for an L-shaped block, but also hides a part left out by mistake.
             .chain(notched_parts(&circuit, &catalogue).into_iter().map(|id| {
                 format!(
