@@ -1193,7 +1193,10 @@ fn a_wire_through_a_part_is_a_warning() {
         .push(vec![[20.0, 63.0], [48.0, 63.0]].into());
     assert_eq!(
         wire_warnings(&c, &catalogue),
-        ["a wire of net n-t runs through FC1; check its route against the drawing"]
+        [
+            "a wire of net n-t runs through FC1 to its port FC1.Bypass; bring it in along the \
+             port's line, from outside the symbol"
+        ]
     );
 }
 
@@ -1220,12 +1223,28 @@ fn a_wire_along_an_untraced_nets_elbow_is_a_warning() {
     let n_t = c.layout.wires.get_mut("n-t").unwrap();
     n_t[8] = vec![[20.0, 40.0], [62.0, 40.0]].into();
     assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
+    // A corner of the automatic line on a traced wire that runs on past both its ends: n-2's
+    // line turns at 102, 52 on its way down to FC2.X.
+    let mut c = motors();
+    c.layout.wires.remove("n-2");
+    c.layout
+        .wires
+        .get_mut("n-t")
+        .unwrap()
+        .push(vec![[102.0, 45.0], [102.0, 70.0]].into());
+    assert_eq!(
+        wire_warnings(&c, &catalogue),
+        [
+            "wire 9 of net n-t and the automatic line of net n-2, which has no wires, touch at \
+             102, 52; trace net n-2 as the drawing routes it, or move the wire"
+        ]
+    );
 }
 
 #[test]
 fn a_wire_along_the_outline_or_across_a_label_is_a_warning() {
     let catalogue = catalogue();
-    // P at the outline's bottom left corner, its wire running 4 mm up the left edge.
+    // P lower down the outline's left edge, its wire running 4 mm up that edge to the trunk.
     let mut c = motors();
     c.layout.components.get_mut("P").unwrap().y = 110.0;
     c.layout.wires.get_mut("n-p").unwrap()[0] =
@@ -1233,9 +1252,8 @@ fn a_wire_along_the_outline_or_across_a_label_is_a_warning() {
     assert_eq!(
         wire_warnings(&c, &catalogue),
         [
-            "wire 1 of net n-p runs along the block outline from 0, 106 to 0, 110, so it reads \
-             as the outline; move the wire, or the block port it leaves, so it only crosses the \
-             outline"
+            "wire 1 of net n-p runs along the block outline from 0, 106 to 0, 110; move the wire \
+             off the outline, or the part or block port that sets that edge"
         ]
     );
     // A wire past FC2's left, with its ports on the other sides: its designator has no clear
@@ -1252,4 +1270,51 @@ fn a_wire_along_the_outline_or_across_a_label_is_a_warning() {
     assert!(w.contains(&label.to_string()), "{w:?}");
     // Only the designator: the wire also crosses FC1's status words, which aren't checked.
     assert_eq!(w.iter().filter(|w| w.contains("label")).count(), 1, "{w:?}");
+}
+
+#[test]
+fn a_block_ports_own_wire_may_cross_its_label() {
+    let catalogue = catalogue();
+    // T on the block's bottom edge has its label outside, below, where a wire to a part outside
+    // the block leaves it.
+    let mut c = motors();
+    c.layout
+        .wires
+        .get_mut("n-t")
+        .unwrap()
+        .push(vec![[20.0, 115.0], [20.0, 125.0]].into());
+    assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
+    // With no block, a port's label sits above it, where its wire leaves.
+    let mut c = motors();
+    c.in_block.clear();
+    assert_eq!(block_outline(&c, &catalogue), None);
+    assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
+}
+
+#[test]
+fn a_long_list_of_wire_warnings_keeps_every_kind() {
+    let catalogue = catalogue();
+    let mut c = motors();
+    // 25 short wires up the outline's left edge, and one through FC1 and FC2 and across the
+    // designator of FC2.
+    let n_p = c.layout.wires.get_mut("n-p").unwrap();
+    n_p.extend(
+        (0..25).map(|k| vec![[0.0, 50.0 + 2.0 * k as f32], [0.0, 51.0 + 2.0 * k as f32]].into()),
+    );
+    c.layout
+        .wires
+        .get_mut("n-1")
+        .unwrap()
+        .push(vec![[30.0, 60.0], [100.0, 60.0]].into());
+    let w = wire_warnings(&c, &catalogue);
+    // Three kinds share the 20 lines: 6 each at most.
+    assert_eq!(w.len(), 2 + 6 + 1 + 1, "{w:?}");
+    assert!(w[0].contains("runs through FC1") && w[1].contains("runs through FC2"));
+    assert!(
+        w[2..8]
+            .iter()
+            .all(|w| w.contains("runs along the block outline"))
+    );
+    assert_eq!(w[8], "and 19 more wire warnings like these");
+    assert!(w[9].contains("crosses the label \"FC2\" of FC2"));
 }
