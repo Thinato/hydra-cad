@@ -117,10 +117,10 @@ a{color:#1F5FAD}a:hover{color:#174C8C}
     <div style="display: flex; flex-direction: column; gap: 16px">
       <h2 style="margin: 0; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #4A5361">06 · Shape and weight</h2>
       <div style="background: #FFFFFF; border: 1px solid #C3C9D1; border-radius: 3px; padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 16px">
-        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #8A93A0; border-radius: 3px; background: #F4F5F7"></div><div style="font-size: 13px; font-weight: 600">Radius 3 px</div><div style="font-size: 12px; color: #4A5361">Controls, cards, chips. Crisp, never pill-shaped.</div></div>
-        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #8A93A0; border-radius: 0; background: #FFFFFF"></div><div style="font-size: 13px; font-weight: 600">Radius 0</div><div style="font-size: 12px; color: #4A5361">Panels, the sheet, title blocks, tables.</div></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #7F8895; border-radius: 3px; background: #F4F5F7"></div><div style="font-size: 13px; font-weight: 600">Radius 3 px</div><div style="font-size: 12px; color: #4A5361">Controls, cards, chips. Crisp, never pill-shaped.</div></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #7F8895; border-radius: 0; background: #FFFFFF"></div><div style="font-size: 13px; font-weight: 600">Radius 0</div><div style="font-size: 12px; color: #4A5361">Panels, the sheet, title blocks, tables.</div></div>
         <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #C3C9D1; background: #FFFFFF; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px">1 px #C3C9D1</div><div style="font-size: 13px; font-weight: 600">Border</div><div style="font-size: 12px; color: #4A5361">Dividers and card edges.</div></div>
-        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #8A93A0; background: #FFFFFF; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px">1 px #8A93A0</div><div style="font-size: 13px; font-weight: 600">Border, strong</div><div style="font-size: 12px; color: #4A5361">Inputs and buttons: edges you can see at a glance.</div></div>
+        <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #7F8895; background: #FFFFFF; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px">1 px #7F8895</div><div style="font-size: 13px; font-weight: 600">Border, strong</div><div style="font-size: 12px; color: #4A5361">Inputs and buttons: edges you can see at a glance.</div></div>
         <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #1F5FAD; outline: 2px solid #1F5FAD; outline-offset: 1px; background: #FFFFFF"></div><div style="font-size: 13px; font-weight: 600">Focus 2 px</div><div style="font-size: 12px; color: #4A5361">Keyboard focus and the selected part.</div></div>
         <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 56px; border: 1px solid #C3C9D1; background: #FFFFFF; box-shadow: 0 2px 0 rgba(20, 24, 31, 0.12), 0 8px 24px rgba(20, 24, 31, 0.16)"></div><div style="font-size: 13px; font-weight: 600">One shadow</div><div style="font-size: 12px; color: #4A5361">Only for menus and dialogs that float.</div></div>
       </div>
@@ -149,11 +149,11 @@ class Component extends DCLogic {
         { name: 'Desk', token: 'bg.desk', hex: '#CDD3DA', use: 'Around the sheet, so its edge reads like paper on a desk.' },
         { name: 'Ink', token: 'fg.ink', hex: '#14181F', use: 'Text and drawing lines. 16:1 on white.' },
         { name: 'Ink, secondary', token: 'fg.secondary', hex: '#4A5361', use: 'Labels, meta, hints. 7.6:1 on white.' },
-        { name: 'Border', token: 'line.border', hex: '#C3C9D1', use: 'Card edges and dividers. Strong: #8A93A0.' }
+        { name: 'Border', token: 'line.border', hex: '#C3C9D1', use: 'Card edges and dividers. Strong: #7F8895.' }
       ],
       status: [
         { name: 'Accent: drawing blue', token: 'accent', chip: 'Selected', strong: '#1F5FAD', tint: '#E3ECF7', text: '#174C8C', use: 'Primary buttons, selection, focus, links, the active tab. Never a status.' },
-        { name: 'Part not listed', token: 'status.unlisted', chip: '▲ Part not listed', strong: '#D98A00', tint: '#FFF1D6', text: '#8A5300', use: 'The valve type is in the catalogue but this part number is not. Also warnings and unchecked imports.' },
+        { name: 'Part not listed', token: 'status.unlisted', chip: '▲ Part not listed', strong: '#C07A00', tint: '#FFF1D6', text: '#8A5300', use: 'The valve type is in the catalogue but this part number is not. Also warnings and unchecked imports.' },
         { name: 'Missing', token: 'status.missing', chip: '■ Missing', strong: '#C4291C', tint: '#FDE7E5', text: '#A3201A', use: 'Not in the catalogue at all. Also errors that block a save or an approval.' },
         { name: 'Stand-in', token: 'status.standin', chip: '⇄ Stand-in', strong: '#6A3FC9', tint: '#EEE8FB', text: '#5B33B8', use: 'Drawn with another valve in place of the one asked for.' },
         { name: 'Approved and checked', token: 'status.ok', chip: '✓ Checked', strong: '#2A8A52', tint: '#E2F2E8', text: '#1E6B3E', use: 'Only for finished human decisions: approved proposals, checked revisions. A normal valve shows no colour.' },
@@ -174,7 +174,7 @@ class Component extends DCLogic {
         { name: 'Drain line', spec: '0.35 mm · dash 2 2', color: '#14181F', w: 1.6, dash: '4 4' },
         { name: 'Block outline', spec: '0.35 mm · dash-dot', color: '#14181F', w: 1.6, dash: '18 4 3 4' },
         { name: 'Selection overlay', spec: 'UI · 2 px accent', color: '#1F5FAD', w: 2.4, dash: 'none' },
-        { name: 'Status halo', spec: 'UI · 3 px status, 30% fill', color: '#D98A00', w: 3, dash: 'none' }
+        { name: 'Status halo', spec: 'UI · 3 px status, 30% fill', color: '#C07A00', w: 3, dash: 'none' }
       ],
       space: [
         { token: 'space.1', px: 4, use: 'Icon to label' },

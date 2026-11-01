@@ -32,12 +32,17 @@ pub struct Palette {
     pub sheet: Color32,
     /// Around the sheet.
     pub desk: Color32,
+    /// Sheet grid lines every 5 mm and every 25 mm.
+    pub grid: Color32,
+    pub grid_major: Color32,
     /// Text and drawing lines.
     pub ink: Color32,
     /// Labels, meta, hints.
     pub secondary: Color32,
-    /// Card edges and dividers.
+    /// Card edges and panel dividers.
     pub border: Color32,
+    /// Lines between rows of a list or table.
+    pub divider: Color32,
     /// Edges of inputs and buttons.
     pub border_strong: Color32,
     /// Primary buttons, selection, focus, links. Never a status.
@@ -79,16 +84,19 @@ pub const LIGHT: Palette = Palette {
     hover: hex(0xEEF1F4),
     sheet: hex(0xFFFFFF),
     desk: hex(0xCDD3DA),
+    grid: hex(0xE4E8ED),
+    grid_major: hex(0xCFD5DC),
     ink: hex(0x14181F),
     secondary: hex(0x4A5361),
     border: hex(0xC3C9D1),
-    border_strong: hex(0x8A93A0),
+    divider: hex(0xDDE1E6),
+    border_strong: hex(0x7F8895),
     accent: hex(0x1F5FAD),
     accent_hover: hex(0x174C8C),
     accent_tint: hex(0xE3ECF7),
     accent_text: hex(0x174C8C),
     on_accent: hex(0xFFFFFF),
-    unlisted: tone(0xD98A00, 0xFFF1D6, 0x8A5300),
+    unlisted: tone(0xC07A00, 0xFFF1D6, 0x8A5300),
     missing: tone(0xC4291C, 0xFDE7E5, 0xA3201A),
     stand_in: tone(0x6A3FC9, 0xEEE8FB, 0x5B33B8),
     ok: tone(0x2A8A52, 0xE2F2E8, 0x1E6B3E),
@@ -250,7 +258,8 @@ fn style(p: &Palette) -> egui::Style {
     w.active.bg_fill = p.accent_tint;
     w.active.weak_bg_fill = p.accent_tint;
     w.active.bg_stroke = edge(p.accent);
-    w.active.fg_stroke = edge(p.accent_text);
+    // Also egui's strong text colour: bold labels stay ink, not accent.
+    w.active.fg_stroke = edge(p.ink);
     w.open.bg_fill = p.chrome;
     w.open.weak_bg_fill = p.chrome;
     w.open.bg_stroke = edge(p.border_strong);
@@ -267,6 +276,16 @@ fn style(p: &Palette) -> egui::Style {
         state.expansion = 0.0;
     }
     style
+}
+
+/// A kittest harness in the app's real fonts, type sizes and colours, so tests see the layout
+/// engineers see and the theme's named text styles exist.
+#[cfg(test)]
+pub fn themed<S>(mut h: egui_kittest::Harness<'_, S>) -> egui_kittest::Harness<'_, S> {
+    apply(&h.ctx, &LIGHT);
+    // The fonts are installed at the start of the next frame.
+    h.step();
+    h
 }
 
 #[cfg(test)]
@@ -326,6 +345,20 @@ mod tests {
                 let c = contrast(fg, bg);
                 assert!(c >= 4.5, "{name}: {what} {fg:?} on {bg:?} is {c:.2}:1");
             }
+            // Edges and marks that must be seen, not read: 3:1 (WCAG non-text contrast).
+            let mut edges = vec![];
+            for bg in [p.chrome, p.panel, p.surface] {
+                edges.push(("border strong", p.border_strong, bg));
+            }
+            for t in [p.unlisted, p.missing, p.stand_in, p.ok, p.agent] {
+                edges.push(("status edge", t.strong, p.sheet));
+                edges.push(("status edge", t.strong, p.panel));
+            }
+            edges.push(("accent", p.accent, p.sheet));
+            for (what, fg, bg) in edges {
+                let c = contrast(fg, bg);
+                assert!(c >= 3.0, "{name}: {what} {fg:?} on {bg:?} is {c:.2}:1");
+            }
             // Amber and red are told apart by lightness too, not hue alone.
             let gap = contrast(p.unlisted.strong, p.missing.strong);
             assert!(
@@ -339,11 +372,17 @@ mod tests {
     fn apply_installs_plex_and_the_light_style() {
         let ctx = egui::Context::default();
         apply(&ctx, &LIGHT);
-        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        // As on a Mac in dark mode: the app still comes up light.
+        let input = || egui::RawInput {
+            system_theme: Some(Theme::Dark),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input(), |ui| {
             let style = ui.style();
             assert!(!style.visuals.dark_mode);
             assert_eq!(style.visuals.panel_fill, LIGHT.panel);
             assert_eq!(style.visuals.error_fg_color, LIGHT.missing.text);
+            assert_eq!(style.visuals.strong_text_color(), LIGHT.ink);
             assert_eq!(style.text_styles[&TextStyle::Body].size, 14.0);
             for s in [heading(), label(), overline()] {
                 assert!(
@@ -353,26 +392,31 @@ mod tests {
             }
         });
         out.textures_delta.clear();
-        let fonts = fonts();
-        assert_eq!(fonts.families[&FontFamily::Proportional][0], "plex-sans");
-        assert_eq!(fonts.families[&FontFamily::Monospace][0], "plex-mono");
-        // Running a frame loaded every bundled file (epaint panics on a bad one); the symbols
-        // the design types as text render in every family, from Plex or the fallbacks.
-        let families = [
-            FontFamily::Proportional,
-            FontFamily::Monospace,
-            FontFamily::Name(MEDIUM.into()),
-            FontFamily::Name(SEMIBOLD.into()),
-            FontFamily::Name(CONDENSED.into()),
-            FontFamily::Name(MONO_SEMIBOLD.into()),
-        ];
-        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        // Running a frame loaded every bundled file: epaint panics on a bad one.
+        let mut out = ctx.run_ui(input(), |ui| {
+            let installed = ui.ctx().fonts(|f| f.definitions().families.clone());
+            let named = |n: &str| FontFamily::Name(n.into());
+            for (family, first) in [
+                (FontFamily::Proportional, "plex-sans"),
+                (FontFamily::Monospace, "plex-mono"),
+                (named(MEDIUM), MEDIUM),
+                (named(SEMIBOLD), SEMIBOLD),
+                (named(CONDENSED), CONDENSED),
+                (named(MONO_SEMIBOLD), MONO_SEMIBOLD),
+            ] {
+                let fonts = &installed[&family];
+                assert_eq!(fonts[0], first, "{family:?} doesn't start with Plex");
+                // egui's fonts follow, for what Plex lacks.
+                assert!(fonts.len() > 1, "{family:?} has no fallback");
+            }
             ui.ctx().fonts_mut(|f| {
-                for family in &families {
+                for family in installed.keys() {
                     let id = FontId::new(14.0, family.clone());
-                    // Status marks (▲ ■ ◆ ● ✕) are painted: Plex and egui's fonts lack some of them.
+                    // Status marks (▲ ■ ◆ ● ✕) are painted: the fonts lack some of them.
                     assert!(f.has_glyphs(&id, "Hydra 210 bar → ✓ ⇄"), "{family:?}");
                 }
+                // √ isn't in Plex Sans: it comes from the fallback behind it.
+                assert!(f.has_glyphs(&FontId::proportional(14.0), "√"));
             });
         });
         out.textures_delta.clear();

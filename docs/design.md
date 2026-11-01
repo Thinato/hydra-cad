@@ -3,7 +3,7 @@
 How Hydra looks, and why. Every tab is built from what is here, so a new feature looks like the rest of the app without a design pass of its own.
 
 - **In code:** `crates/hydra/src/theme.rs` holds the colours, fonts, type scale and spacing, and `theme::apply` installs them at start-up. Tabs take colours from `theme::LIGHT` and text styles from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. They never write a literal `Color32` or font size.
-- **The boards:** the design canvas at <https://claude.ai/artifact/2kf45qw3E7AqKkBPAcYSzZ> shows the foundations, the components, and the Schematic and Proposals tabs redrawn in the system. Its source is kept in [`docs/design/`](design/), so the boards can be rebuilt if the canvas is ever lost. Each `.dc.html` file is one board, and `canvas.json` lays them out. The files open in the claude.ai Design canvas, not in a plain browser.
+- **The boards:** the design canvas at <https://claude.ai/artifact/2kf45qw3E7AqKkBPAcYSzZ> (private to its owner) shows the foundations, the components, and the Schematic and Proposals tabs redrawn in the system. Its source is kept in [`docs/design/`](design/), so the boards can be rebuilt if the canvas is ever lost. Each `.dc.html` file is one board, and `canvas.json` lays them out. The files open in the claude.ai Design canvas, not in a plain browser.
 
 ## Who it is for
 
@@ -23,12 +23,14 @@ Light is the only theme. Token names match the fields of `theme::Palette`.
 | `panel` | `#F4F5F7` | Side panels, inspector, issue list |
 | `surface` | `#FFFFFF` | Inputs, cards, tables, dialogs |
 | `hover` | `#EEF1F4` | Behind a hovered control |
-| `sheet` | `#FFFFFF` | The drawing paper; grid `#E4E8ED` every 5 mm, `#CFD5DC` every 25 mm |
+| `sheet` | `#FFFFFF` | The drawing paper |
+| `grid`, `grid_major` | `#E4E8ED`, `#CFD5DC` | Sheet grid lines every 5 mm and every 25 mm |
 | `desk` | `#CDD3DA` | Around the sheet |
 | `ink` | `#14181F` | Text and drawing lines |
 | `secondary` | `#4A5361` | Labels, meta, hints |
-| `border` | `#C3C9D1` | Card edges and dividers |
-| `border_strong` | `#8A93A0` | Edges of inputs and buttons |
+| `border` | `#C3C9D1` | Card edges and panel dividers |
+| `divider` | `#DDE1E6` | Lines between rows of a list or table |
+| `border_strong` | `#7F8895` | Edges of inputs and buttons |
 | `accent` | `#1F5FAD` | Primary buttons, selection, focus, links, the active tab. Never a status |
 | `accent_hover`, `accent_tint`, `accent_text`, `on_accent` | `#174C8C`, `#E3ECF7`, `#174C8C`, `#FFFFFF` | Hovered primary button; selected row; text on the tint; text on the accent |
 
@@ -36,7 +38,7 @@ Status colours come as a `theme::Tone`. Each has three parts: `strong` for an ed
 
 | Tone | Strong / tint / text | Means |
 | --- | --- | --- |
-| `unlisted` | `#D98A00` / `#FFF1D6` / `#8A5300` | Part not listed: the valve type is in the catalogue but this part number is not. Also warnings and unchecked imports. |
+| `unlisted` | `#C07A00` / `#FFF1D6` / `#8A5300` | Part not listed: the valve type is in the catalogue but this part number is not. Also warnings and unchecked imports. |
 | `missing` | `#C4291C` / `#FDE7E5` / `#A3201A` | Missing from the catalogue. Also errors that block a save or an approval. |
 | `stand_in` | `#6A3FC9` / `#EEE8FB` / `#5B33B8` | Drawn with another valve in place of the one asked for. |
 | `ok` | `#2A8A52` / `#E2F2E8` / `#1E6B3E` | Finished human decisions only: an approved proposal, a checked revision. A normal valve shows no colour at all. |
@@ -44,8 +46,8 @@ Status colours come as a `theme::Tone`. Each has three parts: `strong` for an ed
 
 Rules:
 - **Status is never colour alone.** It always comes with a word and a mark of its own shape: ▲ part not listed or warning, ■ missing or error, ⇄ stand-in, ✓ approved or checked, ◆ assistant, ● waiting, ✕ rejected. That way a status survives a black-and-white printout and reads for colour-blind engineers.
-  - The marks are painted as shapes, not typed. Plex and egui's fallback fonts lack ▲ ◆ ● ✕, and Plex Mono also lacks ■.
-- **Contrast is checked.** Text is at least 4.5:1 on every background it sits on. Amber and red also differ in lightness, not hue alone. The theme tests check both for every palette.
+  - The marks are painted as shapes, not typed. Plex has none of ▲ ■ ◆ ● ✕. egui's fallback fonts cover some of them in some families, and ✕ in none.
+- **Contrast is checked.** Text is at least 4.5:1 on every background it sits on. Edges and marks that must be seen (input borders, status frames, the accent) are at least 3:1. Amber and red also differ in lightness, not hue alone. The theme tests check all three for every palette.
 - **The sheet keeps ISO 1219 as on paper.** Lines are black ink and line kinds differ by dash pattern. UI colour reaches the sheet only as an overlay: the selection frame (2 px accent) and the status frame (`strong`). It never colours the lines themselves.
 
 | Line | Weight | Pattern |
@@ -57,7 +59,7 @@ Rules:
 
 ## Type
 
-IBM Plex, chosen to match the lettering of the engineers' paper drawings. It is bundled in the binary (`crates/hydra/fonts/`, SIL Open Font License, licence in `OFL.txt` and in each font's own metadata). egui's own fonts stay behind Plex as fallbacks.
+IBM Plex, chosen to match the lettering of the engineers' paper drawings. It is bundled in the binary from the unmodified upstream files in `crates/hydra/fonts/`, under the SIL Open Font License. The licence is in `OFL.txt` and can be read in the app (Account tab, "Font licence: IBM Plex"). egui's own fonts stay behind Plex as fallbacks.
 
 | Style | In code | Font | Use |
 | --- | --- | --- | --- |
@@ -78,7 +80,7 @@ IBM Plex, chosen to match the lettering of the engineers' paper drawings. It is 
 - **Spacing:** a 4 px grid, using 4 / 8 / 12 / 16 / 24 / 32. Panels have 16 px padding and dialogs 16–32.
 - **Control heights:** 28 px for toolbars and inline controls, 32 px for form fields and dialog buttons, 36 px for list and issue rows.
 - **Corners:** `theme::RADIUS` (3 px) on controls, cards and chips. Panels, the sheet, title blocks and tables are square.
-- **Edges:** `border` for dividers and `border_strong` for anything you can click or type in. Focus and selection are 2 px `accent`.
+- **Edges:** `border` for panel edges, `divider` between rows, and `border_strong` for anything you can click or type in. Focus and selection are 2 px `accent`.
 - **Shadows:** only floating menus and dialogs have one.
 - **Icons:** 16 px, 1.75 px stroke, painted. No emoji.
 
@@ -121,10 +123,27 @@ The Proposals tab adds three things:
 
 Approve stays off while a problem is open, and the action bar says why.
 
+## Not built yet
+
+The boards show the target. `theme.rs` is in place, but these parts are still to come in the restyle PRs (see TODO.md):
+- **The sheet:**
+  - the grid and the desk around it (the canvas is plain white today);
+  - the title block;
+  - line weights: one stroke weight is drawn today. Pilot and drain share one dash, and the drain's short dash isn't drawn yet;
+  - the 2 px selection frame (1.5 px today);
+  - lettering in Plex in the SVG and PDF exports (they use Ubuntu Light).
+- **The tabs:**
+  - the tab strip's 3 px accent edge and the Proposals count;
+  - toolbar groups and primary buttons;
+  - painted status marks;
+  - status chips, banners and the issue list;
+  - the side panels and the status bar.
+- **Older literals:** a few places in older code still write literal colours or sizes: `schematic.rs` (sheet white and black ink), `viewer3d.rs`, and the catalogue's drop overlay. They move to the palette as their tab is restyled.
+
 ## Adding a theme
 
 1. Add a `Palette` constant beside `LIGHT` in `theme.rs`, with every token chosen for the new ground.
 2. Add it to `PALETTES` in the theme tests, so its contrast is checked.
-3. Pass it to `theme::apply`. If egui should treat it as dark, `apply` also needs to set it on `Theme::Dark`.
+3. Pass it to `theme::apply`. `apply` always selects egui's light theme today (`set_theme(Theme::Light)` and the style set on `Theme::Light`). A dark palette also needs `apply` to select `Theme::Dark` and set its style there, or egui will report `dark_mode` as false and pick light defaults.
 4. Tabs read `theme::LIGHT` directly today. With a second theme, `theme` gains a function returning the palette in use (kept in egui's memory by `apply`), and each `theme::LIGHT` becomes a call to it: a mechanical replace, because no tab writes a literal colour.
 5. Add its column to the colour tables above.

@@ -523,16 +523,18 @@ mod tests {
     type State = (Review, Shared, Option<Request>);
 
     fn harness(status: ProposalStatus) -> Harness<'static, State> {
-        let mut h = Harness::builder()
-            .with_size(Vec2::new(900.0, 700.0))
-            .build_ui_state(
-                |ui, (r, s, out): &mut State| {
-                    if let Some(req) = detail(ui, r, s, false) {
-                        *out = Some(req);
-                    }
-                },
-                (Review::new(record(status)), shared(), None),
-            );
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(Vec2::new(900.0, 700.0))
+                .build_ui_state(
+                    |ui, (r, s, out): &mut State| {
+                        if let Some(req) = detail(ui, r, s, false) {
+                            *out = Some(req);
+                        }
+                    },
+                    (Review::new(record(status)), shared(), None),
+                ),
+        );
         h.run();
         h
     }
@@ -608,16 +610,18 @@ mod tests {
                       {"part_number": "DEMO-06-4-2-X-12DC"}]
         }))
         .unwrap();
-        let mut h = Harness::builder()
-            .with_size(Vec2::new(900.0, 700.0))
-            .build_ui_state(
-                |ui, (r, s, out): &mut State| {
-                    if let Some(req) = detail(ui, r, s, false) {
-                        *out = Some(req);
-                    }
-                },
-                (Review::new(r), shared(), None),
-            );
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(Vec2::new(900.0, 700.0))
+                .build_ui_state(
+                    |ui, (r, s, out): &mut State| {
+                        if let Some(req) = detail(ui, r, s, false) {
+                            *out = Some(req);
+                        }
+                    },
+                    (Review::new(r), shared(), None),
+                ),
+        );
         h.run();
         assert!(
             h.query_by_label_contains("This replaces vt-demo-4-2@1")

@@ -135,7 +135,8 @@ Each rule comes with its reason. Breaking one either corrupts something that can
   - the editor: `egui_kittest` tests in `editor.rs`, which click real widgets and read real labels;
   - the database: `#[sqlx::test]` with `#[ignore = "needs DATABASE_URL (Postgres)"]`.
 - **The UI follows [docs/design.md](docs/design.md).**
-  - Colours come from `theme::LIGHT` and text from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. A tab never writes a literal `Color32` or font size, so a second theme stays a new `Palette`.
+  - Colours come from `theme::LIGHT` and text from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. New code never writes a literal `Color32` or font size, so a second theme stays a new `Palette`. The older literals that remain are listed under "Not built yet" in the design doc.
+  - Kittests build their harness through `theme::themed(...)`, so they run in the real fonts and sizes and the theme's text styles exist.
   - A status always shows a word and its mark, never colour alone.
   - A new kind of control is added to the design doc (and the canvas boards in `docs/design/`) rather than styled on the spot.
 - **Drawing conventions:**

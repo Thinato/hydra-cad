@@ -1551,7 +1551,7 @@ impl SchematicEditor {
                 let r = Rect::from_min_max(self.to_screen(min), self.to_screen(max)).expand(7.0);
                 painter.rect_stroke(
                     r,
-                    3.0,
+                    f32::from(theme::RADIUS),
                     Stroke::new(2.0, tone.strong),
                     egui::StrokeKind::Outside,
                 );
@@ -2270,12 +2270,14 @@ mod tests {
     }
 
     fn harness() -> Harness<'static, State> {
-        let mut h = Harness::builder()
-            .with_size(Vec2::new(1100.0, 750.0))
-            .build_ui_state(
-                |ui, (e, s): &mut State| e.ui(ui, s),
-                (SchematicEditor::new(empty_circuit(), None), shared()),
-            );
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(Vec2::new(1100.0, 750.0))
+                .build_ui_state(
+                    |ui, (e, s): &mut State| e.ui(ui, s),
+                    (SchematicEditor::new(empty_circuit(), None), shared()),
+                ),
+        );
         h.run();
         // A fixed zoom, so ports a few millimetres apart are far enough apart on screen.
         let e = &mut h.state_mut().0;
@@ -2326,6 +2328,15 @@ mod tests {
             .iter()
             .map(|n| n.ports.iter().map(|p| p.to_string()).collect())
             .collect()
+    }
+
+    #[test]
+    fn each_valve_status_has_its_own_colour_and_normal_has_none() {
+        let p = theme::LIGHT;
+        assert_eq!(status_tone(ValveStatus::Normal), None);
+        assert_eq!(status_tone(ValveStatus::Missing), Some(p.missing));
+        assert_eq!(status_tone(ValveStatus::PartNotListed), Some(p.unlisted));
+        assert_eq!(status_tone(ValveStatus::StandIn), Some(p.stand_in));
     }
 
     #[test]
@@ -3286,20 +3297,22 @@ mod tests {
             revision,
             project: None,
         });
-        let mut h = Harness::builder()
-            .with_size(Vec2::new(1400.0, 900.0))
-            .build_ui_state(
-                |ui, (e, s): &mut State| {
-                    // Not drawn, as behind another dock tab, while `hide` says so.
-                    if !ui
-                        .ctx()
-                        .data(|d| d.get_temp::<bool>(hidden_id()).unwrap_or(false))
-                    {
-                        e.ui(ui, s);
-                    }
-                },
-                (SchematicEditor::new(circuit, saved), shared),
-            );
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(Vec2::new(1400.0, 900.0))
+                .build_ui_state(
+                    |ui, (e, s): &mut State| {
+                        // Not drawn, as behind another dock tab, while `hide` says so.
+                        if !ui
+                            .ctx()
+                            .data(|d| d.get_temp::<bool>(hidden_id()).unwrap_or(false))
+                        {
+                            e.ui(ui, s);
+                        }
+                    },
+                    (SchematicEditor::new(circuit, saved), shared),
+                ),
+        );
         h.run_steps(4);
         h
     }
