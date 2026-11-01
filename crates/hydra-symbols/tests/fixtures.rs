@@ -473,7 +473,7 @@ fn outline_lines(circuit: &Circuit, catalogue: &Catalogue) -> Vec<[[f32; 2]; 2]>
 fn an_outside_part_in_an_empty_corner_gets_a_notch() {
     let catalogue = catalogue();
     // Block parts A, B, C make an L; N stands outside the block in its top-right notch, and M
-    // outside it between A and B.
+    // outside it in the middle of the L.
     let json = r#"{"schema": 4, "name": "l", "components": [
         {"id": "A", "kind": "item", "symbol": {"kind": "orifice"}},
         {"id": "B", "kind": "item", "symbol": {"kind": "orifice"}},
@@ -481,7 +481,7 @@ fn an_outside_part_in_an_empty_corner_gets_a_notch() {
         {"id": "N", "kind": "item", "symbol": {"kind": "orifice"}},
         {"id": "M", "kind": "item", "symbol": {"kind": "orifice"}}],
         "layout": {"components": {"A": {"x": 0, "y": 0}, "B": {"x": 0, "y": 40},
-            "C": {"x": 40, "y": 40}, "N": {"x": 40, "y": 0}, "M": {"x": 0, "y": 20}}},
+            "C": {"x": 40, "y": 40}, "N": {"x": 40, "y": 0}, "M": {"x": 20, "y": 20}}},
         "in_block": ["A", "B", "C"]}"#;
     let mut circuit = Circuit::from_json(json).unwrap();
     let only = |id: &str| {
@@ -505,7 +505,7 @@ fn an_outside_part_in_an_empty_corner_gets_a_notch() {
             [min[0], max[1]]
         ]
     );
-    // N in the notch is fine; M between two block parts is drawn inside the block.
+    // N in the notch is fine; M amid the block parts is drawn inside the block.
     assert_eq!(
         outline_issues(&circuit, &catalogue),
         [hydra_core::Issue::DrawnInsideBlock("M".into())]
@@ -538,7 +538,7 @@ fn an_outside_part_in_an_empty_corner_gets_a_notch() {
     assert!(hydra_symbols::drawn_inside_outline(
         &circuit,
         &n_part,
-        place(0.0, 20.0),
+        place(20.0, 20.0),
         &catalogue
     ));
 
@@ -680,6 +680,189 @@ fn notches_never_meet_and_surrounded_parts_stay_flagged() {
         [hydra_core::Issue::DrawnInsideBlock("O".into())]
     );
     assert!(hydra_symbols::notched_parts(&circuit, &catalogue).is_empty());
+}
+
+/// A drawing's bounds.
+type Extent = ([f32; 2], [f32; 2]);
+
+/// Orifices `ids` placed at `at`, with `in_block` the block, and the bounds of each drawn alone.
+fn orifices(ids: &[(&str, f32, f32)], in_block: &[&str]) -> (Circuit, Vec<Extent>) {
+    let components: Vec<String> = ids
+        .iter()
+        .map(|(id, _, _)| {
+            format!(r#"{{"id": "{id}", "kind": "item", "symbol": {{"kind": "orifice"}}}}"#)
+        })
+        .collect();
+    let layout: Vec<String> = ids
+        .iter()
+        .map(|(id, x, y)| format!(r#""{id}": {{"x": {x}, "y": {y}}}"#))
+        .collect();
+    let json = format!(
+        r#"{{"schema": 4, "name": "o", "components": [{}], "layout": {{"components": {{{}}}}},
+            "in_block": {in_block:?}}}"#,
+        components.join(","),
+        layout.join(",")
+    );
+    let circuit = Circuit::from_json(&json).unwrap();
+    let catalogue = catalogue();
+    let bounds = ids
+        .iter()
+        .map(|(id, _, _)| alone(&circuit, id, &catalogue))
+        .collect();
+    (circuit, bounds)
+}
+
+/// Whether every dash of the drawn outline lies on an edge of `block_outline`.
+fn dashes_on_outline(circuit: &Circuit, catalogue: &Catalogue) -> bool {
+    let corners = block_outline(circuit, catalogue).unwrap();
+    let on_edge = |p: [f32; 2]| {
+        (0..corners.len()).any(|k| {
+            let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
+            let within = |v: f32, a: f32, b: f32| a.min(b) - 1e-3 <= v && v <= a.max(b) + 1e-3;
+            within(p[0], a[0], b[0]) && within(p[1], a[1], b[1])
+        })
+    };
+    outline_lines(circuit, catalogue)
+        .iter()
+        .flatten()
+        .all(|&p| on_edge(p))
+}
+
+#[test]
+fn an_outside_part_at_an_edge_between_block_parts_gets_a_u_cut() {
+    let catalogue = catalogue();
+    // Block parts A, B, C make an L with N in its notch; M stands outside the block on its left
+    // edge, between A and B.
+    let (mut circuit, b) = orifices(
+        &[
+            ("A", 0.0, 0.0),
+            ("B", 0.0, 40.0),
+            ("C", 40.0, 40.0),
+            ("N", 40.0, 0.0),
+            ("M", 0.0, 20.0),
+        ],
+        &["A", "B", "C"],
+    );
+    let [a, bb, c, n, m] = b[..] else { panic!() };
+    let (min, max) = ([a.0[0] - 4.0, a.0[1] - 4.0], [c.1[0] + 4.0, c.1[1] + 4.0]);
+    let notch = [n.0[0] - 4.0, n.1[1] + 4.0];
+    // The outline goes in round M and back out, with room beside M but none above or below it,
+    // where A and B are too close.
+    assert!(m.0[1] - 4.0 < a.1[1] + 4.0 && bb.0[1] - 4.0 < m.1[1] + 4.0);
+    let (top, bottom, inner) = (m.0[1], m.1[1], m.1[0] + 4.0);
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            min,
+            [notch[0], min[1]],
+            notch,
+            [max[0], notch[1]],
+            max,
+            [min[0], max[1]],
+            [min[0], bottom],
+            [inner, bottom],
+            [inner, top],
+            [min[0], top],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+    assert_eq!(
+        hydra_symbols::notched_parts(&circuit, &catalogue),
+        ["N", "M"]
+    );
+    assert!(dashes_on_outline(&circuit, &catalogue));
+
+    // A block port on the edge where the cut would go keeps it whole: M is flagged instead.
+    circuit.components.push(hydra_core::Component {
+        id: "P".into(),
+        kind: hydra_core::ComponentKind::Port { label: "P".into() },
+    });
+    circuit.layout.components.insert(
+        "P".into(),
+        hydra_core::Placement {
+            x: min[0],
+            y: 20.0,
+            ..Default::default()
+        },
+    );
+    circuit.in_block.insert("P".into());
+    assert_eq!(block_outline(&circuit, &catalogue).unwrap().len(), 6);
+    assert_eq!(
+        outline_issues(&circuit, &catalogue),
+        [hydra_core::Issue::DrawnInsideBlock("M".into())]
+    );
+    assert_eq!(hydra_symbols::notched_parts(&circuit, &catalogue), ["N"]);
+
+    // With room between M and B, M looks left out of the block by mistake, so it is flagged.
+    circuit.components.retain(|c| c.id != "P");
+    circuit.in_block.remove("P");
+    circuit.layout.components.get_mut("B").unwrap().y = 60.0;
+    assert_eq!(
+        outline_issues(&circuit, &catalogue),
+        [hydra_core::Issue::DrawnInsideBlock("M".into())]
+    );
+}
+
+#[test]
+fn a_valve_left_out_of_a_row_of_block_valves_stays_flagged() {
+    let catalogue = catalogue();
+    // V1 stands at the bottom edge between RV1 and M1, where a motor would get a U cut.
+    let mut circuit = motors();
+    circuit.in_block = ["P", "T", "FC1", "FC2", "FC3", "RV1", "M1"]
+        .map(String::from)
+        .into();
+    assert_eq!(
+        outline_issues(&circuit, &catalogue),
+        [hydra_core::Issue::DrawnInsideBlock("V1".into())]
+    );
+    assert!(hydra_symbols::notched_parts(&circuit, &catalogue).is_empty());
+}
+
+#[test]
+fn outside_parts_stacked_in_a_corner_get_a_stepped_outline() {
+    let catalogue = catalogue();
+    // A three by three grid: N1 and N2 along the top and N3 below N1 stand outside the block in
+    // its top-left corner. One notch round all three would take in block part D.
+    let (circuit, b) = orifices(
+        &[
+            ("N1", 0.0, 0.0),
+            ("N2", 20.0, 0.0),
+            ("N3", 0.0, 20.0),
+            ("A", 40.0, 0.0),
+            ("D", 20.0, 20.0),
+            ("B", 40.0, 20.0),
+            ("C", 0.0, 40.0),
+            ("E", 20.0, 40.0),
+            ("F", 40.0, 40.0),
+        ],
+        &["A", "B", "C", "D", "E", "F"],
+    );
+    let [_, n2, n3, a, d, _, c, _, f] = b[..] else {
+        panic!()
+    };
+    let (min, max) = ([c.0[0] - 4.0, a.0[1] - 4.0], [f.1[0] + 4.0, f.1[1] + 4.0]);
+    // Each step has room beside its part, but none below it, where D and C are too close.
+    assert!(n2.1[1] + 4.0 > d.0[1] - 4.0 && n3.1[1] + 4.0 > c.0[1] - 4.0);
+    let (wide, deep) = ([n2.1[0] + 4.0, n2.1[1]], [n3.1[0] + 4.0, n3.1[1]]);
+    assert_eq!(
+        block_outline(&circuit, &catalogue).unwrap(),
+        [
+            [min[0], deep[1]],
+            deep,
+            [deep[0], wide[1]],
+            wide,
+            [wide[0], min[1]],
+            [max[0], min[1]],
+            max,
+            [min[0], max[1]],
+        ]
+    );
+    assert!(outline_issues(&circuit, &catalogue).is_empty());
+    assert_eq!(
+        hydra_symbols::notched_parts(&circuit, &catalogue),
+        ["N1", "N2", "N3"]
+    );
+    assert!(dashes_on_outline(&circuit, &catalogue));
 }
 
 #[test]

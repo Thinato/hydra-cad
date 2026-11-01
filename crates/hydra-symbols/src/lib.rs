@@ -1000,7 +1000,9 @@ type Rect = (Point, Point);
 ///
 /// It is the rectangle round every part in the block and through the block's ports, with a
 /// corner cut out round any part outside the block that stands in a corner holding no block
-/// part, so an L-shaped block keeps the part in its notch outside.
+/// part, so an L-shaped block keeps the part in its notch outside. A corner whose parts don't
+/// fit one notch is stepped, and a part other than a valve standing at an edge between block
+/// parts gets a U cut in from that edge.
 pub fn block_outline(circuit: &Circuit, catalogue: &Catalogue) -> Option<Vec<Point>> {
     Some(parts_and_wires(circuit, catalogue).2?.corners())
 }
@@ -1023,11 +1025,10 @@ pub fn drawn_inside_outline(
     e.is_some_and(|e| outline.covers(e))
 }
 
-/// The block's bounding rectangle and the corners cut out of it, top left, top right, bottom
-/// right, bottom left.
+/// The block's bounding rectangle and the rectangles cut out of it, each in from its edge.
 struct Outline {
     rect: Rect,
-    notches: [Option<Rect>; 4],
+    cuts: Vec<Rect>,
 }
 
 impl Outline {
@@ -1039,7 +1040,7 @@ impl Outline {
             [e.1[0].min(hi[0]), e.1[1].min(hi[1])],
         );
         overlaps(e, self.rect)
-            && !self.notches.iter().flatten().any(|n| {
+            && !self.cuts.iter().any(|n| {
                 n.0[0] <= clipped.0[0]
                     && n.0[1] <= clipped.0[1]
                     && clipped.1[0] <= n.1[0]
@@ -1048,19 +1049,61 @@ impl Outline {
     }
 
     fn corners(&self) -> Vec<Point> {
-        let mut corners = Vec::new();
-        for (k, notch) in self.notches.iter().enumerate() {
-            let c = flip(k, self.rect).0;
-            // With the corner flipped to the top left, a notch to `i` goes down, across, up.
-            let i = notch.map_or(c, |n| flip(k, n).1);
-            let mut three = [[c[0], i[1]], i, [i[0], c[1]]].map(|p| flip(k, (p, p)).0);
-            // One flip turns the polygon anticlockwise; walk it back.
-            if k % 2 == 1 {
-                three.reverse();
-            }
-            corners.extend(three);
+        let (lo, hi) = self.rect;
+        if self.cuts.is_empty() {
+            let mut corners = vec![lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]];
+            corners.dedup();
+            return corners;
         }
-        corners.dedup();
+        // The rectangle less its cuts, as cells between the lines through every edge.
+        let lines = |a: usize| {
+            let mut v: Vec<f32> = [lo[a], hi[a]]
+                .into_iter()
+                .chain(self.cuts.iter().flat_map(|c| [c.0[a], c.1[a]]))
+                .collect();
+            v.sort_by(f32::total_cmp);
+            v.dedup();
+            v
+        };
+        let (xs, ys) = (lines(0), lines(1));
+        let inside = |i: isize, j: isize| {
+            let (Ok(i), Ok(j)) = (usize::try_from(i), usize::try_from(j)) else {
+                return false;
+            };
+            i + 1 < xs.len() && j + 1 < ys.len() && {
+                let m = [(xs[i] + xs[i + 1]) / 2.0, (ys[j] + ys[j + 1]) / 2.0];
+                !self.cuts.iter().any(|c| overlaps(c.to_owned(), (m, m)))
+            }
+        };
+        // Clockwise round the cells from the top of the left edge, keeping them on the right:
+        // at each grid point turn left if the block is ahead on the left, go on if it is ahead on
+        // the right, else turn right.
+        let start = (
+            0,
+            (0..ys.len() as isize).find(|&j| inside(0, j)).unwrap_or(0),
+        );
+        let (mut at, mut dir) = (start, (0isize, -1isize));
+        let mut corners = Vec::new();
+        // Bounded by the walk's states, though it always comes back to its start.
+        for _ in 0..4 * xs.len() * ys.len() {
+            let right = (-dir.1, dir.0);
+            let ahead = |(sx, sy): (isize, isize)| inside(at.0 + (sx - 1) / 2, at.1 + (sy - 1) / 2);
+            let turn = if ahead((dir.0 - right.0, dir.1 - right.1)) {
+                (-right.0, -right.1)
+            } else if ahead((dir.0 + right.0, dir.1 + right.1)) {
+                dir
+            } else {
+                right
+            };
+            if turn != dir {
+                corners.push([xs[at.0 as usize], ys[at.1 as usize]]);
+            }
+            dir = turn;
+            at = (at.0 + dir.0, at.1 + dir.1);
+            if at == start {
+                break;
+            }
+        }
         corners
     }
 }
@@ -1086,7 +1129,7 @@ fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
             continue;
         };
         match (circuit.in_block.contains(&c.id), &c.kind) {
-            (false, _) => others.push((lo, hi)),
+            (false, kind) => others.push(((lo, hi), matches!(kind, ComponentKind::Valve(_)))),
             // Ports set the edge exactly, as block ports sit on it; parts get room around them.
             (true, ComponentKind::Port { .. }) => members.push((lo, hi)),
             (true, _) => members.push((
@@ -1115,53 +1158,123 @@ fn outline(circuit: &Circuit, parts: &[(String, Drawing)]) -> Option<Outline> {
         };
         side(0, 1.0) && side(0, -1.0) && side(1, 1.0) && side(1, -1.0)
     };
-    let mut notches = [None; 4];
+    let (lo, hi) = rect;
+    // Whether a block part reaches into `r`, or a port onto its edges on the outline: it is
+    // pushed out past the rectangle where it lies on it, so a port on that edge counts.
+    let blocked = |r: Rect| {
+        let out = |v: f32, edge: f32, by: f32| if v == edge { v + by } else { v };
+        let reach = (
+            [out(r.0[0], lo[0], -1.0), out(r.0[1], lo[1], -1.0)],
+            [out(r.1[0], hi[0], 1.0), out(r.1[1], hi[1], 1.0)],
+        );
+        members.iter().any(|&m| overlaps(m, reach))
+    };
+    let fits = |cuts: &[Rect], r: Rect| {
+        let touch = |q: Rect, p: Rect| (0..2).all(|a| q.0[a] <= p.1[a] && p.0[a] <= q.1[a]);
+        let corners = [lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]].map(|p| (p, p));
+        // It stays in the rectangle without reaching across it, isn't blocked...
+        (0..2).all(|a| lo[a] <= r.0[a] && r.1[a] <= hi[a] && (lo[a] < r.0[a] || r.1[a] < hi[a]))
+            && !blocked(r)
+            // ...and it keeps clear of the other cuts, so the outline stays one loop. Steps cut
+            // in at one corner overlap instead.
+            && cuts.iter().all(|&q| {
+                !touch(q, r) || corners.iter().any(|&c| touch(q, c) && touch(r, c))
+            })
+    };
+    // `r` with its side along axis `a` moved out `by`, its low side when `by` is negative.
+    let widen = |mut r: Rect, a: usize, by: f32| {
+        if by < 0.0 {
+            r.0[a] += by;
+        } else {
+            r.1[a] += by;
+        }
+        r
+    };
+    // Room round the outside part too, where the block's parts allow it.
+    let pad = |cuts: &[Rect], mut r: Rect| {
+        for (a, by) in [(0, -1.0), (0, 1.0), (1, -1.0), (1, 1.0)] {
+            let wider = widen(r, a, by * OUTLINE_PAD);
+            if fits(cuts, wider) {
+                r = wider;
+            }
+        }
+        r
+    };
+    let mut cuts = Vec::new();
+    let loose: Vec<(Rect, bool)> = others
+        .iter()
+        .copied()
+        .filter(|&(o, _)| overlaps(o, rect))
+        .collect();
+    // A notch at each corner round the outside parts standing there, taken greedily in drawing
+    // order.
     for k in 0..4 {
-        // Flipped so the corner is the top left, a notch runs from `c` to its inner corner.
         let (c, far) = flip(k, rect);
-        let fits = |n: Point| {
-            // It leaves the far edges, no block part reaches into it, nor a port onto its outer
-            // edges...
-            n[0] < far[0]
-                && n[1] < far[1]
-                && members.iter().all(|&m| {
-                    let lo = flip(k, m).0;
-                    !(lo[0] < n[0] && lo[1] < n[1])
-                })
-                && notches.iter().flatten().all(|&o: &Rect| {
-                    // ...and it keeps clear of the other notches, so the outline stays one loop.
-                    let lo = flip(k, o).0;
-                    !(lo[0] <= n[0] && lo[1] <= n[1])
-                })
-        };
-        // ponytail: parts are taken greedily in drawing order, so two outside parts that each
-        // fit a notch but not together keep the first; a staircase outline would fit both.
         let mut inner = c;
-        for &o in others
-            .iter()
-            .filter(|&&o| overlaps(o, rect) && !surrounded(o))
-        {
+        for &(o, _) in loose.iter().filter(|&&(o, _)| !surrounded(o)) {
             let hi = flip(k, o).1;
             let want = [
                 inner[0].max(hi[0].min(far[0])),
                 inner[1].max(hi[1].min(far[1])),
             ];
-            if fits(want) {
+            if fits(&cuts, flip(k, (c, want))) {
                 inner = want;
             }
         }
         if inner != c {
-            // Room round the outside part too, where the block's parts allow it.
-            let p = OUTLINE_PAD;
-            let inner = [[p, p], [p, 0.0], [0.0, p], [0.0, 0.0]]
-                .map(|[dx, dy]| [inner[0] + dx, inner[1] + dy])
-                .into_iter()
-                .find(|&n| fits(n))
-                .unwrap_or(inner);
-            notches[k] = Some(flip(k, (c, inner)));
+            cuts.push(pad(&cuts, flip(k, (c, inner))));
         }
     }
-    Some(Outline { rect, notches })
+    // Any part still over the outline gets a step of its own at a corner, so the corner becomes
+    // a staircase, or else a cut in from an edge it stands at, so that edge becomes a U.
+    for &(o, valve) in &loose {
+        if !(Outline {
+            rect,
+            cuts: cuts.clone(),
+        })
+        .covers(o)
+        {
+            continue;
+        }
+        let e = (
+            [o.0[0].max(lo[0]), o.0[1].max(lo[1])],
+            [o.1[0].min(hi[0]), o.1[1].min(hi[1])],
+        );
+        let steps: Vec<Rect> = (0..4)
+            .filter(|_| !surrounded(o))
+            .map(|k| flip(k, (flip(k, rect).0, flip(k, e).1)))
+            .collect();
+        // It stands at an edge when it is nearer it than its own size, and between block parts
+        // when they come within the outline's room round each on both sides along the edge. A
+        // part with room beside it in a row, or a valve in a row of block valves, is more likely
+        // left out of the block by mistake.
+        let edges: Vec<Rect> = [(0, false), (0, true), (1, false), (1, true)]
+            .into_iter()
+            .filter(|_| !valve)
+            .filter_map(|(a, high)| {
+                let mut r = e;
+                let gap = if high {
+                    r.1[a] = hi[a];
+                    hi[a] - e.1[a]
+                } else {
+                    r.0[a] = lo[a];
+                    e.0[a] - lo[a]
+                };
+                let between = [-2.0, 2.0].map(|by| blocked(widen(r, 1 - a, by * OUTLINE_PAD)));
+                (gap < e.1[a] - e.0[a] && between == [true; 2]).then_some(r)
+            })
+            .collect();
+        let area = |r: &Rect| (r.1[0] - r.0[0]) * (r.1[1] - r.0[1]);
+        let smallest = |rs: Vec<Rect>| {
+            (rs.into_iter())
+                .filter(|&r| fits(&cuts, r))
+                .min_by(|a, b| area(a).total_cmp(&area(b)))
+        };
+        if let Some(r) = smallest(steps).or_else(|| smallest(edges)) {
+            cuts.push(pad(&cuts, r));
+        }
+    }
+    Some(Outline { rect, cuts })
 }
 
 /// Where a component is placed; the origin when it has no placement.
