@@ -4,32 +4,34 @@ Open work after the block outline and mirrored symbols (8e8f237). Tick items off
 
 ## Worth doing next
 
-- [x] **Wire routing.** The AI import traces each net's wires from the drawing into `layout.wires`, and `import_circuit` refuses wires that miss a port, touch another net or leave a net in pieces (#6). Still open:
-  - [ ] Drawing wires by hand in the editor. The editor only drops a net's drawn wires when its ports move.
-  - [ ] Smarter automatic routing for nets left untraced (long elbows, lines through symbols).
-  - [ ] Traced wires aren't checked against the automatic elbows of untraced nets, so a traced wire can lie along an untraced net's elbow.
-  - [ ] The through-part warning skips a whole segment that ends on one of the part's own ports, even if it crosses the symbol to get there.
-  - [ ] A block port gets a junction dot inside its circle when a traced wire passes through it, because the port counts as an arm. Drawings show an open circle there.
-  - [ ] Crossings are drawn plain. Drawings mark one line hopping over another with a small arc, which would make it clear the lines aren't joined.
-  - [ ] Pilot and drain lines are drawn solid like any other wire. Drawings dash them.
-  - [ ] A traced wire can run along the block outline (P in demo-import-motors runs up the outline's left edge for 4 mm), and a part's own traced wire can cross its label (T in demo-import-motors).
-- [x] **Connect the drawn block to the 3D block.** Only parts in `in_block` are expected on the 3D block; a valve mounted on it but drawn outside warns, and a block with nothing in `in_block` gets one warning (#3). Still open:
-  - [ ] Decide whether mounting a valve in the 3D tab should tick "In block" (or the reverse). Today the engineer settles each mismatch by hand.
+- [x] **Wire routing.** The AI import traces each net's wires from the drawing into `layout.wires`, and `import_circuit` refuses wires that miss a port, touch another net or leave a net in pieces (#6). Since then:
+  - [x] Drawing wires by hand in the editor: draw, delete, reset a net to automatic, join nets by ending on them (#14).
+  - [x] Smarter automatic routing for untraced nets: a grid router keeps clear of symbols, labels and other nets and joins ports as a tree (#19).
+  - [x] Traced wires are checked against untraced nets' automatic lines (#17).
+  - [x] The through-part warning only lets off a segment leaving its own port outward (#17).
+  - [x] Block ports get no junction dot (#18).
+  - [x] Wires of different nets hop where they cross (#18).
+  - [x] Pilot and drain wires are drawn dashed; the kind is set per traced wire (#15).
+  - [x] A traced wire along the block outline or across a designator is warned about (#17).
+  - [ ] Moving, rotating or swapping a part still drops its nets' drawn wires (the editor says so, and Undo brings them back). Keeping the wire and moving only its end would keep the engineer's work.
+  - [ ] Automatic wires stay solid. A pilot or drain line shows dashed only once it is traced.
+- [x] **Connect the drawn block to the 3D block.** Only parts in `in_block` are expected on the 3D block (#3), and mounting a valve on a face ticks it In block in the same undo step; unticking never unmounts, it warns (#13).
 - [x] **New parts inside the outline** join the block in the same undo step (#8).
 
 ## Smaller
 
-- [x] L-shaped blocks: the outline is cut round an outside part standing in a corner, and the import warns about each such part (#8). Still open:
-  - [ ] U-shaped and stepped outlines: one rectangular notch per corner, so parts needing more are still flagged.
-- [x] Block port labels sit outside the block on every edge, and the dash-dot line breaks round port circles (#8). Still open:
-  - [ ] A port label moved outside doesn't avoid a wire arriving at the port from outside.
-- [x] Designators keep clear of wires and status frames (#4). Still open:
-  - [ ] Status words, item labels and port names can still overlap wires (the status line under 1.1, X1's "X 0.5 mm"). An orifice's value label sits on its own wire when the orifice is vertical. A gauge's label sits under its port, so a wire leaving the port downwards runs through the label.
+- [x] Block outlines are cut round outside parts: L notches (#8), stepped corners and U cuts from an edge (#16). The editor warns about each part the outline is cut round.
+- [x] Block port labels sit outside the block, the dash-dot line breaks round port circles (#8), and labels dodge a wire arriving from outside (#18).
+- [x] Designators keep clear of wires and status frames (#4); item labels, status words and port names now do too, and slide along their part when they must (#18). Still open:
+  - [ ] Where no clear spot is left they stay under the part, e.g. FC1–FC3's status words and HM1–HM3's labels in demo-import-motors, whose traced wires box them in.
 - [x] The editor edits the extra bill-of-materials lines, an item's code, description and position, and the import notes (#7).
 - [x] `submit_proposal` refuses a second pending proposal for the same valve type and base version (#5).
-- [ ] Some valves have pilot ports their symbol lacks. A relief valve piloted from another line, or a compensator with a second pilot, can't be connected the way the drawing shows. The datasheet proposal should give those symbols the extra port. Plugged block ports (the end of a rail at the block's edge) aren't modelled either.
-- [ ] The hydra-mcp test `a_stuck_renderer_is_killed` looks for its child with `pgrep -f "sleep 5.0371"`, so two checkouts running the suite at once can fail it. Give each run a unique marker.
-- [ ] Every editor frame draws each part several times (`render_circuit`, `render_parts`, `outline_issues`, `block_outline`). Fine at tens of parts; share one `parts_and_wires` result per frame if it ever shows.
+- [x] Pilot ports symbols lacked: relief valves and compensated flow controls can have an external pilot port X; block ports can be plugged (#15, circuit schema 5).
+  - [ ] The two live imported circuits still draw their 4.1 and 9.1 pilot lines without a port, and MH450001's T rail without its plug: they need catalogue versions with port X and a new revision, checked by the engineer.
+  - [ ] A vented or remote-setting relief (internal pilot kept, X as a vent) isn't modelled; the assistant notes it.
+- [x] The hydra-mcp test `a_stuck_renderer_is_killed` finds its own child by a per-process marker (#12).
+- [x] The editor renders the schematic once per edit, not several times a frame (#21). Still open:
+  - [ ] The wire checks lay the circuit out three times per edit, and the router keeps a one-entry memo for them; one shared render would let both go.
 
 ## Bigger items deferred earlier
 
