@@ -14,6 +14,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # No debug info: faster links and smaller caches. cache.yml sets the same, so its caches match.
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
   # Whether the PR changes anything besides Markdown. A docs-only PR skips the builds below; a
@@ -38,25 +40,48 @@ jobs:
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Two jobs sharing their steps, not one matrix job: a skipped matrix job reports its name
-  # unexpanded, so the required windows-latest and macos-latest checks would never arrive.
-  windows:
-    name: windows-latest
+  # Formatting and clippy first, on a cheap Linux runner: a PR that fails them stops here instead
+  # of spending Windows and macOS minutes. Linux clippy covers the macOS code (both are unix, and
+  # the platform branches are cfg!() expressions, which compile everywhere); Windows runs clippy
+  # again for its few #[cfg(windows)] lines.
+  lint:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: windows-latest
-    steps: &check
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@v4
       # Installs the toolchain pinned in rust-toolchain.toml, with clippy and rustfmt.
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
+      # Shares its cache with cache.yml, which saves one from main after every merge, so a new
+      # PR starts warm.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo build --workspace --all-targets --locked
+
+  # Two jobs, not one matrix job: a skipped matrix job reports its name unexpanded, so the
+  # required windows-latest and macos-latest checks would never arrive. They wait for lint, and
+  # fail at once if it failed: a job skipped because a need failed would count as passed.
+  # !cancelled(), not always(), so a cancelled run (a newer push) doesn't keep them going.
+  windows:
+    name: windows-latest
+    needs: [changes, lint]
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
+    runs-on: windows-latest
+    steps:
+      - name: Lint passed
+        if: needs.lint.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       # The backup scripts for Windows Server can't run here; at least make sure they parse.
       - name: Parse the PowerShell scripts
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $failed = $false
@@ -69,10 +94,19 @@ jobs:
 
   macos:
     name: macos-latest
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: [changes, lint]
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
     runs-on: macos-latest
-    steps: *check
+    steps:
+      - name: Lint passed
+        if: needs.lint.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: check
+      - run: cargo test --workspace --locked
 
   # Service containers only run on Linux runners, so database tests live here.
   database:
@@ -94,6 +128,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: database
       - run: cargo test -p hydra-db -p hydra-mcp -- --ignored
       # The app's database-worker test runs against a migrated database holding the fixtures.
       - run: cargo run -p hydra-db --bin hydra-admin -- migrate
