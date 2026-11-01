@@ -6,10 +6,12 @@ name: Cache
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md']
 
 concurrency:
   group: cache
-  cancel-in-progress: true
+  # A cancelled run saves no cache, so runs queue instead.
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -30,7 +32,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: check
-      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked --no-run
 
   database:
@@ -41,5 +43,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: database
-      - run: cargo test -p hydra-db -p hydra-mcp -p hydra --locked --no-run
-      - run: cargo build -p hydra-db --bin hydra-admin --locked
+      # The same invocations as pr.yml, so features resolve the same and nothing rebuilds there.
+      - run: cargo test -p hydra-db -p hydra-mcp --no-run
+      - run: cargo build -p hydra-db --bin hydra-admin
+      - run: cargo test -p hydra --no-run
