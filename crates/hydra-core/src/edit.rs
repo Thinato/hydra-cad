@@ -20,7 +20,8 @@ pub enum Command {
     Remove { id: String },
     /// Move and/or rotate a component.
     Place { id: String, placement: Placement },
-    /// Put two ports on the same net, merging nets if both are connected already.
+    /// Put two ports on the same net, merging nets if both are connected already. The second
+    /// net's drawn wires join the first's, and the first keeps its name.
     Connect { a: PortRef, b: PortRef },
     /// Take a port off its net.
     Disconnect { port: PortRef },
@@ -67,7 +68,7 @@ pub enum Command {
     /// Replace an imported circuit's notes. Blank notes are dropped.
     SetNotes { notes: Vec<String> },
     /// Draw a wire through `points` (sheet mm, the first on `from`, the last on `to`), joining
-    /// the ends' nets if they differ. The nets' drawn wires are kept.
+    /// the ends' nets as `Connect` does if they differ.
     DrawWire {
         from: WireEnd,
         to: WireEnd,
@@ -212,15 +213,27 @@ impl Command {
                         return Err(format!("{a} and {b} are already connected"));
                     }
                     (Some(i), Some(j)) => {
-                        // Merge the second net into the first.
+                        let drawn = |k: usize| {
+                            (circuit.layout.wires.get(&circuit.nets[k].id)).map_or(0, Vec::len)
+                        };
+                        if drawn(i) + drawn(j) > MAX_WIRES_PER_NET {
+                            return Err(format!(
+                                "joining these nets would give one net more than \
+                                 {MAX_WIRES_PER_NET} drawn wires, more than Hydra checks; \
+                                 delete or join some wires first"
+                            ));
+                        }
+                        // Merge the second net into the first, drawn wires included.
                         let merged = circuit.nets.remove(j);
                         let i = if j < i { i - 1 } else { i };
                         circuit.nets[i].ports.extend(merged.ports);
                         if circuit.nets[i].name.is_none() {
                             circuit.nets[i].name = merged.name;
                         }
-                        let ids = [circuit.nets[i].id.clone(), merged.id];
-                        circuit.layout.wires.retain(|k, _| !ids.contains(k));
+                        if let Some(wires) = circuit.layout.wires.remove(&merged.id) {
+                            let id = circuit.nets[i].id.clone();
+                            circuit.layout.wires.entry(id).or_default().extend(wires);
+                        }
                     }
                     (Some(i), None) | (None, Some(i)) => {
                         let loose = if circuit.nets[i].ports.contains(a) {
@@ -229,8 +242,6 @@ impl Command {
                             a
                         };
                         circuit.nets[i].ports.push(loose.clone());
-                        let id = circuit.nets[i].id.clone();
-                        circuit.layout.wires.remove(&id);
                     }
                     (None, None) => {
                         let id = next_id(circuit.nets.iter().map(|n| n.id.as_str()), "n");
@@ -447,20 +458,14 @@ impl Command {
                 let net_of = |c: &Circuit, p: &PortRef| {
                     (c.nets.iter().find(|n| n.ports.contains(p))).map(|n| n.id.clone())
                 };
-                let (na, nb) = (net_of(circuit, &a), net_of(circuit, &b));
-                // Connecting drops the joined nets' drawn wires, so keep them to put back.
-                let mut ids = vec![na.clone(), nb.clone()];
-                ids.dedup();
-                let mut wires: Vec<Vec<[f32; 2]>> = (ids.iter().flatten())
-                    .flat_map(|id| circuit.layout.wires.get(id).cloned().unwrap_or_default())
-                    .collect();
-                wires.push(points.clone());
+                // Connecting keeps both nets' drawn wires; then the new one joins them.
                 let mut c = circuit.clone();
-                if na.is_none() || na != nb {
+                let na = net_of(&c, &a);
+                if na.is_none() || na != net_of(&c, &b) {
                     Command::Connect { a: a.clone(), b }.apply(&mut c)?;
                 }
                 let net = net_of(&c, &a).expect("connected");
-                c.layout.wires.insert(net, wires);
+                c.layout.wires.entry(net).or_default().push(points.clone());
                 if !c.layout.wires_are_bounded() {
                     return Err(format!(
                         "that would be more wires than Hydra checks (at most \

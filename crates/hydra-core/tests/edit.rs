@@ -162,6 +162,44 @@ fn connecting_creates_extends_and_merges_nets() {
 }
 
 #[test]
+fn joining_named_nets_keeps_the_first_name_and_both_nets_wires() {
+    let mut d = doc(&["A", "B", "C", "D", "E"]);
+    d.apply(connect("A", "B")).unwrap();
+    d.apply(connect("C", "D")).unwrap();
+    d.circuit.nets[0].name = Some("P".into());
+    d.circuit.nets[1].name = Some("T".into());
+    let (ab, cd) = (
+        vec![[0.0, 0.0], [10.0, 0.0]],
+        vec![[20.0, 0.0], [30.0, 0.0]],
+    );
+    d.circuit.layout.wires.insert("n1".into(), vec![ab.clone()]);
+    d.circuit.layout.wires.insert("n2".into(), vec![cd.clone()]);
+    d.apply(connect("A", "C")).unwrap();
+    assert_eq!(d.circuit.nets.len(), 1);
+    assert_eq!(d.circuit.nets[0].name.as_deref(), Some("P"));
+    assert_eq!(
+        d.circuit.layout.wires.keys().collect::<Vec<_>>(),
+        ["n1"],
+        "n2's wires move to n1"
+    );
+    assert_eq!(d.circuit.layout.wires["n1"], [ab.clone(), cd.clone()]);
+    // A loose port joining the net keeps its wires too.
+    d.apply(connect("E", "A")).unwrap();
+    assert_eq!(d.circuit.layout.wires["n1"], [ab, cd]);
+    d.undo();
+    d.undo();
+    assert_eq!(d.circuit.nets[1].name.as_deref(), Some("T"));
+    assert_eq!(d.circuit.layout.wires.len(), 2);
+    // Refused, changing nothing, when the joined net would have more wires than are checked.
+    let many = vec![vec![[0.0, 0.0], [10.0, 0.0]]; MAX_WIRES_PER_NET / 2 + 1];
+    d.circuit.layout.wires.insert("n1".into(), many.clone());
+    d.circuit.layout.wires.insert("n2".into(), many);
+    let before = d.circuit.clone();
+    assert!(d.apply(connect("A", "C")).is_err());
+    assert_eq!(d.circuit, before);
+}
+
+#[test]
 fn removing_a_component_drops_its_connections_and_dangling_nets() {
     let mut d = doc(&["A", "B", "C"]);
     d.apply(connect("A", "B")).unwrap();
