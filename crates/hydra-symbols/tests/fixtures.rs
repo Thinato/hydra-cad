@@ -92,6 +92,89 @@ fn golden_circuits_load_validate_round_trip_and_render() {
     assert!(count > 0, "no golden circuits found");
 }
 
+#[test]
+fn designators_are_clear_of_wires_and_frames() {
+    let catalogue = catalogue();
+    for entry in std::fs::read_dir(fixtures().join("circuits")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let mut circuit = Circuit::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        circuit.in_block.clear();
+        let all = render_circuit(&circuit, &catalogue).primitives;
+        let nets = std::mem::take(&mut circuit.nets);
+        // The parts draw as many primitives without nets; the wires follow them.
+        let (parts, wires) = all.split_at(render_circuit(&circuit, &catalogue).primitives.len());
+        circuit.nets = nets;
+        // Status frames are the parts' closed dashed outlines.
+        let lines: Vec<(&[[f32; 2]], bool)> = wires
+            .iter()
+            .chain(parts.iter().filter(|p| {
+                matches!(
+                    p,
+                    Primitive::Polyline {
+                        closed: true,
+                        dashed: true,
+                        ..
+                    }
+                )
+            }))
+            .filter_map(|p| match p {
+                Primitive::Polyline { points, closed, .. } => Some((points.as_slice(), *closed)),
+                _ => None,
+            })
+            .collect();
+        for c in circuit
+            .components
+            .iter()
+            .filter(|c| !matches!(c.kind, hydra_core::ComponentKind::Port { .. }))
+        {
+            let label = parts
+                .iter()
+                .find(|p| matches!(p, Primitive::Text { text, .. } if *text == c.id))
+                .unwrap_or_else(|| panic!("{}: no designator", c.id));
+            let (lo, hi) = bounds(std::slice::from_ref(label)).unwrap();
+            for &(points, closed) in &lines {
+                // A closed outline runs back to its first point.
+                let back = if closed { &points[..1] } else { &[] };
+                let ring: Vec<_> = points.iter().chain(back).collect();
+                for seg in ring.windows(2) {
+                    assert!(
+                        !crosses(*seg[0], *seg[1], lo, hi),
+                        "{}: designator {} {lo:?}-{hi:?} touches {seg:?}",
+                        path.display(),
+                        c.id
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Whether segment `a`-`b` passes through the box `lo`-`hi` (Liang-Barsky clipping).
+fn crosses(a: [f32; 2], b: [f32; 2], lo: [f32; 2], hi: [f32; 2]) -> bool {
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for k in 0..2 {
+        let d = b[k] - a[k];
+        for (p, q) in [(-d, a[k] - lo[k]), (d, hi[k] - a[k])] {
+            if p == 0.0 {
+                if q < 0.0 {
+                    return false;
+                }
+            } else {
+                let t = q / p;
+                if p < 0.0 {
+                    t0 = t0.max(t);
+                } else {
+                    t1 = t1.min(t);
+                }
+            }
+        }
+    }
+    t0 <= t1
+}
+
 /// Every value in `file` survives in `saved`; `saved` may add defaults.
 fn kept(file: &serde_json::Value, saved: &serde_json::Value, at: String) -> Result<(), String> {
     use serde_json::Value::{Array, Number, Object};

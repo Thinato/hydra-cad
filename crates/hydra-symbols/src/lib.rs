@@ -656,6 +656,16 @@ pub fn bounds(primitives: &[Primitive]) -> Option<(Point, Point)> {
 ///
 /// `None` when a valve's catalogue rows are missing; [`Circuit::validate`] reports those.
 pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) -> Option<Drawing> {
+    draw_component(c, place, catalogue, &[])
+}
+
+/// [`render_component`], with the designator clear of `wires` where it can be.
+fn draw_component(
+    c: &Component,
+    place: Placement,
+    catalogue: &Catalogue,
+    wires: &[Primitive],
+) -> Option<Drawing> {
     let symbol = match &c.kind {
         ComponentKind::Valve(v) => render_symbol(v.symbol(catalogue)?),
         ComponentKind::Port { label } => port_marker(label),
@@ -711,15 +721,41 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
             }
         });
     }
+    for (name, p) in symbol.ports {
+        d.ports.push((name, at(p)));
+    }
     if !matches!(c.kind, ComponentKind::Port { .. })
         && let Some((min, max)) = bounds(&d.primitives)
     {
-        // Designator beside the symbol's top-left corner, clear of its port lines.
-        d.primitives.push(text(
-            [min[0] - 1.0, min[1] + LABEL / 2.0],
-            &c.id,
-            Align::End,
-        ));
+        let status = status_words(c, catalogue);
+        let pad = 1.5;
+        // Outside the status frame, when there is one.
+        let gap = if status.is_some() { pad + 1.0 } else { 1.0 };
+        let mid = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0];
+        // Designator beside the middle of a side no port leaves from, so no wire of this part
+        // starts there: left, right, then top, skipping a side another part's wire crosses.
+        // ponytail: when ports or wires take every one of those sides it goes on the first free
+        // one, or on the left, even over a wire; a crowded layout needs a part moved.
+        let side_of = |[x, y]: Point| {
+            let edges = [x - min[0], max[0] - x, y - min[1], max[1] - y];
+            (0..4).min_by(|&a, &b| edges[a].total_cmp(&edges[b]))
+        };
+        let taken: Vec<_> = d.ports.iter().map(|(_, p)| side_of(*p)).collect();
+        let label = |side| match side {
+            1 => text([max[0] + gap, mid[1]], &c.id, Align::Start),
+            2 => text([mid[0], min[1] - gap - LABEL / 2.0], &c.id, Align::Middle),
+            _ => text([min[0] - gap, mid[1]], &c.id, Align::End),
+        };
+        let free: Vec<_> = (0..3)
+            .filter(|s| !taken.contains(&Some(*s)))
+            .map(label)
+            .collect();
+        let clear = |l: &&Primitive| {
+            let (lo, hi) = bounds(std::slice::from_ref(*l)).unwrap_or_default();
+            !wires.iter().any(|w| crosses(w, lo, hi))
+        };
+        let designator = free.iter().find(clear).or(free.first()).cloned();
+        d.primitives.push(designator.unwrap_or_else(|| label(0)));
         let mut below = max[1] + LABEL;
         if let ComponentKind::Item(item) = &c.kind
             && let Some(label) = item.label.as_deref().filter(|l| !l.is_empty())
@@ -728,9 +764,8 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
                 .push(text([(min[0] + max[0]) / 2.0, below], label, Align::Middle));
             below += LABEL * 1.4;
         }
-        if let Some(words) = status_words(c, catalogue) {
+        if let Some(words) = status {
             // A dashed frame and the status in words, so a black-and-white print shows it too.
-            let pad = 1.5;
             d.primitives.push(Primitive::Polyline {
                 points: vec![
                     [min[0] - pad, min[1] - pad],
@@ -748,9 +783,6 @@ pub fn render_component(c: &Component, place: Placement, catalogue: &Catalogue) 
                 Align::Middle,
             ));
         }
-    }
-    for (name, p) in symbol.ports {
-        d.ports.push((name, at(p)));
     }
     Some(d)
 }
@@ -776,18 +808,19 @@ pub fn status_words(c: &Component, catalogue: &Catalogue) -> Option<String> {
 /// Components without a placement sit at the origin. Components whose catalogue rows are
 /// missing are skipped; [`Circuit::validate`] reports them.
 pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
-    let mut d = Drawing::default();
-    for c in &circuit.components {
-        let place = circuit
+    let place = |c: &Component| {
+        circuit
             .layout
             .components
             .get(&c.id)
             .copied()
-            .unwrap_or_default();
-        let Some(part) = render_component(c, place, catalogue) else {
+            .unwrap_or_default()
+    };
+    let mut d = Drawing::default();
+    for c in &circuit.components {
+        let Some(part) = render_component(c, place(c), catalogue) else {
             continue;
         };
-        d.primitives.extend(part.primitives);
         for (name, p) in part.ports {
             d.ports.push((format!("{}.{name}", c.id), p));
         }
@@ -838,12 +871,43 @@ pub fn render_circuit(circuit: &Circuit, catalogue: &Catalogue) -> Drawing {
             });
         }
     }
+    // The parts again, now that their designators can keep clear of the wires.
+    for c in &circuit.components {
+        if let Some(part) = draw_component(c, place(c), catalogue, &wires) {
+            d.primitives.extend(part.primitives);
+        }
+    }
     d.primitives.extend(wires);
     if let Some((min, max)) = block_outline(circuit, catalogue) {
         let corners = [min, [max[0], min[1]], max, [min[0], max[1]]];
         d.primitives.extend(dash_dot(&corners));
     }
     d
+}
+
+/// Whether a line of `p` passes through the box `lo`-`hi` (Liang-Barsky clipping per segment).
+fn crosses(p: &Primitive, lo: Point, hi: Point) -> bool {
+    let Primitive::Polyline { points, .. } = p else {
+        return false;
+    };
+    points.windows(2).any(|s| {
+        let (mut t0, mut t1) = (0.0f32, 1.0f32);
+        for k in 0..2 {
+            let d = s[1][k] - s[0][k];
+            for (p, q) in [(-d, s[0][k] - lo[k]), (d, hi[k] - s[0][k])] {
+                if p == 0.0 {
+                    if q < 0.0 {
+                        return false;
+                    }
+                } else if p < 0.0 {
+                    t0 = t0.max(q / p);
+                } else {
+                    t1 = t1.min(q / p);
+                }
+            }
+        }
+        t0 <= t1
+    })
 }
 
 /// Space between the block's outline and the parts inside it.

@@ -26,7 +26,7 @@ expression: svg
 <polyline points="40.00,65.00 40.00,68.00"/>
 <text x="41.00" y="53.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">Out</text>
 <text x="41.00" y="67.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">In</text>
-<text x="29.00" y="53.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">FC1</text>
+<text x="27.50" y="60.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">FC1</text>
 <polygon points="28.50,50.25 56.00,50.25 56.00,69.75 28.50,69.75" stroke-dasharray="1,0.8"/>
 <text x="42.25" y="72.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">PART NOT LISTED DEMO-PFC32-C3-12E</text>
 <polygon points="85.00,55.00 95.00,55.00 95.00,65.00 85.00,65.00"/>
@@ -47,7 +47,7 @@ expression: svg
 <polyline points="90.00,65.00 90.00,68.00"/>
 <text x="91.00" y="53.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">Out</text>
 <text x="91.00" y="67.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">In</text>
-<text x="79.00" y="53.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">FC2</text>
+<text x="77.50" y="60.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">FC2</text>
 <polygon points="78.50,50.25 106.00,50.25 106.00,69.75 78.50,69.75" stroke-dasharray="1,0.8"/>
 <text x="92.25" y="72.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">MISSING DEMO-PFC40-C3-12E</text>
 <polygon points="135.00,55.00 145.00,55.00 145.00,65.00 135.00,65.00"/>
@@ -68,7 +68,7 @@ expression: svg
 <polyline points="140.00,65.00 140.00,68.00"/>
 <text x="141.00" y="53.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">Out</text>
 <text x="141.00" y="67.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">In</text>
-<text x="129.00" y="53.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">FC3</text>
+<text x="127.50" y="60.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">FC3</text>
 <polygon points="128.50,50.25 156.00,50.25 156.00,69.75 128.50,69.75" stroke-dasharray="1,0.8"/>
 <text x="142.25" y="72.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">STAND-IN for DEMO-PFC25-C3-12E</text>
 <polygon points="180.00,75.00 190.00,75.00 190.00,85.00 180.00,85.00"/>
@@ -85,7 +85,7 @@ expression: svg
 <polyline points="185.00,85.00 185.00,88.00"/>
 <text x="186.00" y="73.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
 <text x="186.00" y="87.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
-<text x="177.00" y="73.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">RV1</text>
+<text x="177.00" y="80.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">RV1</text>
 <polygon points="215.00,75.00 225.00,75.00 225.00,85.00 215.00,85.00"/>
 <polyline points="220.00,85.00 220.00,75.00"/>
 <polygon points="220.00,75.00 220.60,76.60 219.40,76.60" fill="black"/>
@@ -101,7 +101,7 @@ expression: svg
 <polygon points="210.00,77.00 215.00,77.00 215.00,83.00 210.00,83.00"/>
 <polyline points="211.25,83.00 213.75,77.00"/>
 <polyline points="235.00,80.00 235.42,82.10 236.25,77.90 237.08,82.10 237.92,77.90 238.75,82.10 239.58,77.90 240.00,80.00"/>
-<text x="209.00" y="73.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">V1</text>
+<text x="207.50" y="80.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">V1</text>
 <polygon points="208.50,70.25 241.50,70.25 241.50,89.75 208.50,89.75" stroke-dasharray="1,0.8"/>
 <text x="225.00" y="92.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">MISSING DEMO-PS10-2N-12DC</text>
 <circle cx="40.00" cy="15.00" r="5.00"/>
@@ -110,7 +110,7 @@ expression: svg
 <polyline points="40.00,20.00 40.00,23.00"/>
 <text x="41.00" y="8.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <text x="41.00" y="22.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
-<text x="34.00" y="8.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">HM1</text>
+<text x="34.00" y="15.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">HM1</text>
 <text x="40.00" y="25.75" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">DISC 1  100 bar  60 l/min</text>
 <circle cx="90.00" cy="15.00" r="5.00"/>
 <polygon points="90.00,17.80 91.30,20.00 88.70,20.00" fill="black"/>
@@ -118,7 +118,7 @@ expression: svg
 <polyline points="90.00,20.00 90.00,23.00"/>
 <text x="91.00" y="8.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <text x="91.00" y="22.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
-<text x="84.00" y="8.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">HM2</text>
+<text x="84.00" y="15.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">HM2</text>
 <text x="90.00" y="25.75" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">CONVEYOR 1  50 bar  60 l/min</text>
 <circle cx="140.00" cy="15.00" r="5.00"/>
 <polygon points="140.00,17.80 141.30,20.00 138.70,20.00" fill="black"/>
@@ -126,14 +126,14 @@ expression: svg
 <polyline points="140.00,20.00 140.00,23.00"/>
 <text x="141.00" y="8.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <text x="141.00" y="22.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
-<text x="134.00" y="8.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">HM3</text>
+<text x="134.00" y="15.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">HM3</text>
 <text x="140.00" y="25.75" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">CONVEYOR 2  50 bar  60 l/min</text>
 <circle cx="255.00" cy="100.00" r="1.80"/>
 <polyline points="253.74,98.74 256.26,101.26"/>
 <polyline points="253.74,101.26 256.26,98.74"/>
 <polyline points="255.00,101.80 255.00,104.80"/>
 <text x="256.00" y="103.80" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">M</text>
-<text x="252.20" y="99.45" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">M1</text>
+<text x="252.20" y="101.62" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">M1</text>
 <text x="255.35" y="107.55" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">MP SAE-04</text>
 <polyline points="0.00,110.00 40.00,110.00 40.00,68.00"/>
 <circle cx="40.00" cy="110.00" r="0.60" fill="black"/>

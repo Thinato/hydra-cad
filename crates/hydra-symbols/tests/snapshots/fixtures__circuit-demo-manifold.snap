@@ -1,6 +1,6 @@
 ---
 source: crates/hydra-symbols/tests/fixtures.rs
-expression: to_svg(&drawing.primitives)
+expression: svg
 ---
 <svg xmlns="http://www.w3.org/2000/svg" width="146.70mm" height="84.95mm" viewBox="-3.20 -1.75 146.70 84.95">
 <g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
@@ -30,7 +30,7 @@ expression: to_svg(&drawing.primitives)
 <polyline points="20.00,63.00 20.00,60.00"/>
 <text x="19.00" y="75.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">T</text>
 <text x="19.00" y="61.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">P</text>
-<text x="9.00" y="61.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">RV1</text>
+<text x="9.00" y="68.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">RV1</text>
 <circle cx="40.50" cy="60.00" r="1.80"/>
 <polyline points="41.00,57.20 37.00,60.00 41.00,62.80"/>
 <polyline points="37.00,60.00 35.00,60.00"/>
@@ -39,7 +39,7 @@ expression: to_svg(&drawing.primitives)
 <polyline points="35.00,60.00 32.00,60.00"/>
 <text x="47.00" y="61.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <text x="33.00" y="61.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
-<text x="31.00" y="58.45" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">K1</text>
+<text x="40.25" y="54.95" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">K1</text>
 <polygon points="55.00,35.00 65.00,35.00 65.00,45.00 55.00,45.00"/>
 <polyline points="58.33,45.00 58.33,35.00"/>
 <polygon points="58.33,35.00 58.93,36.60 57.73,36.60" fill="black"/>
@@ -73,7 +73,7 @@ expression: to_svg(&drawing.primitives)
 <polygon points="85.00,37.00 90.00,37.00 90.00,43.00 85.00,43.00"/>
 <polyline points="86.25,43.00 88.75,37.00"/>
 <polyline points="90.00,40.00 90.42,42.10 91.25,37.90 92.08,42.10 92.92,37.90 93.75,42.10 94.58,37.90 95.00,40.00"/>
-<text x="44.00" y="33.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">V1</text>
+<text x="44.00" y="40.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">V1</text>
 <polygon points="110.00,35.00 120.00,35.00 120.00,45.00 110.00,45.00"/>
 <polyline points="113.33,45.00 113.33,35.00"/>
 <polygon points="113.33,35.00 113.93,36.60 112.73,36.60" fill="black"/>
@@ -95,7 +95,7 @@ expression: to_svg(&drawing.primitives)
 <polygon points="105.00,37.00 110.00,37.00 110.00,43.00 105.00,43.00"/>
 <polyline points="106.25,43.00 108.75,37.00"/>
 <polyline points="130.00,40.00 130.42,42.10 131.25,37.90 132.08,42.10 132.92,37.90 133.75,42.10 134.58,37.90 135.00,40.00"/>
-<text x="104.00" y="33.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">V2</text>
+<text x="104.00" y="40.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">V2</text>
 <polyline points="115.00,16.00 115.00,24.00"/>
 <polyline points="113.47,18.01 113.86,18.42 114.16,18.90 114.34,19.44 114.40,20.00 114.34,20.56 114.16,21.10 113.86,21.58 113.47,21.99"/>
 <polyline points="116.53,21.99 116.14,21.58 115.84,21.10 115.66,20.56 115.60,20.00 115.66,19.44 115.84,18.90 116.14,18.42 116.53,18.01"/>
@@ -103,7 +103,7 @@ expression: to_svg(&drawing.primitives)
 <polyline points="115.00,24.00 115.00,27.00"/>
 <text x="116.00" y="14.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <text x="116.00" y="26.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
-<text x="112.47" y="14.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">O1</text>
+<text x="112.47" y="20.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">O1</text>
 <polyline points="20.00,60.00 0.00,60.00 0.00,60.00"/>
 <polyline points="20.00,60.00 32.00,60.00 32.00,60.00"/>
 <circle cx="20.00" cy="60.00" r="0.60" fill="black"/>
