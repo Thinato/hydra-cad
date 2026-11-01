@@ -2880,4 +2880,29 @@ mod tests {
             [Some("DEMO-BLOCK-460".into()), Some("DEMO-PLUG-M8".into())]
         );
     }
+
+    #[test]
+    fn new_and_closing_ask_about_an_edit_being_typed() {
+        let typing = || {
+            let mut h = import_harness(Some(1), false);
+            open_section(&mut h, "Import notes (2)");
+            retype(&mut h, NOTES, 0, "Checked (demo).", None);
+            h
+        };
+        let mut h = typing();
+        h.get_by_label("New").click();
+        h.run_steps(2);
+        assert!(matches!(
+            h.state().0.dialog,
+            Some(Dialog::Discard(Pending::New))
+        ));
+        assert_eq!(notes_of(&h), ["Checked (demo)."], "nothing discarded yet");
+
+        let mut h = typing();
+        assert!(!h.state_mut().0.may_close());
+        assert!(matches!(
+            h.state().0.dialog,
+            Some(Dialog::Discard(Pending::Quit))
+        ));
+    }
 }
