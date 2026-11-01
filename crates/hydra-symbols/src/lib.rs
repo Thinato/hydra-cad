@@ -6,7 +6,7 @@
 
 use hydra_core::{
     Actuator, Catalogue, Circuit, Component, ComponentKind, DirectionalValve, FlowActuator, Issue,
-    PORT_PIN, Placement, Rotation, Side, SymbolDef, ValveStatus,
+    MAX_LISTED, Net, PORT_PIN, Placement, Rotation, Side, SymbolDef, ValveStatus,
 };
 
 mod svg;
@@ -852,9 +852,34 @@ fn parts_and_wires(circuit: &Circuit, catalogue: &Catalogue) -> (Vec<(String, Dr
         d.ports.iter().find(|(k, _)| *k == key).map(|(_, p)| *p)
     };
     let mut wires = Vec::new();
+    // Finding dots compares points with wires, so only for wires an import could save.
+    let dotted = circuit.layout.wires_are_bounded();
     for net in &circuit.nets {
         if let Some(drawn) = circuit.layout.wires.get(&net.id) {
             wires.extend(drawn.iter().map(|w| open(w.clone())));
+            if !dotted {
+                continue;
+            }
+            // Junction dots where three or more lines meet: at wire ends, and at ports, which
+            // a wire may pass over (a test point on a straight line).
+            let ports: Vec<Point> = (net.ports.iter())
+                .filter_map(|p| anchor(&p.component, &p.port))
+                .collect();
+            let mut dots: Vec<Point> = Vec::new();
+            for at in drawn
+                .iter()
+                .flat_map(|w| ends(w))
+                .chain(ports.iter().copied())
+            {
+                if !dots.iter().any(|d| near(*d, at)) && arms(at, drawn, &ports) >= 3 {
+                    dots.push(at);
+                }
+            }
+            wires.extend(dots.into_iter().map(|center| Primitive::Circle {
+                center,
+                radius: 0.6,
+                filled: true,
+            }));
             continue;
         }
         let points: Vec<Point> = net
@@ -996,6 +1021,243 @@ pub fn outline_issues(circuit: &Circuit, catalogue: &Catalogue) -> Vec<Issue> {
         })
         .map(|c| Issue::DrawnInsideBlock(c.id.clone()))
         .collect()
+}
+
+/// How far a wire's end may be from the port or wire it lands on, in millimetres.
+const WIRE_TOLERANCE: f32 = 0.5;
+
+fn near(a: Point, b: Point) -> bool {
+    (a[0] - b[0]).hypot(a[1] - b[1]) <= WIRE_TOLERANCE
+}
+
+/// Whether `p` lies on the polyline `w`.
+fn on_wire(p: Point, w: &[Point]) -> bool {
+    w.windows(2).any(|s| {
+        let (a, d) = (s[0], [s[1][0] - s[0][0], s[1][1] - s[0][1]]);
+        let len2 = d[0] * d[0] + d[1] * d[1];
+        let t = if len2 > 0.0 {
+            (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        near(p, [a[0] + t * d[0], a[1] + t * d[1]])
+    })
+}
+
+fn ends(w: &[Point]) -> impl Iterator<Item = Point> + '_ {
+    w.first().into_iter().chain(w.last()).copied()
+}
+
+/// Lines meeting at `p`: one per wire end or port there, two per wire passing through.
+fn arms(p: Point, wires: &[Vec<Point>], ports: &[Point]) -> usize {
+    let through = |w: &Vec<Point>| if ends(w).any(|e| near(e, p)) { 1 } else { 2 };
+    let wires: usize = wires.iter().filter(|w| on_wire(p, w)).map(through).sum();
+    wires + ports.iter().filter(|q| near(**q, p)).count()
+}
+
+/// Ports' names (`component.port`) and positions.
+type Ports = Vec<(String, Point)>;
+
+/// A hand-drawn net, its wires, and its ports.
+struct DrawnNet<'a> {
+    net: &'a Net,
+    wires: &'a [Vec<Point>],
+    ports: Ports,
+}
+
+/// The hand-drawn nets, and where every drawn port is. `None` when `import_problems` refuses
+/// the wires anyway, which also keeps the work here bounded. A net with a port that can't be
+/// drawn is left out, as validation reports that part.
+fn drawn_nets<'a>(
+    circuit: &'a Circuit,
+    catalogue: &Catalogue,
+) -> Option<(Vec<DrawnNet<'a>>, Ports)> {
+    if !circuit.layout.wires_are_bounded() {
+        return None;
+    }
+    let anchors = render_circuit(circuit, catalogue).ports;
+    let nets = (circuit.nets.iter())
+        .filter_map(|net| {
+            let wires = circuit.layout.wires.get(&net.id)?;
+            let ports: Ports = (net.ports.iter())
+                .filter_map(|p| {
+                    let key = p.to_string();
+                    let (_, at) = anchors.iter().find(|(k, _)| *k == key)?;
+                    Some((key, *at))
+                })
+                .collect();
+            (ports.len() == net.ports.len()).then_some(DrawnNet { net, wires, ports })
+        })
+        .collect();
+    Some((nets, anchors))
+}
+
+/// Hand-drawn wires that don't join their net's ports up, or touch another net, in plain words
+/// saying how to fix them.
+pub fn wire_problems(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
+    let Some((nets, anchors)) = drawn_nets(circuit, catalogue) else {
+        return Vec::new();
+    };
+    let mut problems = Vec::new();
+    for (a, d) in nets.iter().enumerate() {
+        let (net, wires, ports) = (&d.net.id, d.wires, &d.ports);
+        let at = |(k, [x, y]): &(String, Point)| format!("{k} at {x}, {y}");
+        for (i, w) in wires.iter().enumerate() {
+            for [x, y] in ends(w) {
+                let lands = ports.iter().any(|(_, p)| near(*p, [x, y]))
+                    || (wires.iter().enumerate()).any(|(j, o)| j != i && on_wire([x, y], o));
+                if !lands {
+                    problems.push(format!(
+                        "wire {} of net {net} ends at {x}, {y}, on no port or other wire of the \
+                         net; end it on one (the net's ports: {})",
+                        i + 1,
+                        ports.iter().map(at).collect::<Vec<_>>().join("; ")
+                    ));
+                }
+            }
+        }
+        // Wires joined where one ends on another or both reach a port; a net is one piece.
+        let n = wires.len();
+        let mut group: Vec<usize> = (0..n + ports.len()).collect();
+        fn root(g: &mut [usize], mut i: usize) -> usize {
+            while g[i] != i {
+                i = g[i];
+            }
+            i
+        }
+        fn join(g: &mut [usize], a: usize, b: usize) {
+            let (a, b) = (root(g, a), root(g, b));
+            g[a] = b;
+        }
+        let mut reached = vec![false; ports.len()];
+        for (i, w) in wires.iter().enumerate() {
+            for (j, o) in wires.iter().enumerate() {
+                if i != j && ends(w).any(|e| on_wire(e, o)) {
+                    join(&mut group, i, j);
+                }
+            }
+            for (k, (_, p)) in ports.iter().enumerate() {
+                if on_wire(*p, w) {
+                    reached[k] = true;
+                    join(&mut group, i, n + k);
+                }
+            }
+        }
+        for (k, port) in ports.iter().enumerate() {
+            if !reached[k] {
+                problems.push(format!(
+                    "port {} is on net {net}, but none of the net's wires reaches it; draw one \
+                     to it",
+                    at(port)
+                ));
+            }
+        }
+        let mut pieces: std::collections::BTreeMap<usize, Vec<String>> = Default::default();
+        for i in 0..n {
+            let r = root(&mut group, i);
+            pieces.entry(r).or_default().push((i + 1).to_string());
+        }
+        if pieces.len() > 1 {
+            let list: Vec<String> = (pieces.values())
+                .map(|p| format!("wires {}", p.join(", ")))
+                .collect();
+            problems.push(format!(
+                "the wires of net {net} are drawn in {} separate pieces ({}); join them by \
+                 ending a wire on another, as wires that only cross are not joined",
+                pieces.len(),
+                list.join("; ")
+            ));
+        }
+        // Other nets: crossing a wire at a point is fine, touching anything else is not.
+        for (i, w) in wires.iter().enumerate() {
+            let what = format!("wire {} of net {net}", i + 1);
+            for (key, p) in &anchors {
+                if ports.iter().any(|(k, _)| k == key) || !on_wire(*p, w) {
+                    continue;
+                }
+                let on = circuit
+                    .nets
+                    .iter()
+                    .find(|n| n.ports.iter().any(|q| q.to_string() == *key))
+                    .map_or("on no net".to_string(), |n| format!("on net {}", n.id));
+                problems.push(format!(
+                    "{what} passes over port {key}, which is {on}; route it around"
+                ));
+            }
+            // Each pair of nets once, from the first of the two.
+            for o in &nets[a + 1..] {
+                for (j, ow) in o.wires.iter().enumerate() {
+                    let touch = (w.iter().copied().find(|p| on_wire(*p, ow)))
+                        .or_else(|| ow.iter().copied().find(|p| on_wire(*p, w)));
+                    if let Some([x, y]) = touch {
+                        problems.push(format!(
+                            "{what} and wire {} of net {} touch at {x}, {y}; a wire may cross \
+                             another net's wire, but never end, turn or run along it, so move \
+                             whichever differs from the drawing",
+                            j + 1,
+                            o.net.id
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if problems.len() > MAX_LISTED {
+        let more = problems.len() - MAX_LISTED;
+        problems.truncate(MAX_LISTED);
+        problems.push(format!("and {more} more wire problems like these"));
+    }
+    problems
+}
+
+/// Hand-drawn wires that run through a part's symbol, other than into its own ports. Usually a
+/// misread route.
+pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
+    let Some((nets, _)) = drawn_nets(circuit, catalogue) else {
+        return Vec::new();
+    };
+    // Each part's symbol box: no designator, status words or status frame. Without its text,
+    // a part measures the same here as in `render_parts`, wherever its designator moved to.
+    let parts: Vec<(&Component, Point, Point)> = (circuit.components.iter())
+        .filter_map(|c| {
+            let place = circuit.layout.components.get(&c.id).copied();
+            let drawing = render_component(c, place.unwrap_or_default(), catalogue)?;
+            let symbol: Vec<Primitive> = (drawing.primitives.into_iter())
+                .filter(|p| !matches!(p, Primitive::Text { .. }))
+                .filter(|p| !matches!(p, Primitive::Polyline { dashed: true, .. }))
+                .collect();
+            let (lo, hi) = bounds(&symbol)?;
+            Some((c, lo, hi))
+        })
+        .collect();
+    let mut warnings = Vec::new();
+    for d in &nets {
+        for &(c, lo, hi) in &parts {
+            // A segment into one of the part's ports on this net enters its symbol rightly.
+            // (`ports` lines up with the net's ports, as nets with a port not drawn are skipped.)
+            let own: Vec<Point> = (d.net.ports.iter().zip(&d.ports))
+                .filter(|(p, _)| p.component == c.id)
+                .map(|(_, (_, at))| *at)
+                .collect();
+            // ponytail: a segment's box against the symbol's box, exact for the horizontal and
+            // vertical segments imports are held to.
+            let through = (d.wires.iter().flat_map(|w| w.windows(2)))
+                .filter(|s| !own.iter().any(|p| near(*p, s[0]) || near(*p, s[1])))
+                .any(|s| {
+                    (0..2).all(|k| {
+                        s[0][k].min(s[1][k]) < hi[k] - WIRE_TOLERANCE
+                            && s[0][k].max(s[1][k]) > lo[k] + WIRE_TOLERANCE
+                    })
+                });
+            if through {
+                warnings.push(format!(
+                    "a wire of net {} runs through {}; check its route against the drawing",
+                    d.net.id, c.id
+                ));
+            }
+        }
+    }
+    warnings
 }
 
 /// Longest outline drawn dash-dot; a longer one (a part placed far off by mistake) is drawn
