@@ -283,6 +283,12 @@ fn style(p: &Palette) -> egui::Style {
 #[cfg(test)]
 pub fn themed<S>(mut h: egui_kittest::Harness<'_, S>) -> egui_kittest::Harness<'_, S> {
     apply(&h.ctx, &LIGHT);
+    // Keep what kittest turns off for repeatable runs, which `apply`'s style turned back on.
+    h.ctx.all_styles_mut(|s| {
+        s.animation_time = 0.0;
+        s.scroll_animation = egui::style::ScrollAnimation::none();
+        s.visuals.text_cursor.blink = false;
+    });
     // The fonts are installed at the start of the next frame.
     h.step();
     h
@@ -415,8 +421,8 @@ mod tests {
                     // Status marks (▲ ■ ◆ ● ✕) are painted: the fonts lack some of them.
                     assert!(f.has_glyphs(&id, "Hydra 210 bar → ✓ ⇄"), "{family:?}");
                 }
-                // √ isn't in Plex Sans: it comes from the fallback behind it.
-                assert!(f.has_glyphs(&FontId::proportional(14.0), "√"));
+                // ■ isn't in Plex: it comes from a fallback behind it.
+                assert!(f.has_glyphs(&FontId::proportional(14.0), "■"));
             });
         });
         out.textures_delta.clear();

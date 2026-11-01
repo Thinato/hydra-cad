@@ -2,7 +2,7 @@
 
 How Hydra looks, and why. Every tab is built from what is here, so a new feature looks like the rest of the app without a design pass of its own.
 
-- **In code:** `crates/hydra/src/theme.rs` holds the colours, fonts, type scale and spacing, and `theme::apply` installs them at start-up. Tabs take colours from `theme::LIGHT` and text styles from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. They never write a literal `Color32` or font size.
+- **In code:** `crates/hydra/src/theme.rs` holds the colours, fonts, type scale and spacing, and `theme::apply` installs them at start-up. Tabs take colours from `theme::LIGHT` and text styles from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. New code never writes a literal `Color32` or font size; the older literals left are listed under "Not built yet".
 - **The boards:** the design canvas at <https://claude.ai/artifact/2kf45qw3E7AqKkBPAcYSzZ> (private to its owner) shows the foundations, the components, and the Schematic and Proposals tabs redrawn in the system. Its source is kept in [`docs/design/`](design/), so the boards can be rebuilt if the canvas is ever lost. Each `.dc.html` file is one board, and `canvas.json` lays them out. The files open in the claude.ai Design canvas, not in a plain browser.
 
 ## Who it is for
@@ -145,5 +145,5 @@ The boards show the target. `theme.rs` is in place, but these parts are still to
 1. Add a `Palette` constant beside `LIGHT` in `theme.rs`, with every token chosen for the new ground.
 2. Add it to `PALETTES` in the theme tests, so its contrast is checked.
 3. Pass it to `theme::apply`. `apply` always selects egui's light theme today (`set_theme(Theme::Light)` and the style set on `Theme::Light`). A dark palette also needs `apply` to select `Theme::Dark` and set its style there, or egui will report `dark_mode` as false and pick light defaults.
-4. Tabs read `theme::LIGHT` directly today. With a second theme, `theme` gains a function returning the palette in use (kept in egui's memory by `apply`), and each `theme::LIGHT` becomes a call to it: a mechanical replace, because no tab writes a literal colour.
+4. Tabs read `theme::LIGHT` directly today. With a second theme, `theme` gains a function returning the palette in use (kept in egui's memory by `apply`), and each `theme::LIGHT` becomes a call to it: a mechanical replace, once the older literals listed above have moved to the palette.
 5. Add its column to the colour tables above.
