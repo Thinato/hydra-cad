@@ -2,7 +2,7 @@
 source: crates/hydra-symbols/tests/fixtures.rs
 expression: svg
 ---
-<svg xmlns="http://www.w3.org/2000/svg" width="296.20mm" height="128.95mm" viewBox="-27.85 -5.75 296.20 128.95">
+<svg xmlns="http://www.w3.org/2000/svg" width="283.45mm" height="128.95mm" viewBox="-15.10 -5.75 283.45 128.95">
 <g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
 <circle cx="0.00" cy="120.00" r="1.20"/>
 <text x="0.00" y="117.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">P</text>
@@ -22,15 +22,15 @@ expression: svg
 <polyline points="0.00,27.70 1.20,27.36 -1.20,26.69 1.20,26.01 -1.20,25.34 0.00,25.00"/>
 <polyline points="0.00,25.00 0.00,22.00"/>
 <polyline points="0.00,35.00 0.00,38.00"/>
-<text x="1.00" y="23.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
-<text x="1.00" y="37.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="1.00" y="23.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="1.00" y="36.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <polyline points="-5.00,31.50 -1.80,31.50" stroke-dasharray="1,0.8"/>
 <polygon points="-1.80,31.50 -3.40,32.10 -3.40,30.90" fill="black"/>
 <polyline points="-5.00,31.50 -8.00,31.50"/>
 <text x="-5.50" y="30.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">X</text>
 <text x="5.30" y="30.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">1.1</text>
-<polygon points="-9.50,20.25 4.30,20.25 4.30,39.75 -9.50,39.75" stroke-dasharray="1,0.8"/>
-<text x="-2.60" y="42.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">PART NOT LISTED DEMO-PC10-A-350</text>
+<polygon points="-9.50,20.50 4.30,20.50 4.30,39.50 -9.50,39.50" stroke-dasharray="1,0.8"/>
+<text x="0.80" y="42.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">PART NOT LISTED DEMO-PC10-A-350</text>
 <polygon points="55.00,25.00 65.00,25.00 65.00,35.00 55.00,35.00"/>
 <polyline points="58.00,26.00 58.00,34.00"/>
 <polygon points="58.00,34.00 57.40,32.40 58.60,32.40" fill="black"/>
@@ -47,8 +47,8 @@ expression: svg
 <text x="52.50" y="31.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">X</text>
 <polyline points="60.00,25.00 60.00,22.00"/>
 <polyline points="60.00,35.00 60.00,38.00"/>
-<text x="61.00" y="23.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">C</text>
-<text x="61.00" y="37.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">V</text>
+<text x="61.00" y="23.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">C</text>
+<text x="61.00" y="36.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">V</text>
 <text x="71.00" y="30.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">2.1</text>
 <circle cx="125.00" cy="29.50" r="1.80"/>
 <polyline points="122.20,29.00 125.00,33.00 127.80,29.00"/>
@@ -56,11 +56,11 @@ expression: svg
 <polyline points="125.00,27.70 126.20,27.36 123.80,26.69 126.20,26.01 123.80,25.34 125.00,25.00"/>
 <polyline points="125.00,25.00 125.00,22.00"/>
 <polyline points="125.00,35.00 125.00,38.00"/>
-<text x="126.00" y="23.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
-<text x="126.00" y="37.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="126.00" y="23.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="126.00" y="36.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <text x="119.70" y="30.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">3.1</text>
-<polygon points="120.70,20.25 129.30,20.25 129.30,39.75 120.70,39.75" stroke-dasharray="1,0.8"/>
-<text x="125.00" y="42.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">STAND-IN for DEMO-CK10-05</text>
+<polygon points="120.70,20.50 129.30,20.50 129.30,39.50 120.70,39.50" stroke-dasharray="1,0.8"/>
+<text x="124.20" y="18.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">STAND-IN for DEMO-CK10-05</text>
 <polygon points="160.00,25.00 170.00,25.00 170.00,35.00 160.00,35.00"/>
 <polyline points="165.00,35.00 165.00,25.00"/>
 <polygon points="165.00,25.00 165.60,26.60 164.40,26.60" fill="black"/>
@@ -70,15 +70,15 @@ expression: svg
 <polyline points="175.00,35.00 175.00,32.50"/>
 <polyline points="173.50,32.50 176.50,32.50"/>
 <polyline points="175.00,25.00 175.00,22.00"/>
-<text x="175.60" y="23.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="175.60" y="23.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <polyline points="175.00,35.00 175.00,38.00"/>
-<text x="175.60" y="37.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="175.60" y="36.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 <polygon points="155.00,27.00 160.00,27.00 160.00,33.00 155.00,33.00"/>
 <polyline points="156.25,33.00 158.75,27.00"/>
 <polyline points="180.00,30.00 180.42,32.10 181.25,27.90 182.08,32.10 182.92,27.90 183.75,32.10 184.58,27.90 185.00,30.00"/>
 <text x="152.50" y="30.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">4.1</text>
-<polygon points="153.50,20.25 186.50,20.25 186.50,39.75 153.50,39.75" stroke-dasharray="1,0.8"/>
-<text x="170.00" y="42.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">MISSING DEMO-PS10-2N-24DC</text>
+<polygon points="153.50,20.50 186.50,20.50 186.50,39.50 153.50,39.50" stroke-dasharray="1,0.8"/>
+<text x="170.00" y="42.00" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">MISSING DEMO-PS10-2N-24DC</text>
 <polygon points="60.00,65.00 70.00,65.00 70.00,75.00 60.00,75.00"/>
 <polyline points="63.33,75.00 63.33,65.00"/>
 <polygon points="63.33,65.00 63.93,66.60 62.73,66.60" fill="black"/>
@@ -96,13 +96,13 @@ expression: svg
 <polyline points="83.33,65.00 86.67,75.00"/>
 <polygon points="86.67,75.00 85.59,73.67 86.73,73.29" fill="black"/>
 <polyline points="73.33,65.00 73.33,62.00"/>
-<text x="73.93" y="63.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="73.93" y="63.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <polyline points="76.67,65.00 76.67,62.00"/>
-<text x="77.27" y="63.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="77.27" y="63.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <polyline points="73.33,75.00 73.33,78.00"/>
-<text x="73.93" y="77.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="73.93" y="76.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 <polyline points="76.67,75.00 76.67,78.00"/>
-<text x="77.27" y="77.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="77.27" y="76.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
 <polyline points="60.00,70.00 55.00,66.00"/>
 <circle cx="55.00" cy="66.00" r="0.60" fill="black"/>
 <polygon points="50.00,68.80 55.00,68.80 55.00,71.20 50.00,71.20"/>
@@ -111,8 +111,8 @@ expression: svg
 <polygon points="90.00,70.00 91.60,69.40 91.60,70.60" fill="black"/>
 <polyline points="95.00,70.00 95.42,72.10 96.25,67.90 97.08,72.10 97.92,67.90 98.75,72.10 99.58,67.90 100.00,70.00"/>
 <text x="47.50" y="70.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">5.1</text>
-<polygon points="48.50,60.25 101.50,60.25 101.50,79.75 48.50,79.75" stroke-dasharray="1,0.8"/>
-<text x="75.00" y="82.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">PART NOT LISTED DEMO-06-4-3-T-24DC</text>
+<polygon points="48.50,60.50 101.50,60.50 101.50,79.50 48.50,79.50" stroke-dasharray="1,0.8"/>
+<text x="72.53" y="82.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">PART NOT LISTED DEMO-06-4-3-T-24DC</text>
 <polygon points="120.00,65.00 130.00,65.00 130.00,75.00 120.00,75.00"/>
 <polyline points="123.33,75.00 123.33,65.00"/>
 <polygon points="123.33,65.00 123.93,66.60 122.73,66.60" fill="black"/>
@@ -133,13 +133,13 @@ expression: svg
 <polyline points="143.33,65.00 146.67,75.00"/>
 <polygon points="146.67,75.00 145.59,73.67 146.73,73.29" fill="black"/>
 <polyline points="133.33,65.00 133.33,62.00"/>
-<text x="133.93" y="63.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="133.93" y="63.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <polyline points="136.67,65.00 136.67,62.00"/>
-<text x="137.27" y="63.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="137.27" y="63.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <polyline points="133.33,75.00 133.33,78.00"/>
-<text x="133.93" y="77.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="133.93" y="76.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 <polyline points="136.67,75.00 136.67,78.00"/>
-<text x="137.27" y="77.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="137.27" y="76.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
 <polygon points="115.00,67.00 120.00,67.00 120.00,73.00 115.00,73.00"/>
 <polyline points="116.25,73.00 118.75,67.00"/>
 <polyline points="115.00,70.00 114.58,67.90 113.75,72.10 112.92,67.90 112.08,72.10 111.25,67.90 110.42,72.10 110.00,70.00"/>
@@ -147,8 +147,8 @@ expression: svg
 <polyline points="151.25,73.00 153.75,67.00"/>
 <polyline points="155.00,70.00 155.42,72.10 156.25,67.90 157.08,72.10 157.92,67.90 158.75,72.10 159.58,67.90 160.00,70.00"/>
 <text x="107.50" y="70.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">5.2</text>
-<polygon points="108.50,60.25 161.50,60.25 161.50,79.75 108.50,79.75" stroke-dasharray="1,0.8"/>
-<text x="135.00" y="82.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">MISSING DEMO-10-4-3-E-24DC</text>
+<polygon points="108.50,60.50 161.50,60.50 161.50,79.50 108.50,79.50" stroke-dasharray="1,0.8"/>
+<text x="124.20" y="58.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">MISSING DEMO-10-4-3-E-24DC</text>
 <polygon points="0.00,65.00 10.00,65.00 10.00,75.00 0.00,75.00"/>
 <polyline points="3.33,75.00 3.33,65.00"/>
 <polygon points="3.33,65.00 3.93,66.60 2.73,66.60" fill="black"/>
@@ -160,13 +160,13 @@ expression: svg
 <polyline points="13.33,65.00 16.67,75.00"/>
 <polygon points="16.67,75.00 15.59,73.67 16.73,73.29" fill="black"/>
 <polyline points="13.33,65.00 13.33,62.00"/>
-<text x="13.93" y="63.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="13.93" y="63.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <polyline points="16.67,65.00 16.67,62.00"/>
-<text x="17.27" y="63.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="17.27" y="63.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <polyline points="13.33,75.00 13.33,78.00"/>
-<text x="13.93" y="77.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="13.93" y="76.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 <polyline points="16.67,75.00 16.67,78.00"/>
-<text x="17.27" y="77.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="17.27" y="76.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
 <polygon points="-5.00,67.00 0.00,67.00 0.00,73.00 -5.00,73.00"/>
 <polyline points="-3.75,73.00 -1.25,67.00"/>
 <polyline points="20.00,70.00 20.42,72.10 21.25,67.90 22.08,72.10 22.92,67.90 23.75,72.10 24.58,67.90 25.00,70.00"/>
@@ -183,84 +183,84 @@ expression: svg
 <polygon points="225.00,90.00 223.40,90.60 223.40,89.40" fill="black"/>
 <polyline points="230.00,85.00 230.00,82.00"/>
 <polyline points="230.00,95.00 230.00,98.00"/>
-<text x="231.00" y="83.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
-<text x="231.00" y="97.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="231.00" y="83.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="231.00" y="96.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 <text x="222.00" y="90.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">7.1</text>
 <polygon points="219.00,35.00 231.00,35.00 231.00,45.00 219.00,45.00"/>
 <text x="225.00" y="40.00" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">PB10</text>
 <polyline points="222.00,35.00 222.00,32.00"/>
-<text x="223.00" y="33.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">1</text>
+<text x="223.00" y="33.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">1</text>
 <polyline points="228.00,35.00 228.00,32.00"/>
-<text x="229.00" y="33.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">2</text>
+<text x="229.00" y="33.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">2</text>
 <polyline points="225.00,45.00 225.00,48.00"/>
-<text x="226.00" y="47.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">3</text>
+<text x="226.00" y="46.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">3</text>
 <text x="216.50" y="40.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">9.1</text>
-<polygon points="217.50,30.25 232.50,30.25 232.50,49.75 217.50,49.75" stroke-dasharray="1,0.8"/>
-<text x="225.00" y="52.25" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">MISSING DEMO-PB10</text>
+<polygon points="217.50,30.50 232.50,30.50 232.50,49.50 217.50,49.50" stroke-dasharray="1,0.8"/>
+<text x="225.80" y="52.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">MISSING DEMO-PB10</text>
 <polyline points="90.00,26.00 90.00,34.00"/>
 <polyline points="88.47,28.01 88.86,28.42 89.16,28.90 89.34,29.44 89.40,30.00 89.34,30.56 89.16,31.10 88.86,31.58 88.47,31.99"/>
 <polyline points="91.53,31.99 91.14,31.58 90.84,31.10 90.66,30.56 90.60,30.00 90.66,29.44 90.84,28.90 91.14,28.42 91.53,28.01"/>
 <polyline points="90.00,26.00 90.00,23.00"/>
 <polyline points="90.00,34.00 90.00,37.00"/>
-<text x="91.00" y="24.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
-<text x="91.00" y="36.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="91.00" y="24.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="91.00" y="35.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <text x="87.47" y="30.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">X1</text>
-<text x="90.49" y="39.75" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">X 0.5 mm</text>
+<text x="90.80" y="39.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">X 0.5 mm</text>
 <polyline points="195.00,91.00 195.00,99.00"/>
 <polyline points="193.47,93.01 193.86,93.42 194.16,93.90 194.34,94.44 194.40,95.00 194.34,95.56 194.16,96.10 193.86,96.58 193.47,96.99"/>
 <polyline points="196.53,96.99 196.14,96.58 195.84,96.10 195.66,95.56 195.60,95.00 195.66,94.44 195.84,93.90 196.14,93.42 196.53,93.01"/>
 <polyline points="195.00,91.00 195.00,88.00"/>
 <polyline points="195.00,99.00 195.00,102.00"/>
-<text x="196.00" y="89.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
-<text x="196.00" y="101.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="196.00" y="89.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="196.00" y="100.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <text x="192.47" y="95.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">X2</text>
-<text x="195.49" y="104.75" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">X 1.0 mm</text>
+<text x="195.49" y="104.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">X 1.0 mm</text>
 <circle cx="260.00" cy="110.00" r="1.80"/>
 <polyline points="258.74,108.74 261.26,111.26"/>
 <polyline points="258.74,111.26 261.26,108.74"/>
 <polyline points="260.00,111.80 260.00,114.80"/>
-<text x="261.00" y="113.80" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">M</text>
-<text x="257.20" y="111.62" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">M1</text>
-<text x="260.35" y="117.55" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">M SAE-04</text>
+<text x="261.00" y="113.30" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">M</text>
+<text x="257.20" y="111.50" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">M1</text>
+<text x="260.35" y="105.70" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">M SAE-04</text>
 <polyline points="0.00,120.00 13.33,120.00 13.33,78.00"/>
-<polyline points="13.33,84.50 73.33,84.50 73.33,78.00"/>
-<polyline points="73.33,84.50 133.33,84.50 133.33,78.00"/>
-<polyline points="133.33,84.50 198.53,84.50 198.53,100.00 230.00,100.00 230.00,98.00"/>
-<polyline points="175.00,84.50 175.00,38.00"/>
-<polyline points="230.00,100.00 230.00,119.80 260.00,119.80 260.00,114.80"/>
-<polyline points="175.00,44.50 189.75,44.50 189.75,28.75 222.00,28.75 222.00,32.00"/>
-<circle cx="13.33" cy="84.50" r="0.60" fill="black"/>
-<circle cx="73.33" cy="84.50" r="0.60" fill="black"/>
-<circle cx="133.33" cy="84.50" r="0.60" fill="black"/>
-<circle cx="175.00" cy="84.50" r="0.60" fill="black"/>
+<polyline points="13.33,84.25 73.33,84.25 73.33,78.00"/>
+<polyline points="73.33,84.25 133.33,84.25 133.33,78.00"/>
+<polyline points="133.33,84.25 198.53,84.25 198.53,100.00 230.00,100.00 230.00,98.00"/>
+<polyline points="175.00,84.25 175.00,38.00"/>
+<polyline points="230.00,100.00 230.00,119.55 260.00,119.55 260.00,114.80"/>
+<polyline points="175.00,44.25 189.75,44.25 189.75,28.75 222.00,28.75 222.00,32.00"/>
+<circle cx="13.33" cy="84.25" r="0.60" fill="black"/>
+<circle cx="73.33" cy="84.25" r="0.60" fill="black"/>
+<circle cx="133.33" cy="84.25" r="0.60" fill="black"/>
+<circle cx="175.00" cy="84.25" r="0.60" fill="black"/>
 <circle cx="230.00" cy="100.00" r="0.60" fill="black"/>
-<circle cx="175.00" cy="44.50" r="0.60" fill="black"/>
+<circle cx="175.00" cy="44.25" r="0.60" fill="black"/>
 <polyline points="20.00,120.00 16.67,120.00 16.67,78.00"/>
-<polyline points="16.67,86.00 76.67,86.00 76.67,78.00"/>
-<polyline points="76.67,86.00 136.67,86.00 136.67,78.00"/>
-<polyline points="136.67,86.00 195.00,86.00 195.00,88.00"/>
-<polyline points="195.00,86.00 195.00,80.00 230.00,80.00 230.00,82.00"/>
+<polyline points="16.67,85.75 76.67,85.75 76.67,78.00"/>
+<polyline points="76.67,85.75 136.67,85.75 136.67,78.00"/>
+<polyline points="136.67,85.75 195.00,85.75 195.00,88.00"/>
+<polyline points="195.00,85.75 195.00,80.00 230.00,80.00 230.00,82.00"/>
 <polyline points="225.00,80.00 225.00,48.00"/>
-<circle cx="16.67" cy="86.00" r="0.60" fill="black"/>
-<circle cx="76.67" cy="86.00" r="0.60" fill="black"/>
-<circle cx="136.67" cy="86.00" r="0.60" fill="black"/>
-<circle cx="195.00" cy="86.00" r="0.60" fill="black"/>
+<circle cx="16.67" cy="85.75" r="0.60" fill="black"/>
+<circle cx="76.67" cy="85.75" r="0.60" fill="black"/>
+<circle cx="136.67" cy="85.75" r="0.60" fill="black"/>
+<circle cx="195.00" cy="85.75" r="0.60" fill="black"/>
 <circle cx="225.00" cy="80.00" r="0.60" fill="black"/>
-<polyline points="13.33,62.00 0.00,62.00 0.00,38.00"/>
-<polyline points="0.00,22.00 0.00,0.00"/>
-<polyline points="16.67,62.00 16.67,60.25 -12.50,60.25 -12.50,31.50 -8.00,31.50"/>
+<polyline points="13.33,62.00 0.00,62.00 -0.00,61.50 0.38,61.42 0.71,61.21 0.92,60.88 1.00,60.50 0.92,60.12 0.71,59.79 0.38,59.58 -0.00,59.50 0.00,38.00"/>
+<polyline points="0.00,22.00 -0.00,16.00 0.38,15.92 0.71,15.71 0.92,15.38 1.00,15.00 0.92,14.62 0.71,14.29 0.38,14.08 -0.00,14.00 0.00,0.00"/>
+<polyline points="16.67,62.00 16.67,60.50 -12.50,60.50 -12.50,31.50 -8.00,31.50"/>
 <polyline points="-12.50,31.50 -12.50,15.00 20.00,15.00 20.00,0.00"/>
 <circle cx="-12.50" cy="31.50" r="0.60" fill="black"/>
 <polyline points="73.33,62.00 60.00,62.00 60.00,38.00"/>
 <polyline points="60.00,22.00 60.00,0.00"/>
-<polyline points="76.67,62.00 76.67,54.50 90.00,54.50 90.00,37.00"/>
-<polyline points="80.00,54.50 80.00,0.00"/>
-<circle cx="80.00" cy="54.50" r="0.60" fill="black"/>
-<polyline points="90.00,23.00 90.00,20.25 48.00,20.25 48.00,32.50 50.00,32.50"/>
+<polyline points="76.67,62.00 76.67,54.25 90.00,54.25 90.00,37.00"/>
+<polyline points="80.00,54.25 80.00,21.50 80.38,21.42 80.71,21.21 80.92,20.88 81.00,20.50 80.92,20.12 80.71,19.79 80.38,19.58 80.00,19.50 80.00,0.00"/>
+<circle cx="80.00" cy="54.25" r="0.60" fill="black"/>
+<polyline points="90.00,23.00 90.00,20.50 48.00,20.50 48.00,32.50 50.00,32.50"/>
 <polyline points="133.33,62.00 125.00,62.00 125.00,38.00"/>
 <polyline points="136.67,62.00 136.67,15.00 175.00,15.00 175.00,22.00"/>
 <polyline points="125.00,22.00 125.00,10.00 228.00,10.00 228.00,32.00"/>
-<polyline points="202.49,10.00 202.49,107.00 195.00,107.00 195.00,102.00"/>
+<polyline points="202.49,10.00 202.49,27.75 202.87,27.83 203.19,28.04 203.41,28.37 203.49,28.75 203.41,29.13 203.19,29.46 202.87,29.67 202.49,29.75 202.49,79.00 202.87,79.08 203.19,79.29 203.41,79.62 203.49,80.00 203.41,80.38 203.19,80.71 202.87,80.92 202.49,81.00 202.49,99.00 202.87,99.08 203.19,99.29 203.41,99.62 203.49,100.00 203.41,100.38 203.19,100.71 202.87,100.92 202.49,101.00 202.49,106.75 195.00,106.75 195.00,102.00"/>
 <circle cx="202.49" cy="10.00" r="0.60" fill="black"/>
 </g>
 </svg>

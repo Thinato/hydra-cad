@@ -12,8 +12,8 @@ use hydra_core::{
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
 use hydra_symbols::{
-    Drawing, bounds, drawn_inside_outline, outline_issues, render_circuit, render_parts,
-    wire_problems, wire_warnings,
+    Drawing, bounds, drawn_inside_outline, notched_parts, outline_issues, render_circuit,
+    render_parts, wire_problems, wire_warnings,
 };
 
 use crate::catalogue::Shared;
@@ -161,8 +161,9 @@ pub struct SchematicEditor {
     route: Option<Route>,
     /// The selected drawn wire: its net and index.
     wire: Option<(String, usize)>,
-    /// Wire problems and warnings for (edit counter, catalogue loads), like `valve_status`.
-    wire_issues: Option<((u64, u64), Vec<String>)>,
+    /// Wire problems and warnings, and the parts the outline is cut round, for (edit counter,
+    /// catalogue loads), like `valve_status`.
+    drawn_issues: Option<((u64, u64), Vec<String>)>,
 }
 
 impl SchematicEditor {
@@ -194,18 +195,27 @@ impl SchematicEditor {
             wiring: false,
             route: None,
             wire: None,
-            wire_issues: None,
+            drawn_issues: None,
         }
     }
 
-    /// What is wrong with the drawn wires, in plain words, computed once per change.
-    fn wire_issues(&mut self, shared: &Shared) -> Vec<String> {
+    /// What is wrong with the drawn wires, and which parts the block's outline is cut round, in
+    /// plain words, computed once per change.
+    fn drawn_issues(&mut self, shared: &Shared) -> Vec<String> {
         let key = (self.doc.generation(), shared.catalogue_loads);
-        if self.wire_issues.as_ref().is_none_or(|(k, _)| *k != key) {
+        if self.drawn_issues.as_ref().is_none_or(|(k, _)| *k != key) {
             let (c, cat) = (&self.doc.circuit, &shared.catalogue);
-            self.wire_issues = Some((key, [wire_problems(c, cat), wire_warnings(c, cat)].concat()));
+            // A cut is right for an L- or U-shaped block, but also hides a part left out by mistake.
+            let notched = notched_parts(c, cat).into_iter().map(|id| {
+                format!(
+                    "{id} is outside the block and the outline is cut round it; tick In block if \
+                     it belongs in the block"
+                )
+            });
+            let issues = [wire_problems(c, cat), wire_warnings(c, cat)].concat();
+            self.drawn_issues = Some((key, issues.into_iter().chain(notched).collect()));
         }
-        self.wire_issues
+        self.drawn_issues
             .as_ref()
             .map(|(_, w)| w.clone())
             .unwrap_or_default()
@@ -275,7 +285,7 @@ impl SchematicEditor {
             current.import = None;
             self.doc = Document::new(current);
             self.valve_status = None;
-            self.wire_issues = None;
+            self.drawn_issues = None;
             self.name = sent.name.clone();
         }
         self.doc.mark_saved_as(sent);
@@ -613,12 +623,12 @@ impl SchematicEditor {
         // While a circuit is being opened or restored, its reply will replace the document.
         let locked = self.awaiting.is_some();
         let status = self.circuit_status(shared);
-        let wire_issues = self.wire_issues(shared);
+        let drawn_issues = self.drawn_issues(shared);
         ui.add_enabled_ui(!locked, |ui| {
             self.toolbar(ui, shared);
             self.import_banner(ui, shared);
             self.selection_bar(ui, &shared.catalogue, &status);
-            self.validation(ui, &shared.catalogue, &status, &wire_issues);
+            self.validation(ui, &shared.catalogue, &status, &drawn_issues);
             self.extra_lines(ui);
             self.notes(ui);
             ui.weak(if self.wiring {
@@ -2467,7 +2477,7 @@ mod tests {
             let dashed = render_circuit(&e.doc.circuit, &s.catalogue)
                 .primitives
                 .iter()
-                .any(|p| matches!(p, hydra_symbols::Primitive::Polyline { dashed: true, points, .. } if points.len() == 4));
+                .any(|p| matches!(p, hydra_symbols::Primitive::Polyline { dashed: true, points, .. } if points.first() == Some(&[0.0, 0.0]) && points.last() == Some(&[30.0, 0.0])));
             (kind, dashed)
         };
         click_sheet(&mut h, [12.0, -9.8], egui::PointerButton::Primary);
@@ -2921,10 +2931,10 @@ mod tests {
         assert!(h.state().0.dialog.is_none());
         assert!(h.state().0.in_flight.is_some(), "the copy is being saved");
         // The reply for a copy names a new circuit at revision 1.
-        assert!(h.state().0.wire_issues.is_some());
+        assert!(h.state().0.drawn_issues.is_some());
         h.state_mut().0.circuit_saved("c2".into(), 1);
         // The copy is a new document: nothing cached about the original carries over.
-        assert!(h.state().0.wire_issues.is_none() && h.state().0.valve_status.is_none());
+        assert!(h.state().0.drawn_issues.is_none() && h.state().0.valve_status.is_none());
         assert_eq!(
             h.state()
                 .0
@@ -3352,6 +3362,36 @@ mod tests {
         h.state_mut().0.undo();
         h.run_steps(2);
         assert!(flagged(&h));
+    }
+
+    #[test]
+    fn parts_the_outline_is_cut_round_are_warned_about() {
+        let mut h = import_harness(None, false);
+        let toggle = |h: &mut Harness<State>, id: &str| {
+            h.state_mut().0.selected = Some(id.into());
+            h.run_steps(2);
+            h.get_by_label("In block").click();
+            h.run_steps(2);
+        };
+        let warned = |h: &Harness<State>| {
+            h.query_by_label(
+                "X2 is outside the block and the outline is cut round it; tick In block if it \
+                 belongs in the block",
+            )
+            .is_some()
+        };
+        h.get_by_label_contains("Validation").click();
+        h.run_steps(2);
+        // X2 stands in the bottom-right corner of the block P, 1.1 and 4.1 span.
+        for id in ["P", "1.1", "4.1"] {
+            toggle(&mut h, id);
+        }
+        assert!(warned(&h));
+        toggle(&mut h, "X2");
+        assert!(!warned(&h));
+        h.state_mut().0.undo();
+        h.run_steps(2);
+        assert!(warned(&h));
     }
 
     #[test]
