@@ -2,10 +2,10 @@
 source: crates/hydra-symbols/tests/fixtures.rs
 expression: svg
 ---
-<svg xmlns="http://www.w3.org/2000/svg" width="285.20mm" height="116.35mm" viewBox="-3.20 -0.60 285.20 116.35">
+<svg xmlns="http://www.w3.org/2000/svg" width="287.50mm" height="116.35mm" viewBox="-5.50 -0.60 287.50 116.35">
 <g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
-<circle cx="0.00" cy="110.00" r="1.20"/>
-<text x="0.00" y="112.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">P</text>
+<circle cx="0.00" cy="106.00" r="1.20"/>
+<text x="-2.00" y="106.00" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">P</text>
 <circle cx="20.00" cy="110.00" r="1.20"/>
 <text x="20.00" y="112.50" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">T</text>
 <text x="277.00" y="106.00" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P2</text>
@@ -141,7 +141,7 @@ expression: svg
 <text x="256.00" y="103.30" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">M</text>
 <text x="252.20" y="101.50" font-size="2.5" font-family="sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">M1</text>
 <text x="255.35" y="95.70" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">MP SAE-04</text>
-<polyline points="0.00,110.00 0.00,106.00 255.00,106.00 255.00,104.80"/>
+<polyline points="0.00,106.00 255.00,106.00 255.00,104.80"/>
 <polyline points="40.00,106.00 40.00,68.00"/>
 <polyline points="90.00,106.00 90.00,68.00"/>
 <polyline points="140.00,106.00 140.00,68.00"/>
@@ -369,10 +369,10 @@ expression: svg
 <polyline points="10.00,110.00 9.70,110.00"/>
 <polyline points="8.70,110.00 4.70,110.00"/>
 <polyline points="3.70,110.00 3.40,110.00"/>
-<polyline points="2.40,110.00 1.20,110.00"/>
-<polyline points="0.00,108.80 0.00,108.40"/>
-<polyline points="0.00,107.40 0.00,107.10"/>
-<polyline points="0.00,106.10 0.00,102.10"/>
+<polyline points="2.40,110.00 0.00,110.00"/>
+<polyline points="0.00,110.00 0.00,108.40"/>
+<polyline points="0.00,107.40 0.00,107.20"/>
+<polyline points="0.00,104.80 0.00,102.10"/>
 <polyline points="0.00,101.10 0.00,100.80"/>
 <polyline points="0.00,99.80 0.00,95.80"/>
 <polyline points="0.00,94.80 0.00,94.50"/>

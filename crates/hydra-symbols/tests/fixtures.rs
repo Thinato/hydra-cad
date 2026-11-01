@@ -1288,10 +1288,10 @@ fn junction_dots_mark_where_three_lines_meet() {
     let mut c = motors();
     // A wire ending partway along another (a T) gets a dot; a bend inside one wire doesn't.
     assert!(dot_at(&c, [90.0, 106.0]));
-    assert!(!dot_at(&c, [0.0, 106.0]));
+    assert!(!dot_at(&c, [20.0, 2.0]));
     // n-p's trunk split at (40, 106), where FC1.In's branch meets it: three ends, one dot.
     let n_p = c.layout.wires.get_mut("n-p").unwrap();
-    n_p[0] = vec![[0.0, 110.0], [0.0, 106.0], [40.0, 106.0]].into();
+    n_p[0] = vec![[0.0, 106.0], [40.0, 106.0]].into();
     n_p.push(vec![[40.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into());
     assert!(dot_at(&c, [40.0, 106.0]));
     let dots = |c: &Circuit| {
@@ -1319,17 +1319,11 @@ fn junction_dots_mark_where_three_lines_meet() {
     let mut c = motors();
     let m = [255.0, 104.8];
     assert!(!dot_at(&c, m), "one wire ending at M1.M");
-    c.layout.wires.get_mut("n-p").unwrap()[0] = vec![
-        [0.0, 110.0],
-        [0.0, 106.0],
-        [255.0, 106.0],
-        [255.0, 100.0],
-        [265.0, 100.0],
-    ]
-    .into();
+    c.layout.wires.get_mut("n-p").unwrap()[0] =
+        vec![[0.0, 106.0], [255.0, 106.0], [255.0, 100.0], [265.0, 100.0]].into();
     assert!(dot_at(&c, m), "a wire passing over M1.M");
     let n_p = c.layout.wires.get_mut("n-p").unwrap();
-    n_p[0] = vec![[0.0, 110.0], [0.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into();
+    n_p[0] = vec![[0.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into();
     n_p.push(vec![[255.0, 104.8], [255.0, 100.0], [265.0, 100.0]].into());
     assert!(dot_at(&c, m), "two wire ends meeting at M1.M");
 }
@@ -1488,13 +1482,168 @@ fn a_wire_through_a_part_is_a_warning() {
         .unwrap()
         .push(vec![[30.0, 60.0], [100.0, 60.0]].into());
     // Through FC2 and through FC1, though the net has a port of FC1: not into that port.
+    let w = wire_warnings(&c, &catalogue);
+    for part in ["FC1", "FC2"] {
+        let through =
+            format!("a wire of net n-1 runs through {part}; check its route against the drawing");
+        assert!(w.contains(&through), "{w:?}");
+    }
+    // Into one of the part's own ports, but across the symbol to get there: FC1.Bypass from
+    // its left, not out along its line to the right.
+    let mut c = motors();
+    c.layout
+        .wires
+        .get_mut("n-t")
+        .unwrap()
+        .push(vec![[20.0, 63.0], [48.0, 63.0]].into());
     assert_eq!(
         wire_warnings(&c, &catalogue),
         [
-            "a wire of net n-1 runs through FC1; check its route against the drawing",
-            "a wire of net n-1 runs through FC2; check its route against the drawing",
+            "a wire of net n-t runs through FC1 to its port FC1.Bypass; bring it in along the \
+             port's line, from outside the symbol"
         ]
     );
+}
+
+#[test]
+fn a_wire_along_an_untraced_nets_elbow_is_a_warning() {
+    let catalogue = catalogue();
+    let mut c = motors();
+    // n-1 untraced: its automatic line runs from FC1.Out straight up to HM1.A at x = 40.
+    c.layout.wires.remove("n-1");
+    c.layout
+        .wires
+        .get_mut("n-t")
+        .unwrap()
+        .push(vec![[20.0, 40.0], [40.0, 40.0], [40.0, 30.0], [62.0, 30.0]].into());
+    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
+    assert_eq!(
+        wire_warnings(&c, &catalogue),
+        [
+            "wire 9 of net n-t and the automatic line of net n-1, which has no wires, touch at \
+             40, 40; trace net n-1 as the drawing routes it, or move the wire"
+        ]
+    );
+    // Crossing it is fine, as between traced nets.
+    let n_t = c.layout.wires.get_mut("n-t").unwrap();
+    n_t[8] = vec![[20.0, 40.0], [62.0, 40.0]].into();
+    assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
+    // Over the untraced net's port, FC1.Out, where its line starts: a problem, not this too.
+    c.layout.wires.get_mut("n-t").unwrap()[8] = vec![[20.0, 52.0], [62.0, 52.0]].into();
+    assert_eq!(
+        wire_problems(&c, &catalogue),
+        ["wire 9 of net n-t passes over port FC1.Out, which is on net n-1; route it around"]
+    );
+    assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
+    // A corner of the automatic line on a traced wire that runs on past both its ends: n-2's
+    // line turns at 102, 52 on its way down to FC2.X.
+    let mut c = motors();
+    c.layout.wires.remove("n-2");
+    c.layout
+        .wires
+        .get_mut("n-t")
+        .unwrap()
+        .push(vec![[102.0, 45.0], [102.0, 70.0]].into());
+    assert_eq!(
+        wire_warnings(&c, &catalogue),
+        [
+            "wire 9 of net n-t and the automatic line of net n-2, which has no wires, touch at \
+             102, 52; trace net n-2 as the drawing routes it, or move the wire"
+        ]
+    );
+}
+
+#[test]
+fn a_wire_along_the_outline_or_across_a_label_is_a_warning() {
+    let catalogue = catalogue();
+    // P at the outline's bottom left corner, its wire running 4 mm up the left edge to the
+    // trunk.
+    let mut c = motors();
+    c.layout.components.get_mut("P").unwrap().y = 110.0;
+    c.layout.wires.get_mut("n-p").unwrap()[0] =
+        vec![[0.0, 110.0], [0.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into();
+    assert_eq!(
+        wire_warnings(&c, &catalogue),
+        [
+            "wire 1 of net n-p runs along the block outline from 0, 106 to 0, 110; move the wire \
+             off the outline, or the part or block port that sets that edge"
+        ]
+    );
+    // A wire past FC2's left, with its ports on the other sides: its designator has no clear
+    // side, so it stays on the left, over the wire.
+    let mut c = motors();
+    c.layout
+        .wires
+        .get_mut("n-1")
+        .unwrap()
+        .push(vec![[30.0, 60.0], [100.0, 60.0]].into());
+    let label = "wire 2 of net n-1 crosses the label \"FC2\" of FC2; move the wire or FC2 so the \
+                 label is clear";
+    let w = wire_warnings(&c, &catalogue);
+    assert!(w.contains(&label.to_string()), "{w:?}");
+    // Only the designator: the wire also crosses FC1's status words, which aren't checked.
+    assert_eq!(w.iter().filter(|w| w.contains("label")).count(), 1, "{w:?}");
+}
+
+#[test]
+fn a_block_ports_own_wire_may_cross_its_label() {
+    let catalogue = catalogue();
+    // P's own wires leave it left, then up and down, and straight up: every spot its label may
+    // move to is on one of them, so it stays on one, outside the block on its left edge, or
+    // above it with no block.
+    let mut c = motors();
+    let n_p = c.layout.wires.get_mut("n-p").unwrap();
+    n_p.push(vec![[0.0, 106.0], [-3.0, 106.0], [-3.0, 96.0]].into());
+    n_p.push(vec![[0.0, 106.0], [-3.0, 106.0], [-3.0, 116.0]].into());
+    n_p.push(vec![[0.0, 106.0], [0.0, 96.0]].into());
+    let label_on_a_wire = |c: &Circuit| {
+        let parts = render_parts(c, &catalogue);
+        let (_, p) = parts.iter().find(|(id, _)| id == "P").unwrap();
+        let label = p
+            .primitives
+            .iter()
+            .find(|t| matches!(t, Primitive::Text { .. }));
+        let (lo, hi) = bounds(std::slice::from_ref(label.unwrap())).unwrap();
+        (c.layout.wires["n-p"]
+            .iter()
+            .flat_map(|w| w.points.windows(2)))
+        .any(|s| (0..2).all(|k| s[0][k].min(s[1][k]) <= hi[k] && s[0][k].max(s[1][k]) >= lo[k]))
+    };
+    assert!(label_on_a_wire(&c));
+    let own = |w: &String| w.contains("label \"P\"");
+    assert!(!wire_warnings(&c, &catalogue).iter().any(own));
+    c.in_block.clear();
+    assert_eq!(block_outline(&c, &catalogue), None);
+    assert!(label_on_a_wire(&c));
+    assert!(!wire_warnings(&c, &catalogue).iter().any(own));
+}
+
+#[test]
+fn a_long_list_of_wire_warnings_keeps_every_kind() {
+    let catalogue = catalogue();
+    let mut c = motors();
+    // 25 short wires up the outline's left edge, and one through FC1 and FC2 and across the
+    // designator of FC2.
+    let n_p = c.layout.wires.get_mut("n-p").unwrap();
+    n_p.extend(
+        (0..25).map(|k| vec![[0.0, 50.0 + 2.0 * k as f32], [0.0, 51.0 + 2.0 * k as f32]].into()),
+    );
+    c.layout
+        .wires
+        .get_mut("n-1")
+        .unwrap()
+        .push(vec![[30.0, 60.0], [100.0, 60.0]].into());
+    let w = wire_warnings(&c, &catalogue);
+    // Three kinds share the 20 lines: 6 each at most, counting "and N more".
+    assert_eq!(w.len(), 2 + 6 + 1, "{w:?}");
+    assert!(w[0].contains("runs through FC1") && w[1].contains("runs through FC2"));
+    assert!(
+        w[2..7]
+            .iter()
+            .all(|w| w.contains("runs along the block outline"))
+    );
+    assert_eq!(w[7], "and 20 more wire warnings like these");
+    assert!(w[8].contains("crosses the label \"FC2\" of FC2"));
 }
 
 /// The texts of `circuit`'s parts that one of its wires runs through.
@@ -1942,4 +2091,57 @@ fn an_outline_box_keeps_a_port_name_reading_like_the_label() {
         hi[0], 2.5,
         "the port name M counts, the label M under it doesn't"
     );
+}
+
+#[test]
+fn a_valves_own_wires_never_warn_in_any_placement() {
+    // Every catalogue valve, in all 8 placements, each port wired straight out to a block port:
+    // its own wires may take every side its designator could go on (a counterbalance turned 90,
+    // a flow control turned 270), and nothing in the drawing could fix that.
+    let catalogue = catalogue();
+    for vt in &catalogue.valve_types {
+        for (rotation, mirror) in [0, 90, 180, 270]
+            .into_iter()
+            .flat_map(|r| [(r, false), (r, true)])
+        {
+            let mut json = serde_json::json!({
+                "schema": SCHEMA_VERSION, "name": "probe",
+                "components": [{"id": "V1", "kind": "valve", "valve_type": format!("{}@{}", vt.key, vt.version)}],
+                "nets": [],
+                "layout": {"components": {"V1": {"x": 50, "y": 50, "rotation": rotation, "mirror": mirror}}, "wires": {}},
+            });
+            let c = Circuit::from_json(&json.to_string()).unwrap();
+            let v = render_parts(&c, &catalogue).remove(0).1;
+            let symbol: Vec<Primitive> = (v.primitives.iter())
+                .filter(|p| !matches!(p, Primitive::Text { .. }))
+                .cloned()
+                .collect();
+            let (lo, hi) = bounds(&symbol).unwrap();
+            for (k, (port, p)) in v.ports.iter().enumerate() {
+                // Out of the side of the symbol the port is nearest.
+                let edges = [p[0] - lo[0], hi[0] - p[0], p[1] - lo[1], hi[1] - p[1]];
+                let side = (0..4)
+                    .min_by(|&a, &b| edges[a].total_cmp(&edges[b]))
+                    .unwrap();
+                let q = match side {
+                    0 => [p[0] - 20.0, p[1]],
+                    1 => [p[0] + 20.0, p[1]],
+                    2 => [p[0], p[1] - 20.0],
+                    _ => [p[0], p[1] + 20.0],
+                };
+                let (e, n) = (format!("E{k}"), format!("n{k}"));
+                json["components"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({"id": e, "kind": "port", "label": e}));
+                json["nets"].as_array_mut().unwrap().push(serde_json::json!({"id": n, "ports": [{"component": "V1", "port": port}, {"component": e, "port": "port"}]}));
+                json["layout"]["components"][&e] = serde_json::json!({"x": q[0], "y": q[1]});
+                json["layout"]["wires"][&n] = serde_json::json!([[p, q]]);
+            }
+            let c = Circuit::from_json(&json.to_string()).unwrap();
+            let at = format!("{} at {rotation}, mirrored {mirror}", vt.key);
+            assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new(), "{at}");
+            assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new(), "{at}");
+        }
+    }
 }
