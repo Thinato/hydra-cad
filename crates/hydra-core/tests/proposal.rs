@@ -378,3 +378,27 @@ fn part_ratings_must_be_numbers_too() {
         "{problems:?}"
     );
 }
+
+#[test]
+fn a_symbol_with_a_pilot_port_is_accepted_and_checked() {
+    let mut p = proposal();
+    p.valve_type.symbol = Some(CatalogueRef::new("sym-demo-fc-x", 1));
+    let fc = |compensated| SymbolDefRecord {
+        key: "sym-demo-fc-x".into(),
+        version: 1,
+        definition: serde_json::from_value(serde_json::json!({
+            "kind": "flow_control", "compensated": compensated, "pilot_port": true
+        }))
+        .unwrap(),
+    };
+    p.new_symbol = Some(fc(true));
+    assert_eq!(p.problems(&catalogue()), Vec::<String>::new());
+    p.new_symbol = Some(fc(false));
+    assert_eq!(
+        p.problems(&catalogue()),
+        [
+            "new_symbol sym-demo-fc-x@1: a flow control's pilot port X works its pressure \
+          compensator, so it needs compensated: true"
+        ]
+    );
+}

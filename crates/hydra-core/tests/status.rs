@@ -276,8 +276,25 @@ fn flow_controls_must_match_actuator_compensation_and_bypass() {
         t.symbol = Some(r(&format!("sym-fc-{key}@1")));
         cat.valve_types.push(t);
     }
-    let motors = Circuit::from_json(&fixture("circuits/demo-import-motors.json")).unwrap();
-    // FC2 is missing, drawn as a proportional compensated 3-port flow control.
+    let mut motors = Circuit::from_json(&fixture("circuits/demo-import-motors.json")).unwrap();
+    // FC2 is missing, drawn with a second pilot X that no catalogue flow control has.
+    assert!(stand_ins(&motors, "FC2", &cat).is_err());
+    let Some(Valve {
+        display: Some(SymbolDef::FlowControl { pilot_port, .. }),
+        ..
+    }) = motors
+        .components
+        .iter_mut()
+        .find(|c| c.id == "FC2")
+        .and_then(|c| match &mut c.kind {
+            ComponentKind::Valve(v) => Some(v),
+            _ => None,
+        })
+    else {
+        panic!("FC2 is drawn as a flow control");
+    };
+    *pilot_port = false;
+    // Without it, a proportional compensated 3-port flow control.
     assert_eq!(
         keys(&stand_ins(&motors, "FC2", &cat).unwrap()),
         ["vt-demo-flow-control-prop@1"]
@@ -315,7 +332,10 @@ fn relief_need(setting: Option<f64>, flow: Option<f64>) -> Circuit {
                 max_flow_l_min: flow,
                 ..Requested::default()
             }),
-            display: Some(SymbolDef::Relief { adjustable: true }),
+            display: Some(SymbolDef::Relief {
+                adjustable: true,
+                pilot_port: false,
+            }),
             ..Valve::default()
         },
     )])
@@ -335,6 +355,31 @@ fn reliefs_are_compared_by_setting_range() {
     // An unknown need accepts every relief cartridge.
     let list = keys(&stand_ins(&relief_need(None, None), "R", &cat).unwrap());
     assert_eq!(list.len(), 4, "{list:?}");
+}
+
+#[test]
+fn a_remote_piloted_relief_only_stands_in_for_one() {
+    let mut cat = relief_catalogue();
+    let mut t = (cat.valve_type(&r("vt-demo-cartridge-relief@1")))
+        .unwrap()
+        .clone();
+    t.key = "vt-cr-remote".into();
+    t.symbol = Some(r("sym-relief-remote@1"));
+    cat.valve_types.push(t);
+    // A plain relief valve is never offered the one piloted through X...
+    let list = keys(&stand_ins(&relief_need(None, None), "R", &cat).unwrap());
+    assert_eq!(list.len(), 4, "{list:?}");
+    assert!(!list.contains(&"vt-cr-remote@1".to_string()), "{list:?}");
+    // ...and one drawn with X is offered only that one.
+    let mut c = relief_need(None, None);
+    let ComponentKind::Valve(v) = &mut c.components[0].kind else {
+        panic!("R is a valve");
+    };
+    v.display = Some(SymbolDef::Relief {
+        adjustable: true,
+        pilot_port: true,
+    });
+    assert_eq!(keys(&stand_ins(&c, "R", &cat).unwrap()), ["vt-cr-remote@1"]);
 }
 
 #[test]

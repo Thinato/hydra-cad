@@ -550,6 +550,28 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
         "{e}"
     );
     assert!(e.contains("HM1 is placed at 200000000, 15"), "{e}");
+    // A wire kind that isn't one, and a second pilot on a flow control with no compensator.
+    let mut kinds = demo_circuit("demo-import-motors");
+    kinds["layout"]["wires"]["n-2"][1]["kind"] = "dashed".into();
+    let e = mcp.import_circuit(import(kinds)).await.unwrap_err();
+    assert!(
+        e.contains(
+            "at layout.wires.n-2[1]: a wire: a list of [x, y] points, or {\"kind\": \"pilot\" \
+             or \"drain\", \"points\": [[x, y], ...]}"
+        ),
+        "{e}"
+    );
+    let mut pilot = demo_circuit("demo-import-motors");
+    for c in pilot["components"].as_array_mut().unwrap() {
+        if c["id"] == "FC2" {
+            c["display"]["compensated"] = false.into();
+        }
+    }
+    let e = mcp.import_circuit(import(pilot)).await.unwrap_err();
+    assert!(
+        e.contains("FC2 display: a flow control's pilot port X works its pressure compensator"),
+        "{e}"
+    );
     // A wire that stops short of its port, and one that cuts a corner.
     let mut wired = demo_circuit("demo-import-motors");
     wired["layout"]["wires"]["n-1"] = json!([[[40, 52], [40, 30]]]);

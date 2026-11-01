@@ -95,7 +95,10 @@ fn valve(id: &str, valve_type: &str) -> Component {
 fn port(id: &str) -> Component {
     Component {
         id: id.into(),
-        kind: ComponentKind::Port { label: id.into() },
+        kind: ComponentKind::Port {
+            label: id.into(),
+            plugged: false,
+        },
     }
 }
 
@@ -147,7 +150,7 @@ fn json_round_trip_is_lossless() {
     );
     c.layout
         .wires
-        .insert("n-p".into(), vec![vec![[0.0, 0.0], [5.0, 0.0]]]);
+        .insert("n-p".into(), vec![vec![[0.0, 0.0], [5.0, 0.0]].into()]);
     c.nets[0].name = Some("pressure".into());
     let json = c.to_json();
     assert_eq!(Circuit::from_json(&json).unwrap(), c);
@@ -159,6 +162,31 @@ fn json_round_trip_is_lossless() {
     assert_eq!(value["layout"]["components"]["V1"]["mirror"], true);
     // Unmirrored parts don't write the flag, and older documents read as unmirrored.
     assert!(json.matches("\"mirror\"").count() == 1, "{json}");
+    // Likewise open ports write no plug, and a working wire is just its points, as before
+    // schema 5.
+    assert!(!json.contains("\"plugged\""), "{json}");
+    assert_eq!(
+        value["layout"]["wires"]["n-p"],
+        serde_json::json!([[[0.0, 0.0], [5.0, 0.0]]])
+    );
+
+    let drain = Wire {
+        kind: LineKind::Drain,
+        points: vec![[5.0, 0.0], [5.0, 5.0]],
+    };
+    c.layout.wires.get_mut("n-p").unwrap().push(drain);
+    let ComponentKind::Port { plugged, .. } = &mut c.components[2].kind else {
+        panic!("components[2] is a port");
+    };
+    *plugged = true;
+    let json = c.to_json();
+    assert_eq!(Circuit::from_json(&json).unwrap(), c);
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        value["layout"]["wires"]["n-p"][1],
+        serde_json::json!({"kind": "drain", "points": [[5.0, 0.0], [5.0, 5.0]]})
+    );
+    assert_eq!(value["components"][2]["plugged"], true);
 }
 
 #[test]

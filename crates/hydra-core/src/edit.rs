@@ -2,7 +2,7 @@
 //! undo/redo and a readable log of what changed.
 
 use crate::{
-    Assembly, CatalogueRef, Circuit, Component, ComponentKind, ExtraBomLine,
+    Assembly, CatalogueRef, Circuit, Component, ComponentKind, ExtraBomLine, LineKind,
     MAX_IMPORT_WIRE_POINTS, MAX_WIRE_POINTS, MAX_WIRES_PER_NET, Net, Placement, PortRef,
 };
 
@@ -67,6 +67,8 @@ pub enum Command {
     RemoveExtraLine { index: usize },
     /// Replace an imported circuit's notes. Blank notes are dropped.
     SetNotes { notes: Vec<String> },
+    /// Plug an external connection, or unplug it.
+    SetPlugged { id: String, plugged: bool },
     /// Draw a wire through `points` (sheet mm, the first on `from`, the last on `to`), joining
     /// the ends' nets as `Connect` does if they differ.
     DrawWire {
@@ -79,6 +81,12 @@ pub enum Command {
     RemoveWire { net: String, index: usize },
     /// Drop a net's drawn wires, so it is drawn with automatic elbows again.
     AutoWires { net: String },
+    /// Make drawn wire `index` of a net, counting from 0, a working, pilot or drain line.
+    SetWireKind {
+        net: String,
+        index: usize,
+        kind: LineKind,
+    },
 }
 
 /// Where a drawn wire starts or ends: on a port, or on a drawn wire of a net.
@@ -133,9 +141,14 @@ impl Command {
             Command::SetExtraLine { index, .. } => format!("Edit extra line {}", index + 1),
             Command::RemoveExtraLine { index } => format!("Delete extra line {}", index + 1),
             Command::SetNotes { .. } => "Edit the import notes".into(),
+            Command::SetPlugged { id, plugged: true } => format!("Plug {id}"),
+            Command::SetPlugged { id, plugged: false } => format!("Unplug {id}"),
             Command::DrawWire { from, to, .. } => format!("Draw a wire from {from} to {to}"),
             Command::RemoveWire { net, index } => format!("Delete wire {} of net {net}", index + 1),
             Command::AutoWires { net } => format!("Draw net {net} automatically"),
+            Command::SetWireKind { net, index, kind } => {
+                format!("Make wire {} of net {net} a {}", index + 1, kind.words())
+            }
         }
     }
 
@@ -271,7 +284,7 @@ impl Command {
                     .find(|c| &c.id == id)
                     .ok_or_else(|| format!("{id} is not in the circuit"))?;
                 match &mut c.kind {
-                    ComponentKind::Port { label: l } => *l = label.clone(),
+                    ComponentKind::Port { label: l, .. } => *l = label.clone(),
                     ComponentKind::Item(item) => {
                         item.label = Some(label.clone()).filter(|l| !l.trim().is_empty());
                     }
@@ -444,6 +457,19 @@ impl Command {
                 }
                 import.notes = notes;
             }
+            Command::SetPlugged { id, plugged } => {
+                let Some(ComponentKind::Port { plugged: p, .. }) = (circuit.components.iter_mut())
+                    .find(|c| &c.id == id)
+                    .map(|c| &mut c.kind)
+                else {
+                    return Err(format!("{id} is not an external connection in the circuit"));
+                };
+                if p == plugged {
+                    let already = if *plugged { "plugged" } else { "open" };
+                    return Err(format!("{id} is already {already}"));
+                }
+                *p = *plugged;
+            }
             Command::DrawWire { from, to, points } => {
                 if points.len() < 2 {
                     return Err("a wire runs between at least 2 points".into());
@@ -466,7 +492,11 @@ impl Command {
                     Command::Connect { a: a.clone(), b }.apply(&mut c)?;
                 }
                 let net = net_of(&c, &a).expect("connected");
-                c.layout.wires.entry(net).or_default().push(points.clone());
+                c.layout
+                    .wires
+                    .entry(net)
+                    .or_default()
+                    .push(points.clone().into());
                 if !c.layout.wires_are_bounded() {
                     return Err(format!(
                         "that would be more wires than Hydra checks (at most \
@@ -490,6 +520,19 @@ impl Command {
                 if circuit.layout.wires.remove(net).is_none() {
                     return Err(format!("net {net} is already drawn automatically"));
                 }
+            }
+            Command::SetWireKind { net, index, kind } => {
+                let wire = (circuit.layout.wires.get_mut(net))
+                    .and_then(|w| w.get_mut(*index))
+                    .ok_or_else(|| format!("net {net} has no drawn wire {}", index + 1))?;
+                if wire.kind == *kind {
+                    return Err(format!(
+                        "wire {} of net {net} is already a {}",
+                        index + 1,
+                        kind.words()
+                    ));
+                }
+                wire.kind = *kind;
             }
         }
         Ok(())

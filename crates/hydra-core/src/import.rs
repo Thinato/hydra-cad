@@ -29,7 +29,7 @@ impl Layout {
         let mut total = 0;
         let each = self.wires.values().all(|wires| {
             wires.len() <= MAX_WIRES_PER_NET
-                && wires.iter().all(|w| {
+                && wires.iter().map(|w| &w.points).all(|w| {
                     total += w.len();
                     (2..=MAX_WIRE_POINTS).contains(&w.len())
                         && w.iter().flatten().all(|v| v.is_finite())
@@ -185,7 +185,9 @@ impl Circuit {
                         long(&what, field, text.as_deref().unwrap_or(""), &mut problems);
                     }
                 }
-                ComponentKind::Port { .. } => {}
+                ComponentKind::Port { label, .. } => {
+                    long(&format!("port {}", c.id), "label", label, &mut problems);
+                }
             }
         }
         let unknown: Vec<&String> = (self.layout.wires.keys())
@@ -202,7 +204,9 @@ impl Circuit {
                 unknown.len() - MAX_LISTED
             ));
         }
-        let points: usize = self.layout.wires.values().flatten().map(Vec::len).sum();
+        let points: usize = (self.layout.wires.values().flatten())
+            .map(|w| w.points.len())
+            .sum();
         if points > MAX_IMPORT_WIRE_POINTS {
             problems.push(format!(
                 "the wires have {points} points in all, more than {MAX_IMPORT_WIRE_POINTS}; \
@@ -221,7 +225,7 @@ impl Circuit {
                 ));
                 continue;
             }
-            for (i, w) in wires.iter().enumerate() {
+            for (i, w) in wires.iter().map(|w| &w.points).enumerate() {
                 let what = format!("wire {} of net {net}", i + 1);
                 let far = |p: &[f32; 2]| p.iter().any(|v| !v.is_finite() || v.abs() > MAX_SHEET_MM);
                 if w.len() < 2 {

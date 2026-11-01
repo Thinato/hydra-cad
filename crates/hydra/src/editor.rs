@@ -7,8 +7,8 @@
 use eframe::egui::{self, Color32, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2};
 use hydra_core::{
     Catalogue, CatalogueRef, Circuit, CircuitStatus, Command, Component, ComponentKind, Document,
-    ExtraBomLine, Item, Layout, Placement, PortRef, Rotation, SCHEMA_VERSION, Severity, StandIn,
-    SymbolDef, ValveStatus, WireEnd, next_id, stand_ins,
+    ExtraBomLine, Item, Layout, LineKind, Placement, PortRef, Rotation, SCHEMA_VERSION, Severity,
+    StandIn, SymbolDef, ValveStatus, WireEnd, next_id, stand_ins,
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
 use hydra_symbols::{
@@ -456,7 +456,10 @@ impl SchematicEditor {
             prefix,
         );
         let kind = match kind {
-            ComponentKind::Port { .. } => ComponentKind::Port { label: id.clone() },
+            ComponentKind::Port { .. } => ComponentKind::Port {
+                label: id.clone(),
+                plugged: false,
+            },
             valve => valve,
         };
         let centre = if self.view.is_positive() {
@@ -758,6 +761,7 @@ impl SchematicEditor {
                 self.add(
                     ComponentKind::Port {
                         label: String::new(),
+                        plugged: false,
                     },
                     catalogue,
                 );
@@ -1038,6 +1042,25 @@ impl SchematicEditor {
             ui.horizontal_wrapped(|ui| {
                 let name = net_name(&self.doc.circuit, &net);
                 ui.strong(format!("Wire {} of net {name}", index + 1));
+                // Pilot and drain lines are drawn dashed.
+                let wires = self.doc.circuit.layout.wires.get(&net);
+                if let Some(kind) = wires.and_then(|w| w.get(index)).map(|w| w.kind) {
+                    let mut choice = kind;
+                    egui::ComboBox::from_id_salt("wire-kind")
+                        .selected_text(kind.words())
+                        .show_ui(ui, |ui| {
+                            for k in LineKind::ALL {
+                                ui.selectable_value(&mut choice, k, k.words());
+                            }
+                        });
+                    if choice != kind {
+                        self.apply(Command::SetWireKind {
+                            net: net.clone(),
+                            index,
+                            kind: choice,
+                        });
+                    }
+                }
                 if ui.button("Delete wire").clicked() {
                     self.delete_selected();
                 }
@@ -1079,7 +1102,7 @@ impl SchematicEditor {
                         ui.colored_label(status_color(s), s.words());
                     }
                 }
-                ComponentKind::Port { label }
+                ComponentKind::Port { label, .. }
                 | ComponentKind::Item(hydra_core::Item {
                     label: Some(label), ..
                 }) => {
@@ -1100,6 +1123,21 @@ impl SchematicEditor {
                     }
                 }
                 ComponentKind::Item(_) => {}
+            }
+            if let ComponentKind::Port { plugged, .. } = c.kind {
+                let mut p = plugged;
+                if ui
+                    .checkbox(&mut p, "Plugged")
+                    .on_hover_text(
+                        "Closed with a plug, e.g. a rail drilled out to the block's edge",
+                    )
+                    .changed()
+                {
+                    self.apply(Command::SetPlugged {
+                        id: c.id.clone(),
+                        plugged: p,
+                    });
+                }
             }
             if matches!(c.kind, ComponentKind::Item(_)) {
                 for (f, (name, width)) in
@@ -1450,7 +1488,7 @@ impl SchematicEditor {
         if let Some(w) = (self.wire.as_ref())
             .and_then(|(net, i)| self.doc.circuit.layout.wires.get(net)?.get(*i))
         {
-            painter.add(line(w, 3.0));
+            painter.add(line(&w.points, 3.0));
         }
         let last = self.route.as_ref().and_then(|r| r.points.last().copied());
         let target = match hover {
@@ -1999,7 +2037,7 @@ fn wire_at(
     let grid = [snap(p[0]), snap(p[1])];
     (circuit.layout.wires.iter())
         .flat_map(|(net, wires)| wires.iter().enumerate().map(move |(i, w)| (net, i, w)))
-        .flat_map(|(net, i, w)| w.windows(2).map(move |s| (net, i, s[0], s[1])))
+        .flat_map(|(net, i, w)| w.points.windows(2).map(move |s| (net, i, s[0], s[1])))
         .map(|(net, i, a, b)| {
             let q = nearest(a, b, p);
             ((q[0] - p[0]).hypot(q[1] - p[1]), net, i, a, b)
@@ -2267,7 +2305,10 @@ mod tests {
         ] {
             let component = Component {
                 id: id.into(),
-                kind: ComponentKind::Port { label: id.into() },
+                kind: ComponentKind::Port {
+                    label: id.into(),
+                    plugged: false,
+                },
             };
             let placement = Placement {
                 x,
@@ -2306,7 +2347,9 @@ mod tests {
 
     fn wires(h: &Harness<State>) -> Vec<Vec<[f32; 2]>> {
         let wires = &h.state().0.doc.circuit.layout.wires;
-        wires.get("n1").cloned().unwrap_or_default()
+        (wires.get("n1").into_iter().flatten())
+            .map(|w| w.points.clone())
+            .collect()
     }
 
     #[test]
@@ -2392,7 +2435,10 @@ mod tests {
         let doc = &mut h.state_mut().0.doc;
         doc.circuit.nets[0].name = Some("P".into());
         let wire = vec![[0.0, 0.0], [0.0, -10.0], [30.0, -10.0], [30.0, 0.0]];
-        doc.circuit.layout.wires.insert("n1".into(), vec![wire]);
+        doc.circuit
+            .layout
+            .wires
+            .insert("n1".into(), vec![wire.into()]);
         // Zoom in on 11.25, -10: midway between grid points, farther from them than reach.
         let e = &mut h.state_mut().0;
         e.zoom = 20.0;
@@ -2410,12 +2456,49 @@ mod tests {
     }
 
     #[test]
+    fn a_selected_wire_becomes_a_pilot_line_drawn_dashed() {
+        let mut h = wiring_harness();
+        let wire = vec![[0.0, 0.0], [0.0, -10.0], [30.0, -10.0], [30.0, 0.0]];
+        (h.state_mut().0.doc.circuit.layout.wires).insert("n1".into(), vec![wire.into()]);
+        h.run();
+        let state = |h: &Harness<State>| {
+            let (e, s) = h.state();
+            let kind = e.doc.circuit.layout.wires["n1"][0].kind;
+            let dashed = render_circuit(&e.doc.circuit, &s.catalogue)
+                .primitives
+                .iter()
+                .any(|p| matches!(p, hydra_symbols::Primitive::Polyline { dashed: true, points, .. } if points.len() == 4));
+            (kind, dashed)
+        };
+        click_sheet(&mut h, [12.0, -9.8], egui::PointerButton::Primary);
+        assert!(h.query_by_label("Wire 1 of net n1").is_some());
+        h.get_all_by_role(egui::accesskit::Role::ComboBox)
+            .find(|n| n.value().as_deref() == Some("working line"))
+            .expect("the wire's kind")
+            .click();
+        h.run();
+        h.get_by_label("pilot line").click();
+        h.run_steps(2);
+        assert_eq!(state(&h), (LineKind::Pilot, true));
+        assert_eq!(
+            h.state().0.doc.undo_label(),
+            Some("Make wire 1 of net n1 a pilot line")
+        );
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert_eq!(state(&h), (LineKind::Working, false));
+    }
+
+    #[test]
     fn a_wire_joining_two_named_nets_says_so() {
         let mut h = wiring_harness();
         let doc = &mut h.state_mut().0.doc;
         let component = Component {
             id: "X5".into(),
-            kind: ComponentKind::Port { label: "X5".into() },
+            kind: ComponentKind::Port {
+                label: "X5".into(),
+                plugged: false,
+            },
         };
         let placement = Placement {
             x: 60.0,
@@ -2460,7 +2543,7 @@ mod tests {
             .circuit
             .layout
             .wires
-            .insert("n1".into(), vec![vec![[0.0, 0.0], [30.0, 0.0]]]);
+            .insert("n1".into(), vec![vec![[0.0, 0.0], [30.0, 0.0]].into()]);
         // Moving a part drops its nets' drawn wires, and says so.
         click_sheet(&mut h, [30.0, 0.0], Primary);
         assert_eq!(h.state().0.selected(), Some("X2"));
@@ -2530,7 +2613,7 @@ mod tests {
         };
         let e = &mut h.state_mut().0;
         e.doc.circuit.nets[0].name = Some("P".into());
-        let wire = vec![vec![[0.0, 0.0], [30.0, 0.0]]];
+        let wire = vec![vec![[0.0, 0.0], [30.0, 0.0]].into()];
         e.doc.circuit.layout.wires.insert("n1".into(), wire);
         e.connect(port("X4"), port("X1"));
         assert_eq!(
@@ -2559,7 +2642,7 @@ mod tests {
         );
         // Joining nets moves the wires, which is not dropping them.
         e.undo();
-        let wire = vec![vec![[0.0, 30.0], [30.0, 30.0]]];
+        let wire = vec![vec![[0.0, 30.0], [30.0, 30.0]].into()];
         e.doc.circuit.layout.wires.insert("n2".into(), wire);
         let join = Command::Connect {
             a: port("X1"),
@@ -2671,6 +2754,7 @@ mod tests {
         e.add(
             ComponentKind::Port {
                 label: String::new(),
+                plugged: false,
             },
             &s.catalogue,
         );
@@ -2904,6 +2988,7 @@ mod tests {
         e.add(
             ComponentKind::Port {
                 label: String::new(),
+                plugged: false,
             },
             &s.catalogue,
         );
@@ -3054,6 +3139,7 @@ mod tests {
         e.add(
             ComponentKind::Port {
                 label: String::new(),
+                plugged: false,
             },
             &s.catalogue,
         );
@@ -3061,6 +3147,7 @@ mod tests {
         e.add(
             ComponentKind::Port {
                 label: String::new(),
+                plugged: false,
             },
             &s.catalogue,
         );
@@ -3154,7 +3241,7 @@ mod tests {
             .find(|n| n.ports.iter().any(|p| p.component == "5.1"))
             .unwrap()
             .clone();
-        let wire = vec![vec![[0.0, 0.0], [10.0, 0.0]]];
+        let wire = vec![vec![[0.0, 0.0], [10.0, 0.0]].into()];
         doc.circuit.layout.wires.insert(net.id.clone(), wire);
         h.get_by_label("Swap").click();
         h.run_steps(2);
@@ -3289,7 +3376,10 @@ mod tests {
             h.state_mut().0.apply(Command::Add {
                 component: Component {
                     id: id.into(),
-                    kind: ComponentKind::Port { label: id.into() },
+                    kind: ComponentKind::Port {
+                        label: id.into(),
+                        plugged: false,
+                    },
                 },
                 placement: Placement {
                     x: centre.x + d,
@@ -3335,6 +3425,25 @@ mod tests {
         h.state_mut().0.undo();
         h.run_steps(2);
         assert!(mirrored(&h));
+    }
+
+    #[test]
+    fn a_port_is_plugged_and_unplugged_with_undo() {
+        let mut h = import_harness(None, false);
+        let plugged = |h: &Harness<State>| {
+            matches!(
+                h.state().0.doc.circuit.component("P").unwrap().kind,
+                ComponentKind::Port { plugged: true, .. }
+            )
+        };
+        h.state_mut().0.selected = Some("P".into());
+        h.run_steps(2);
+        h.get_by_label("Plugged").click();
+        h.run_steps(2);
+        assert!(plugged(&h));
+        h.state_mut().0.undo();
+        h.run_steps(2);
+        assert!(!plugged(&h));
     }
 
     #[test]

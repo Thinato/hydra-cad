@@ -242,7 +242,9 @@
     },
     {"key": "sym-pilot-check", "version": 1, "definition": {"kind": "pilot_check", "spring": true}},
     {"key": "sym-counterbalance", "version": 1, "definition": {"kind": "counterbalance"}},
-    {"key": "sym-flow-control-prop", "version": 1, "definition": {"kind": "flow_control", "actuator": "proportional", "compensated": true, "bypass": true}}
+    {"key": "sym-flow-control-prop", "version": 1, "definition": {"kind": "flow_control", "actuator": "proportional", "compensated": true, "bypass": true}},
+    {"key": "sym-relief-remote", "version": 1, "definition": {"kind": "relief", "adjustable": true, "pilot_port": true}},
+    {"key": "sym-flow-control-pilot", "version": 1, "definition": {"kind": "flow_control", "actuator": "proportional", "compensated": true, "bypass": true, "pilot_port": true}}
   ],
   "valve_types": [
     {"key": "vt-rpe3-06-z11", "version": 1, "manufacturer": "argo-hytos", "series": "RPE3-06", "code": "Z11", "symbol": "sym-4-3-closed-centre@1", "mounting": "ISO 4401-03"},

@@ -220,7 +220,8 @@ impl<'a> Need<'a> {
 ///
 /// Candidates do the same job, fit the same mounting or cavity, and meet the needed ratings
 /// where both sides know them. A directional valve or flow control must also have the same
-/// symbol, so a tandem-centre spool never replaces a closed-centre one.
+/// symbol, so a tandem-centre spool never replaces a closed-centre one, and so must a relief
+/// valve piloted through port X, or one standing in for it.
 pub fn stand_ins(
     circuit: &Circuit,
     id: &str,
@@ -281,7 +282,18 @@ pub fn stand_ins(
             }
             let symbol = catalogue.symbol_of(&r);
             let same_symbol = need.symbol.is_some() && symbol == need.symbol;
-            if strict_symbol && need.symbol.is_some() && !same_symbol {
+            // A remote-piloted relief valve has a port X a plain one lacks, and back.
+            let remote = |s: Option<&SymbolDef>| {
+                matches!(
+                    s,
+                    Some(SymbolDef::Relief {
+                        pilot_port: true,
+                        ..
+                    })
+                )
+            };
+            let strict = strict_symbol && need.symbol.is_some();
+            if (strict || remote(need.symbol) || remote(symbol)) && !same_symbol {
                 continue;
             }
             // Parts with ratings of their own are separate candidates.

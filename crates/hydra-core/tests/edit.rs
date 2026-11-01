@@ -10,7 +10,10 @@ fn pr(component: &str, port: &str) -> PortRef {
 fn port(id: &str) -> Component {
     Component {
         id: id.into(),
-        kind: ComponentKind::Port { label: id.into() },
+        kind: ComponentKind::Port {
+            label: id.into(),
+            plugged: false,
+        },
     }
 }
 
@@ -168,9 +171,13 @@ fn joining_named_nets_keeps_the_first_name_and_both_nets_wires() {
     d.apply(connect("C", "D")).unwrap();
     d.circuit.nets[0].name = Some("P".into());
     d.circuit.nets[1].name = Some("T".into());
+    // n2's wire is a pilot line, and stays one.
     let (ab, cd) = (
-        vec![[0.0, 0.0], [10.0, 0.0]],
-        vec![[20.0, 0.0], [30.0, 0.0]],
+        Wire::from(vec![[0.0, 0.0], [10.0, 0.0]]),
+        Wire {
+            kind: LineKind::Pilot,
+            points: vec![[20.0, 0.0], [30.0, 0.0]],
+        },
     );
     d.circuit.layout.wires.insert("n1".into(), vec![ab.clone()]);
     d.circuit.layout.wires.insert("n2".into(), vec![cd.clone()]);
@@ -191,13 +198,13 @@ fn joining_named_nets_keeps_the_first_name_and_both_nets_wires() {
     assert_eq!(d.circuit.nets[1].name.as_deref(), Some("T"));
     assert_eq!(d.circuit.layout.wires.len(), 2);
     // Up to the cap the wires are joined; past it the join is refused, changing nothing.
-    let half = vec![vec![[0.0, 0.0], [10.0, 0.0]]; MAX_WIRES_PER_NET / 2];
+    let half = vec![Wire::from(vec![[0.0, 0.0], [10.0, 0.0]]); MAX_WIRES_PER_NET / 2];
     d.circuit.layout.wires.insert("n1".into(), half.clone());
     d.circuit.layout.wires.insert("n2".into(), half);
     let mut joined = d.circuit.clone();
     connect("A", "C").apply(&mut joined).unwrap();
     assert_eq!(joined.layout.wires["n1"].len(), MAX_WIRES_PER_NET);
-    let many = vec![vec![[0.0, 0.0], [10.0, 0.0]]; MAX_WIRES_PER_NET / 2 + 1];
+    let many = vec![Wire::from(vec![[0.0, 0.0], [10.0, 0.0]]); MAX_WIRES_PER_NET / 2 + 1];
     d.circuit.layout.wires.insert("n1".into(), many.clone());
     d.circuit.layout.wires.insert("n2".into(), many);
     let before = d.circuit.clone();
@@ -248,7 +255,7 @@ fn moving_rotating_and_relabelling() {
     d.circuit
         .layout
         .wires
-        .insert("n1".into(), vec![vec![[0.0, 0.0], [10.0, 0.0]]]);
+        .insert("n1".into(), vec![vec![[0.0, 0.0], [10.0, 0.0]].into()]);
     let to = Placement {
         x: 5.0,
         y: 7.5,
@@ -272,7 +279,10 @@ fn moving_rotating_and_relabelling() {
     .unwrap();
     assert_eq!(
         d.circuit.component("A").unwrap().kind,
-        ComponentKind::Port { label: "P".into() }
+        ComponentKind::Port {
+            label: "P".into(),
+            plugged: false
+        }
     );
     assert!(
         d.apply(Command::Place {
@@ -710,6 +720,47 @@ fn import_notes_are_edited_only_on_imported_circuits() {
     assert_eq!(notes(&d), ["Row 12 is illegible (demo)."]);
 }
 
+#[test]
+fn only_external_connections_are_plugged() {
+    let mut d = doc(&["P"]);
+    d.apply(item("X1")).unwrap();
+    let plug = |id: &str, plugged| Command::SetPlugged {
+        id: id.into(),
+        plugged,
+    };
+    assert_eq!(
+        d.apply(plug("X1", true)),
+        Err("X1 is not an external connection in the circuit".into())
+    );
+    assert_eq!(d.apply(plug("P", false)), Err("P is already open".into()));
+    d.apply(plug("P", true)).unwrap();
+    assert_eq!(d.undo_label(), Some("Plug P"));
+    assert_eq!(
+        d.circuit.component("P").unwrap().kind,
+        ComponentKind::Port {
+            label: "P".into(),
+            plugged: true
+        }
+    );
+    assert_eq!(d.apply(plug("P", true)), Err("P is already plugged".into()));
+    d.undo();
+    assert_eq!(
+        d.circuit.component("P").unwrap().kind,
+        ComponentKind::Port {
+            label: "P".into(),
+            plugged: false
+        }
+    );
+}
+
+/// A net's drawn wires as their points.
+fn drawn(d: &Document, net: &str) -> Vec<Vec<[f32; 2]>> {
+    d.circuit.layout.wires[net]
+        .iter()
+        .map(|w| w.points.clone())
+        .collect()
+}
+
 fn wire(from: WireEnd, to: WireEnd, points: &[[f32; 2]]) -> Command {
     Command::DrawWire {
         from,
@@ -730,7 +781,7 @@ fn drawing_a_wire_is_one_undo_step_and_joins_nets_keeping_their_wires() {
     let ab = [[0.0, 0.0], [0.0, 5.0], [10.0, 5.0], [10.0, 0.0]];
     d.apply(wire(at("A"), at("B"), &ab)).unwrap();
     assert_eq!(d.undo_label(), Some("Draw a wire from A.port to B.port"));
-    assert_eq!(d.circuit.layout.wires["n1"], [ab.to_vec()]);
+    assert_eq!(drawn(&d, "n1"), [ab.to_vec()]);
     let cd = [[20.0, 0.0], [30.0, 0.0]];
     d.apply(wire(at("C"), WireEnd::Net("n2".into()), &cd))
         .unwrap();
@@ -750,14 +801,11 @@ fn drawing_a_wire_is_one_undo_step_and_joins_nets_keeping_their_wires() {
                 .collect()
         )]
     );
-    assert_eq!(
-        d.circuit.layout.wires["n1"],
-        [ab.to_vec(), cd.to_vec(), join.to_vec()]
-    );
+    assert_eq!(drawn(&d, "n1"), [ab.to_vec(), cd.to_vec(), join.to_vec()]);
     assert!(!d.circuit.layout.wires.contains_key("n2"));
     d.undo();
     assert_eq!(nets(&d).len(), 2);
-    assert_eq!(d.circuit.layout.wires["n2"], [cd.to_vec()]);
+    assert_eq!(drawn(&d, "n2"), [cd.to_vec()]);
 
     // A wire between two loose ports makes a net of them.
     let mut d = doc(&["A", "B"]);
@@ -782,6 +830,52 @@ fn drawing_a_wire_is_one_undo_step_and_joins_nets_keeping_their_wires() {
 }
 
 #[test]
+fn a_drawn_wire_becomes_a_pilot_line_and_stays_one_when_nets_join() {
+    let mut d = doc(&["A", "B", "C", "D"]);
+    d.apply(wire(at("A"), at("B"), &[[0.0, 0.0], [10.0, 0.0]]))
+        .unwrap();
+    d.apply(wire(at("C"), at("D"), &[[20.0, 0.0], [30.0, 0.0]]))
+        .unwrap();
+    let kind = |net: &str, index, kind| Command::SetWireKind {
+        net: net.into(),
+        index,
+        kind,
+    };
+    let kinds = |d: &Document| {
+        (d.circuit.layout.wires.values().flatten())
+            .map(|w| w.kind)
+            .collect::<Vec<_>>()
+    };
+    // Drawn wires are working lines.
+    assert_eq!(kinds(&d), [LineKind::Working, LineKind::Working]);
+    assert_eq!(
+        d.apply(kind("n2", 1, LineKind::Pilot)),
+        Err("net n2 has no drawn wire 2".into())
+    );
+    assert_eq!(
+        d.apply(kind("n2", 0, LineKind::Working)),
+        Err("wire 1 of net n2 is already a working line".into())
+    );
+    d.apply(kind("n2", 0, LineKind::Pilot)).unwrap();
+    assert_eq!(d.undo_label(), Some("Make wire 1 of net n2 a pilot line"));
+    assert_eq!(kinds(&d), [LineKind::Working, LineKind::Pilot]);
+    // Joining the nets, by a wire or by Connect, keeps each wire's kind.
+    d.apply(wire(at("B"), at("C"), &[[10.0, 0.0], [20.0, 0.0]]))
+        .unwrap();
+    assert_eq!(
+        kinds(&d),
+        [LineKind::Working, LineKind::Pilot, LineKind::Working]
+    );
+    d.undo();
+    d.apply(connect("D", "A")).unwrap();
+    // D's net n2 takes in n1, so its wires come first.
+    assert_eq!(kinds(&d), [LineKind::Pilot, LineKind::Working]);
+    d.undo();
+    d.undo();
+    assert_eq!(kinds(&d), [LineKind::Working, LineKind::Working]);
+}
+
+#[test]
 fn deleting_wires_and_drawing_a_net_automatically_again() {
     let mut d = doc(&["A", "B"]);
     d.apply(connect("A", "B")).unwrap();
@@ -789,7 +883,7 @@ fn deleting_wires_and_drawing_a_net_automatically_again() {
     d.circuit
         .layout
         .wires
-        .insert("n1".into(), vec![w1.clone(), w2.clone()]);
+        .insert("n1".into(), vec![w1.clone().into(), w2.clone().into()]);
     let remove = |index| Command::RemoveWire {
         net: "n1".into(),
         index,
@@ -797,7 +891,7 @@ fn deleting_wires_and_drawing_a_net_automatically_again() {
     assert!(d.apply(remove(2)).is_err());
     d.apply(remove(0)).unwrap();
     assert_eq!(d.undo_label(), Some("Delete wire 1 of net n1"));
-    assert_eq!(d.circuit.layout.wires["n1"], [w2]);
+    assert_eq!(drawn(&d, "n1"), [w2]);
     // The last wire gone, the net is drawn automatically.
     d.apply(remove(0)).unwrap();
     assert!(d.circuit.layout.wires.is_empty());

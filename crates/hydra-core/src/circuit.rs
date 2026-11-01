@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 use crate::{Catalogue, CatalogueRef, SymbolDef, ValveFunction};
 
 /// Circuit JSON version this build writes. It also reads version 1, which had no assembly,
-/// version 2, which had only catalogue valves and no import data, and version 3, which had no
-/// block outline and no mirrored parts.
-pub const SCHEMA_VERSION: u32 = 4;
+/// version 2, which had only catalogue valves and no import data, version 3, which had no
+/// block outline and no mirrored parts, and version 4, which had no pilot or drain wires, no
+/// plugged ports and no pilot ports on relief valves and flow controls.
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Circuit {
@@ -81,6 +82,10 @@ pub enum ComponentKind {
     /// An external connection such as a manifold port `P` or `A1`. Its single port is [`PORT_PIN`].
     Port {
         label: String,
+        /// Closed with a plug, e.g. the end of a rail drilled out to the block's edge, so
+        /// nothing connects to it from outside.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        plugged: bool,
     },
     /// A part of the circuit that isn't a catalogue valve, e.g. a test point, a fixed orifice or a
     /// motor.
@@ -180,6 +185,83 @@ pub struct Net {
     pub ports: Vec<PortRef>,
 }
 
+/// What a drawn wire carries, which sets how it is drawn. One net can mix them, e.g. a pilot
+/// line branching off a working line.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineKind {
+    /// Working line, drawn solid.
+    #[default]
+    Working,
+    /// Pilot (control) line, drawn dashed.
+    Pilot,
+    /// Drain or leakage line, drawn dashed.
+    Drain,
+}
+
+impl LineKind {
+    pub const ALL: [LineKind; 3] = [LineKind::Working, LineKind::Pilot, LineKind::Drain];
+
+    /// E.g. "pilot line".
+    pub fn words(self) -> &'static str {
+        match self {
+            LineKind::Working => "working line",
+            LineKind::Pilot => "pilot line",
+            LineKind::Drain => "drain line",
+        }
+    }
+}
+
+/// One hand-drawn wire: points joined by straight lines. In JSON a working wire is just its
+/// points, as before schema 5; a pilot or drain wire is `{"kind": "pilot", "points": [...]}`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "WireJson", into = "WireJson")]
+pub struct Wire {
+    pub kind: LineKind,
+    pub points: Vec<[f32; 2]>,
+}
+
+impl From<Vec<[f32; 2]>> for Wire {
+    /// A working wire.
+    fn from(points: Vec<[f32; 2]>) -> Wire {
+        Wire {
+            kind: LineKind::Working,
+            points,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(
+    untagged,
+    expecting = "a wire: a list of [x, y] points, or {\"kind\": \"pilot\" or \"drain\", \"points\": [[x, y], ...]}"
+)]
+enum WireJson {
+    Points(Vec<[f32; 2]>),
+    Kind {
+        kind: LineKind,
+        points: Vec<[f32; 2]>,
+    },
+}
+
+impl From<WireJson> for Wire {
+    fn from(w: WireJson) -> Wire {
+        match w {
+            WireJson::Points(points) => points.into(),
+            WireJson::Kind { kind, points } => Wire { kind, points },
+        }
+    }
+}
+
+impl From<Wire> for WireJson {
+    fn from(Wire { kind, points }: Wire) -> WireJson {
+        match kind {
+            LineKind::Working => WireJson::Points(points),
+            kind => WireJson::Kind { kind, points },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PortRef {
     pub component: String,
@@ -193,7 +275,7 @@ pub struct Layout {
     pub components: BTreeMap<String, Placement>,
     /// Hand-drawn wires per net id. Nets without an entry are drawn with automatic elbows.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub wires: BTreeMap<String, Vec<Vec<[f32; 2]>>>,
+    pub wires: BTreeMap<String, Vec<Wire>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
