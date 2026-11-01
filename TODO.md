@@ -4,19 +4,28 @@ Open work after the block outline and mirrored symbols (8e8f237). Tick items off
 
 ## Worth doing next
 
-- [ ] **Wire routing.** Wires are drawn automatically: a trunk from a net's first port, then an elbow into each other port. On imported circuits this gives long elbows, lines through symbols and crossings the drawing doesn't have. Either:
-  - route automatically around symbols and along rows; or
-  - let the engineer, and the import, draw wires. `layout.wires` is already read and drawn, but nothing writes it yet.
-- [ ] **Connect the drawn block to the 3D block.** With a 3D block chosen (`assembly`), a valve left outside `in_block` still gets "not mounted on the block". A valve mounted on a block face but not in `in_block` raises no warning. Make the two agree, or warn when they don't.
-- [ ] **New parts inside the outline.** Toolbar adds land in the middle of the view, usually inside the block outline, and are flagged at once ("drawn inside its outline"). Tick "In block" automatically when a new part lands inside the outline.
+- [x] **Wire routing.** The AI import traces each net's wires from the drawing into `layout.wires`, and `import_circuit` refuses wires that miss a port, touch another net or leave a net in pieces (#6). Still open:
+  - [ ] Drawing wires by hand in the editor. The editor only drops a net's drawn wires when its ports move.
+  - [ ] Smarter automatic routing for nets left untraced (long elbows, lines through symbols).
+  - [ ] Traced wires aren't checked against the automatic elbows of untraced nets, so a traced wire can lie along an untraced net's elbow.
+  - [ ] The through-part warning skips a whole segment that ends on one of the part's own ports, even if it crosses the symbol to get there.
+  - [ ] A traced wire can run along the block outline (P in demo-import-motors runs up the outline's left edge for 4 mm), and a part's own traced wire can cross its label (T in demo-import-motors).
+- [x] **Connect the drawn block to the 3D block.** Only parts in `in_block` are expected on the 3D block; a valve mounted on it but drawn outside warns, and a block with nothing in `in_block` gets one warning (#3). Still open:
+  - [ ] Decide whether mounting a valve in the 3D tab should tick "In block" (or the reverse). Today the engineer settles each mismatch by hand.
+- [x] **New parts inside the outline** join the block in the same undo step (#8).
 
 ## Smaller
 
-- [ ] The block outline is always a rectangle. Real block boundaries can be L-shaped, so a correct drawing can flag outside parts as drawn inside.
-- [ ] A block port on the outline's bottom edge shows its label inside the block, and the dash-dot line runs through its circle.
-- [ ] Designators overlap wires on some parts, e.g. RV1 in the demo manifold.
-- [ ] The editor can't edit the extra bill-of-materials lines (block, plugs, coils), an item's code, description or position, or the import notes.
-- [ ] `submit_proposal` accepts a second pending proposal for the same valve type and base version. Only one can be approved. Decide whether to warn or refuse.
+- [x] L-shaped blocks: the outline is cut round an outside part standing in a corner, and the import warns about each such part (#8). Still open:
+  - [ ] U-shaped and stepped outlines: one rectangular notch per corner, so parts needing more are still flagged.
+- [x] Block port labels sit outside the block on every edge, and the dash-dot line breaks round port circles (#8). Still open:
+  - [ ] A port label moved outside doesn't avoid a wire arriving at the port from outside.
+- [x] Designators keep clear of wires and status frames (#4). Still open:
+  - [ ] Status words, item labels and port names can still overlap wires (the status line under 1.1, X1's "X 0.5 mm").
+- [x] The editor edits the extra bill-of-materials lines, an item's code, description and position, and the import notes (#7).
+- [x] `submit_proposal` refuses a second pending proposal for the same valve type and base version (#5).
+- [ ] The hydra-mcp test `a_stuck_renderer_is_killed` looks for its child with `pgrep -f "sleep 5.0371"`, so two checkouts running the suite at once can fail it. Give each run a unique marker.
+- [ ] Every editor frame draws each part several times (`render_circuit`, `render_parts`, `outline_issues`, `block_outline`). Fine at tens of parts; share one `parts_and_wires` result per frame if it ever shows.
 
 ## Bigger items deferred earlier
 
