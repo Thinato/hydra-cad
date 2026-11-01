@@ -915,52 +915,12 @@ fn parts_and_wires(
 ) -> (Vec<(String, Drawing)>, Drawing, Option<Outline>) {
     let place = |c: &Component| placement(circuit, &c.id);
     let mut d = Drawing::default();
-    // Each part's symbol box, without its text or status frame, and per port its part's box
-    // and whether its line may leave to any side, for the automatic wires. They keep clear of
-    // each designator where it goes without wires, on a side no port leaves from, so it can
-    // stay there, and off the rest of a part's text where they can. They may cross a status
-    // frame, as they may another net's wire, but not run along it.
-    let mut boxes = Vec::new();
-    let mut sides = Vec::new();
-    let mut texts = Vec::new();
-    let mut frames: Vec<Vec<Point>> = Vec::new();
     for c in &circuit.components {
         let Some(part) = render_component(c, place(c), catalogue) else {
             continue;
         };
-        if !matches!(c.kind, ComponentKind::Port { .. }) {
-            for p in &part.primitives {
-                if let (Primitive::Text { text, .. }, Some(b)) =
-                    (p, bounds(std::slice::from_ref(p)))
-                {
-                    if *text == c.id {
-                        &mut boxes
-                    } else {
-                        &mut texts
-                    }
-                    .push(b);
-                }
-                if let Primitive::Polyline {
-                    points,
-                    closed: true,
-                    dashed: true,
-                    ..
-                } = p
-                {
-                    frames.push(points.iter().chain(points.first()).copied().collect());
-                }
-            }
-        }
-        let symbol: Vec<Primitive> = (part.primitives.into_iter())
-            .filter(|p| !matches!(p, Primitive::Text { .. }))
-            .filter(|p| !matches!(p, Primitive::Polyline { dashed: true, .. }))
-            .collect();
-        let at = [place(c).x, place(c).y];
-        let symbol = bounds(&symbol).unwrap_or((at, at));
-        boxes.push(symbol);
         for (name, p) in part.ports {
             d.ports.push((format!("{}.{name}", c.id), p));
-            sides.push((symbol, matches!(c.kind, ComponentKind::Port { .. })));
         }
     }
 
@@ -971,36 +931,10 @@ fn parts_and_wires(
     let mut wires = Vec::new();
     // Finding dots compares points with wires, so only for wires an import could save.
     let dotted = circuit.layout.wires_are_bounded();
-    // Nets the layout doesn't trace are routed round the parts and the traced wires.
-    let traced: Vec<&[Point]> = (circuit.layout.wires.values().flatten())
-        .filter(|_| dotted)
-        .map(|w| &w.points[..])
-        .chain(frames.iter().map(|f| &f[..]))
-        .collect();
-    let untraced: Vec<&Net> = (circuit.nets.iter())
-        .filter(|n| !circuit.layout.wires.contains_key(&n.id))
-        .collect();
-    let to_route: Vec<Vec<route::End>> = (untraced.iter())
-        .map(|n| {
-            (n.ports.iter())
-                .filter_map(|p| {
-                    let key = format!("{}.{}", p.component, p.port);
-                    let i = d.ports.iter().position(|(k, _)| *k == key)?;
-                    let (part, any_side) = sides[i];
-                    Some(route::End {
-                        at: d.ports[i].1,
-                        part,
-                        any_side,
-                    })
-                })
-                .collect()
-        })
-        .collect();
-    let routed: std::collections::BTreeMap<&str, Vec<hydra_core::Wire>> = (untraced.iter())
-        .map(|n| n.id.as_str())
-        .zip(route::route(&boxes, &texts, &traced, &to_route))
-        .map(|(id, wires)| (id, wires.into_iter().map(hydra_core::Wire::from).collect()))
-        .collect();
+    let routed: std::collections::BTreeMap<String, Vec<hydra_core::Wire>> =
+        (automatic_wires(circuit, catalogue).into_iter())
+            .map(|(id, wires)| (id, wires.into_iter().map(hydra_core::Wire::from).collect()))
+            .collect();
     for net in &circuit.nets {
         if let Some(drawn) = (circuit.layout.wires.get(&net.id)).or(routed.get(net.id.as_str())) {
             // Pilot and drain wires are dashed.
@@ -1071,6 +1005,94 @@ fn parts_and_wires(
         }
     }
     (parts, d, outline)
+}
+
+/// The automatic wires of each net the layout leaves untraced, by net id, as polylines: routed
+/// round the parts, their designators and the traced wires, from the circuit alone. The
+/// renderer draws these, and a check can compare against them.
+fn automatic_wires(
+    circuit: &Circuit,
+    catalogue: &Catalogue,
+) -> std::collections::BTreeMap<String, Vec<Vec<Point>>> {
+    let place = |c: &Component| placement(circuit, &c.id);
+    let mut anchors: Vec<(String, Point)> = Vec::new();
+    // Each part's symbol box, without its text or status frame, and per port its part's box
+    // and whether its line may leave to any side, for the automatic wires. They keep clear of
+    // each designator where it goes without wires, on a side no port leaves from, so it can
+    // stay there, and off the rest of a part's text where they can. They may cross a status
+    // frame, as they may another net's wire, but not run along it.
+    let mut boxes = Vec::new();
+    let mut sides = Vec::new();
+    let mut texts = Vec::new();
+    let mut frames: Vec<Vec<Point>> = Vec::new();
+    for c in &circuit.components {
+        let Some(part) = render_component(c, place(c), catalogue) else {
+            continue;
+        };
+        if !matches!(c.kind, ComponentKind::Port { .. }) {
+            for p in &part.primitives {
+                if let (Primitive::Text { text, .. }, Some(b)) =
+                    (p, bounds(std::slice::from_ref(p)))
+                {
+                    if *text == c.id {
+                        &mut boxes
+                    } else {
+                        &mut texts
+                    }
+                    .push(b);
+                }
+                if let Primitive::Polyline {
+                    points,
+                    closed: true,
+                    dashed: true,
+                    ..
+                } = p
+                {
+                    frames.push(points.iter().chain(points.first()).copied().collect());
+                }
+            }
+        }
+        let symbol: Vec<Primitive> = (part.primitives.into_iter())
+            .filter(|p| !matches!(p, Primitive::Text { .. }))
+            .filter(|p| !matches!(p, Primitive::Polyline { dashed: true, .. }))
+            .collect();
+        let at = [place(c).x, place(c).y];
+        let symbol = bounds(&symbol).unwrap_or((at, at));
+        boxes.push(symbol);
+        for (name, p) in part.ports {
+            anchors.push((format!("{}.{name}", c.id), p));
+            sides.push((symbol, matches!(c.kind, ComponentKind::Port { .. })));
+        }
+    }
+
+    let traced: Vec<&[Point]> = (circuit.layout.wires.values().flatten())
+        .filter(|_| circuit.layout.wires_are_bounded())
+        .map(|w| &w.points[..])
+        .chain(frames.iter().map(|f| &f[..]))
+        .collect();
+    let untraced: Vec<&Net> = (circuit.nets.iter())
+        .filter(|n| !circuit.layout.wires.contains_key(&n.id))
+        .collect();
+    let to_route: Vec<Vec<route::End>> = (untraced.iter())
+        .map(|n| {
+            (n.ports.iter())
+                .filter_map(|p| {
+                    let key = format!("{}.{}", p.component, p.port);
+                    let i = anchors.iter().position(|(k, _)| *k == key)?;
+                    let (part, any_side) = sides[i];
+                    Some(route::End {
+                        at: anchors[i].1,
+                        part,
+                        any_side,
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    (untraced.iter())
+        .map(|n| n.id.clone())
+        .zip(route::route(&boxes, &texts, &traced, &to_route))
+        .collect()
 }
 
 /// Whether a line of `p` passes through the box `lo`-`hi` (Liang-Barsky clipping per segment).
