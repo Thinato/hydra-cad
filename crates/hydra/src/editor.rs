@@ -8,11 +8,12 @@ use eframe::egui::{self, Color32, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec
 use hydra_core::{
     Catalogue, CatalogueRef, Circuit, CircuitStatus, Command, Component, ComponentKind, Document,
     ExtraBomLine, Item, Layout, Placement, PortRef, Rotation, SCHEMA_VERSION, Severity, StandIn,
-    SymbolDef, ValveStatus, next_id, stand_ins,
+    SymbolDef, ValveStatus, WireEnd, next_id, stand_ins,
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
 use hydra_symbols::{
     Drawing, bounds, drawn_inside_outline, outline_issues, render_circuit, render_parts,
+    wire_problems, wire_warnings,
 };
 
 use crate::catalogue::Shared;
@@ -86,6 +87,14 @@ enum Drag {
     Pan,
 }
 
+/// A wire being drawn by hand: where it starts and its points so far, in sheet mm.
+struct Route {
+    from: WireEnd,
+    points: Vec<[f32; 2]>,
+    /// Started on a level (true) or upright (false) segment of a drawn wire.
+    level: Option<bool>,
+}
+
 enum Dialog {
     Open(Option<Vec<CircuitSummary>>),
     History {
@@ -147,6 +156,13 @@ pub struct SchematicEditor {
     /// How often `valve_status` was recomputed, for tests.
     status_computed: usize,
     swap: Option<Swap>,
+    /// Clicks draw wires: [`Self::route`] is the wire being drawn, once started.
+    wiring: bool,
+    route: Option<Route>,
+    /// The selected drawn wire: its net and index.
+    wire: Option<(String, usize)>,
+    /// Wire problems and warnings for (edit counter, catalogue loads), like `valve_status`.
+    wire_issues: Option<((u64, u64), Vec<String>)>,
 }
 
 impl SchematicEditor {
@@ -175,7 +191,24 @@ impl SchematicEditor {
             valve_status: None,
             status_computed: 0,
             swap: None,
+            wiring: false,
+            route: None,
+            wire: None,
+            wire_issues: None,
         }
+    }
+
+    /// What is wrong with the drawn wires, in plain words, computed once per change.
+    fn wire_issues(&mut self, shared: &Shared) -> Vec<String> {
+        let key = (self.doc.generation(), shared.catalogue_loads);
+        if self.wire_issues.as_ref().is_none_or(|(k, _)| *k != key) {
+            let (c, cat) = (&self.doc.circuit, &shared.catalogue);
+            self.wire_issues = Some((key, [wire_problems(c, cat), wire_warnings(c, cat)].concat()));
+        }
+        self.wire_issues
+            .as_ref()
+            .map(|(_, w)| w.clone())
+            .unwrap_or_default()
     }
 
     /// Valve statuses of the document against the catalogue, computed once per change.
@@ -242,6 +275,7 @@ impl SchematicEditor {
             current.import = None;
             self.doc = Document::new(current);
             self.valve_status = None;
+            self.wire_issues = None;
             self.name = sent.name.clone();
         }
         self.doc.mark_saved_as(sent);
@@ -340,18 +374,52 @@ impl SchematicEditor {
     }
 
     /// Apply `command` after any edit being typed, so edits land in the order they were made.
-    fn apply(&mut self, command: Command) {
+    /// Whether `command` was applied.
+    fn apply(&mut self, command: Command) -> bool {
         self.finish_edit();
-        self.execute(command);
+        self.execute(command)
     }
 
-    fn execute(&mut self, command: Command) {
-        self.status = self.doc.apply(command).err();
+    /// Apply `command`, saying why not if refused; whether it was applied.
+    fn execute(&mut self, command: Command) -> bool {
+        // An edit that drops drawn wires (moving, swapping, deleting a part...) says whose.
+        // Deleting a wire and drawing a net automatically drop them on purpose.
+        let quiet = matches!(
+            command,
+            Command::RemoveWire { .. } | Command::AutoWires { .. }
+        );
+        let wires = &self.doc.circuit.layout.wires;
+        let before = (!quiet && !wires.is_empty()).then(|| self.doc.circuit.clone());
+        let result = self.doc.apply(command);
+        let applied = result.is_ok();
+        self.status = result.err();
+        let count = |c: &Circuit| c.layout.wires.values().map(Vec::len).sum::<usize>();
+        if let Some(before) = before
+            && applied
+            && count(&self.doc.circuit) < count(&before)
+        {
+            let wires = &self.doc.circuit.layout.wires;
+            let gone: Vec<String> = (before.layout.wires.keys())
+                .filter(|net| !wires.contains_key(*net))
+                .map(|net| format!("net {}", net_name(&before, net)))
+                .collect();
+            if !gone.is_empty() {
+                self.status = Some(format!(
+                    "Dropped the drawn wires of {}; Undo brings them back.",
+                    gone.join(", ")
+                ));
+            }
+        }
         self.prune_selection();
+        applied
     }
 
     /// Undo the last edit; text being typed is finished first, so that is what gets undone.
     fn undo(&mut self) {
+        // Like Esc, it drops a wire being drawn first.
+        if self.route.take().is_some() {
+            return;
+        }
         self.finish_edit();
         self.status = self.doc.undo().map(|what| format!("Undid: {what}"));
         self.prune_selection();
@@ -370,6 +438,9 @@ impl SchematicEditor {
             .selected
             .take()
             .filter(|id| circuit.component(id).is_some());
+        self.wire = (self.wire.take())
+            .filter(|(net, i)| circuit.layout.wires.get(net).is_some_and(|w| *i < w.len()));
+        self.route = None;
     }
 
     /// Add a part in the middle of the view and select it. A part landing inside the block's
@@ -438,7 +509,9 @@ impl SchematicEditor {
     }
 
     fn delete_selected(&mut self) {
-        if let Some(id) = self.selected.take() {
+        if let Some((net, index)) = self.wire.take() {
+            self.apply(Command::RemoveWire { net, index });
+        } else if let Some(id) = self.selected.take() {
             self.apply(Command::Remove { id });
         }
     }
@@ -540,18 +613,23 @@ impl SchematicEditor {
         // While a circuit is being opened or restored, its reply will replace the document.
         let locked = self.awaiting.is_some();
         let status = self.circuit_status(shared);
+        let wire_issues = self.wire_issues(shared);
         ui.add_enabled_ui(!locked, |ui| {
             self.toolbar(ui, shared);
             self.import_banner(ui, shared);
             self.selection_bar(ui, &shared.catalogue, &status);
-            self.validation(ui, &shared.catalogue, &status);
+            self.validation(ui, &shared.catalogue, &status, &wire_issues);
             self.extra_lines(ui);
             self.notes(ui);
-            ui.weak(
+            ui.weak(if self.wiring {
+                "Click a port or a drawn wire to start a wire, click its corners, and finish on \
+             a port or wire; a wire to another net joins the nets. Esc or right-click cancels \
+             the wire, Esc again or W stops drawing."
+            } else {
                 "Drag parts to move them. Drag from a valve port to another port to connect \
              (Shift-drag from an external port). Right-click a port to disconnect. \
-             R rotates, Delete removes, double-click fits.",
-            );
+             R rotates, Delete removes, double-click fits. W draws wires; click one to select it."
+            });
             self.canvas(ui, &shared.catalogue, &status);
         });
         if !locked {
@@ -688,6 +766,8 @@ impl SchematicEditor {
                     catalogue,
                 );
             }
+            ui.toggle_value(&mut self.wiring, "Draw wires")
+                .on_hover_text("Draw a net's wires by hand (W)");
             ui.menu_button("Add part", |ui| {
                 let parts = [
                     ("Test point", SymbolDef::TestPoint),
@@ -958,6 +1038,22 @@ impl SchematicEditor {
     }
 
     fn selection_bar(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue, status: &CircuitStatus) {
+        if let Some((net, index)) = self.wire.clone() {
+            ui.horizontal_wrapped(|ui| {
+                let name = net_name(&self.doc.circuit, &net);
+                ui.strong(format!("Wire {} of net {name}", index + 1));
+                if ui.button("Delete wire").clicked() {
+                    self.delete_selected();
+                }
+                if ui
+                    .button("Draw net automatically")
+                    .on_hover_text("Drop all of this net's drawn wires and draw it with elbows")
+                    .clicked()
+                {
+                    self.apply(Command::AutoWires { net });
+                }
+            });
+        }
         let Some(c) = self
             .selected
             .as_ref()
@@ -1102,17 +1198,19 @@ impl SchematicEditor {
                 }
             });
             match done {
-                Some(true) => self.apply(Command::Use {
-                    id: c.id.clone(),
-                    valve_type: swap.stand_in.valve_type.clone(),
-                    part: swap.stand_in.part.clone(),
-                    stand_in: !swap.stand_in.exact,
-                    port_map: swap
-                        .ports
-                        .into_iter()
-                        .filter_map(|(o, n)| Some((o, n?)))
-                        .collect(),
-                }),
+                Some(true) => {
+                    _ = self.apply(Command::Use {
+                        id: c.id.clone(),
+                        valve_type: swap.stand_in.valve_type.clone(),
+                        part: swap.stand_in.part.clone(),
+                        stand_in: !swap.stand_in.exact,
+                        port_map: swap
+                            .ports
+                            .into_iter()
+                            .filter_map(|(o, n)| Some((o, n?)))
+                            .collect(),
+                    })
+                }
                 Some(false) => {}
                 None => self.swap = Some(swap),
             }
@@ -1163,7 +1261,13 @@ impl SchematicEditor {
         }
     }
 
-    fn validation(&self, ui: &mut egui::Ui, catalogue: &Catalogue, status: &CircuitStatus) {
+    fn validation(
+        &self,
+        ui: &mut egui::Ui,
+        catalogue: &Catalogue,
+        status: &CircuitStatus,
+        wires: &[String],
+    ) {
         let issues: Vec<(Severity, String)> = catalogue
             .problems()
             .into_iter()
@@ -1177,6 +1281,8 @@ impl SchematicEditor {
                     .chain(&status.issues)
                     .map(|i| (i.severity(), i.to_string())),
             )
+            // Warnings: a net being drawn is incomplete until its last wire is in.
+            .chain(wires.iter().map(|w| (Severity::Warning, w.clone())))
             .collect();
         let errors = issues.iter().filter(|(s, _)| *s == Severity::Error).count();
         let title = format!(
@@ -1204,6 +1310,13 @@ impl SchematicEditor {
     fn canvas(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue, status: &CircuitStatus) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.view = rect;
+        if self.wiring {
+            // Delete, R and M must not act on a part selected before drawing started.
+            self.selected = None;
+            self.wire = None;
+        } else {
+            self.route = None;
+        }
 
         // What to draw: the document, with a part being dragged shown at its new spot.
         let mut shown = self.doc.circuit.clone();
@@ -1213,14 +1326,19 @@ impl SchematicEditor {
         let drawing = render_circuit(&shown, catalogue);
         let parts = render_parts(&shown, catalogue);
 
-        if response.double_clicked() || self.fitted_to.is_some_and(|s| s != rect.size()) {
+        // Not while drawing wires, where corners are clicked in quick succession.
+        let refit = response.double_clicked() && !self.wiring;
+        if refit || self.fitted_to.is_some_and(|s| s != rect.size()) {
             (self.pan, self.zoom) = fit(&drawing.primitives, rect.size());
             self.fitted_to = Some(rect.size());
         }
         let reach = PORT_REACH / self.zoom;
         let shift = ui.input(|i| i.modifiers.shift);
 
-        if response.drag_started()
+        // While drawing wires, dragging only pans.
+        if self.wiring && response.drag_started() {
+            self.drag = Some(Drag::Pan);
+        } else if response.drag_started()
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
         {
             let p = self.to_sheet(origin);
@@ -1269,7 +1387,7 @@ impl SchematicEditor {
                     if let Some((to, _)) = port_at(&parts, &shown, end, reach, true)
                         && to != from
                     {
-                        self.apply(Command::Connect { a: from, b: to });
+                        self.connect(from, to);
                     }
                 }
                 _ => {}
@@ -1278,9 +1396,26 @@ impl SchematicEditor {
         if response.clicked()
             && let Some(pos) = response.interact_pointer_pos()
         {
-            self.selected = part_at(&parts, self.to_sheet(pos));
+            let p = self.to_sheet(pos);
+            if self.wiring {
+                self.wire_click(&parts, &shown, p, reach);
+            } else {
+                // A part, or else a drawn wire.
+                self.selected = part_at(&parts, p);
+                self.wire = (self.selected.is_none())
+                    .then(|| wire_at(&shown, p, reach, None).map(|(net, i, ..)| (net, i)))
+                    .flatten();
+            }
+        }
+        // One selection at a time: a part selected by dragging or adding it drops a wire's.
+        if self.selected.is_some() {
+            self.wire = None;
+        }
+        if self.wiring && response.secondary_clicked() {
+            self.route = None;
         }
         if response.secondary_clicked()
+            && !self.wiring
             && let Some(pos) = response.interact_pointer_pos()
             && let Some((port, _)) = port_at(&parts, &shown, self.to_sheet(pos), reach, true)
         {
@@ -1327,11 +1462,134 @@ impl SchematicEditor {
             painter.line_segment([self.to_screen(*start), self.to_screen(*end)], accent);
         }
         let hover = response.hover_pos().map(|p| self.to_sheet(p));
-        let target =
-            hover.and_then(|p| port_at(&parts, &shown, p, reach, shift || self.drag.is_some()));
-        if let Some((_, at)) = target {
+        let line = |points: &[[f32; 2]], width: f32| {
+            let points = points.iter().map(|p| self.to_screen(*p)).collect();
+            egui::Shape::line(points, Stroke::new(width, ACCENT))
+        };
+        if let Some(w) = (self.wire.as_ref())
+            .and_then(|(net, i)| self.doc.circuit.layout.wires.get(net)?.get(*i))
+        {
+            painter.add(line(&w.points, 3.0));
+        }
+        let last = self.route.as_ref().and_then(|r| r.points.last().copied());
+        let target = match hover {
+            Some(p) if self.wiring => end_at(&parts, &shown, p, reach, last).map(|(_, at, _)| at),
+            Some(p) => {
+                port_at(&parts, &shown, p, reach, shift || self.drag.is_some()).map(|(_, at)| at)
+            }
+            None => None,
+        };
+        // The wire being drawn, on to where a click would put its next point.
+        if let Some(r) = &self.route {
+            let mut points = r.points.clone();
+            if let (Some(p), Some(last)) = (hover, last) {
+                let prev = came_from(&r.points, r.level, target.unwrap_or(p));
+                points.extend(next_points(prev, last, p, target));
+            }
+            painter.add(line(&points, 1.5));
+        }
+        if let Some(at) = target {
             painter.circle_stroke(self.to_screen(at), 5.0, accent);
         }
+    }
+
+    /// A click at `p` while drawing wires: start a wire on a port or a drawn wire, add a corner,
+    /// or finish on a port or wire.
+    fn wire_click(
+        &mut self,
+        parts: &[(String, Drawing)],
+        circuit: &Circuit,
+        p: [f32; 2],
+        reach: f32,
+    ) {
+        let last = self.route.as_ref().and_then(|r| r.points.last().copied());
+        let end = end_at(parts, circuit, p, reach, last);
+        let Some(Route {
+            from,
+            mut points,
+            level,
+        }) = self.route.take()
+        else {
+            match end {
+                Some((from, at, level)) => {
+                    let points = vec![at];
+                    self.route = Some(Route {
+                        from,
+                        points,
+                        level,
+                    });
+                }
+                None => self.status = Some("Start a wire on a port or a drawn wire.".into()),
+            }
+            return;
+        };
+        let (clicked, last) = (points.clone(), last.expect("a wire starts with a point"));
+        let onto = end.as_ref().map(|(_, at, _)| *at);
+        let prev = came_from(&points, level, onto.unwrap_or(p));
+        points.extend(next_points(prev, last, p, onto));
+        let points = straighten(points);
+        let Some((to, ..)) = end.filter(|_| points.len() >= 2) else {
+            // Back on its start, or a corner: carry on drawing.
+            self.route = Some(Route {
+                from,
+                points,
+                level,
+            });
+            return;
+        };
+        let net_of = |end: &WireEnd| match end {
+            WireEnd::Port(p) => {
+                (circuit.nets.iter().find(|n| n.ports.contains(p))).map(|n| n.id.clone())
+            }
+            WireEnd::Net(id) => Some(id.clone()),
+        };
+        let joined = (net_of(&from).zip(net_of(&to))).filter(|(a, b)| a != b);
+        let draw = Command::DrawWire {
+            from: from.clone(),
+            to,
+            points,
+        };
+        if !self.apply(draw) {
+            // Refused: keep the corners clicked so far.
+            self.route = Some(Route {
+                from,
+                points: clicked,
+                level,
+            });
+        } else if let Some((a, b)) = joined {
+            // A missed click near another net's wire joins nets; make sure that is seen.
+            self.status = Some(joined_message(circuit, &self.doc.circuit, &a, &b));
+        }
+    }
+
+    /// Connect two ports by dragging. Joining two nets, or a port joining a net drawn by hand
+    /// (whose wires don't reach the port), is said in the status line.
+    fn connect(&mut self, a: PortRef, b: PortRef) {
+        let before = self.doc.circuit.clone();
+        let net = |c: &Circuit, p: &PortRef| {
+            (c.nets.iter().find(|n| n.ports.contains(p))).map(|n| n.id.clone())
+        };
+        let (na, nb) = (net(&before, &a), net(&before, &b));
+        if !self.apply(Command::Connect {
+            a: a.clone(),
+            b: b.clone(),
+        }) {
+            return;
+        }
+        let after = &self.doc.circuit;
+        let kept = net(after, &a).expect("connected");
+        self.status = match (na, nb) {
+            (Some(na), Some(nb)) => Some(joined_message(&before, after, &na, &nb)),
+            (Some(_), None) | (None, Some(_)) if after.layout.wires.contains_key(&kept) => {
+                let port = if net(&before, &a).is_some() { b } else { a };
+                Some(format!(
+                    "{port} joined net {}, which is drawn by hand; draw a wire to it (W) or \
+                     choose Draw net automatically.",
+                    net_name(after, &kept)
+                ))
+            }
+            _ => None,
+        };
     }
 
     fn keys(&mut self, ui: &mut egui::Ui, shared: &Shared) {
@@ -1339,7 +1597,7 @@ impl SchematicEditor {
         if self.dialog.is_some() || ui.ctx().egui_wants_keyboard_input() {
             return;
         }
-        let (save, redo, undo, delete, rotate, mirror, escape) = ui.input_mut(|i| {
+        let (save, redo, undo, delete, rotate, mirror, escape, wires) = ui.input_mut(|i| {
             let redo = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
                 || i.consume_key(Modifiers::CTRL, Key::Y);
             (
@@ -1351,6 +1609,7 @@ impl SchematicEditor {
                 i.consume_key(Modifiers::NONE, Key::R),
                 i.consume_key(Modifiers::NONE, Key::M),
                 i.consume_key(Modifiers::NONE, Key::Escape),
+                i.consume_key(Modifiers::NONE, Key::W),
             )
         });
         if save && self.can_save(shared) {
@@ -1370,9 +1629,17 @@ impl SchematicEditor {
         if mirror {
             self.mirror_selected();
         }
+        if wires {
+            self.wiring = !self.wiring;
+        }
+        // Esc drops the wire being drawn, or else stops drawing wires and clears the selection.
         if escape {
             self.drag = None;
-            self.selected = None;
+            if self.route.take().is_none() {
+                self.wiring = false;
+                self.selected = None;
+                self.wire = None;
+            }
         }
     }
 
@@ -1700,6 +1967,150 @@ fn part_at(parts: &[(String, Drawing)], p: [f32; 2]) -> Option<String> {
     })
 }
 
+/// A net's name, or else its id.
+fn net_name(circuit: &Circuit, id: &str) -> String {
+    (circuit.nets.iter().find(|n| n.id == id))
+        .and_then(|n| n.name.clone())
+        .unwrap_or_else(|| id.into())
+}
+
+/// Where a wire may start or end near `p`: a port, or else a drawn wire, the point on it and
+/// whether that segment is level. A wire coming from `from` ends straight on a wire that runs
+/// across its way.
+fn end_at(
+    parts: &[(String, Drawing)],
+    circuit: &Circuit,
+    p: [f32; 2],
+    reach: f32,
+    from: Option<[f32; 2]>,
+) -> Option<(WireEnd, [f32; 2], Option<bool>)> {
+    port_at(parts, circuit, p, reach, true)
+        .map(|(port, at)| (WireEnd::Port(port), at, None))
+        .or_else(|| {
+            let (net, _, at, level) = wire_at(circuit, p, reach, from)?;
+            Some((WireEnd::Net(net), at, Some(level)))
+        })
+}
+
+/// "Joined nets P and T into net P", from the nets' names before and the kept net `a`'s name
+/// after (it takes `b`'s when it had none), naming a name dropped because both had one.
+fn joined_message(before: &Circuit, after: &Circuit, a: &str, b: &str) -> String {
+    let named = |id: &str| (before.nets.iter()).any(|n| n.id == id && n.name.is_some());
+    let (na, nb) = (net_name(before, a), net_name(before, b));
+    let dropped = if named(a) && named(b) {
+        format!("; {nb}'s name was dropped")
+    } else {
+        String::new()
+    };
+    let kept = net_name(after, a);
+    format!("Joined nets {na} and {nb} into net {kept}{dropped}. Undo to split them again.")
+}
+
+/// The drawn wire nearest `p` within `reach`: its net, its index, a point on it (straight
+/// across or down from `from` when the segment spans it, else the grid point nearest `p`), and
+/// whether that segment is level.
+fn wire_at(
+    circuit: &Circuit,
+    p: [f32; 2],
+    reach: f32,
+    from: Option<[f32; 2]>,
+) -> Option<(String, usize, [f32; 2], bool)> {
+    let grid = [snap(p[0]), snap(p[1])];
+    (circuit.layout.wires.iter())
+        .flat_map(|(net, wires)| wires.iter().enumerate().map(move |(i, w)| (net, i, w)))
+        .flat_map(|(net, i, w)| w.points.windows(2).map(move |s| (net, i, s[0], s[1])))
+        .map(|(net, i, a, b)| {
+            let q = nearest(a, b, p);
+            ((q[0] - p[0]).hypot(q[1] - p[1]), net, i, a, b)
+        })
+        .filter(|(dist, ..)| *dist <= reach)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, net, i, a, b)| {
+            let across = from
+                .map(|f| (f, nearest(a, b, f)))
+                .filter(|(f, q)| f[0] == q[0] || f[1] == q[1]);
+            let at = across.map_or_else(|| nearest(a, b, grid), |(_, q)| q);
+            (net.clone(), i, at, a[1] == b[1])
+        })
+}
+
+/// The point of the segment `a`-`b` nearest `p`; exact on level and upright segments.
+fn nearest(a: [f32; 2], b: [f32; 2], p: [f32; 2]) -> [f32; 2] {
+    if a[0] == b[0] {
+        return [a[0], p[1].clamp(a[1].min(b[1]), a[1].max(b[1]))];
+    }
+    if a[1] == b[1] {
+        return [p[0].clamp(a[0].min(b[0]), a[0].max(b[0])), a[1]];
+    }
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let len2 = d[0] * d[0] + d[1] * d[1];
+    let t = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / len2).clamp(0.0, 1.0);
+    [a[0] + t * d[0], a[1] + t * d[1]]
+}
+
+/// The point a wire being drawn came from to its last point, which sets the way its last
+/// segment runs. A wire started on a `level` (or upright) drawn wire counts as coming square off
+/// it towards `to`, so its elbow never runs back along that wire.
+fn came_from(points: &[[f32; 2]], level: Option<bool>, to: [f32; 2]) -> Option<[f32; 2]> {
+    if let [.., q, _] = points[..] {
+        return Some(q);
+    }
+    let [x, y] = *points.last()?;
+    level.map(|level| {
+        if level {
+            [x, y - (to[1] - y).signum()]
+        } else {
+            [x - (to[0] - x).signum(), y]
+        }
+    })
+}
+
+/// The points a click at `p` adds to a wire that has got to `last` from `prev`: straight on to
+/// `onto`, the port or wire the click landed on, with an elbow when it isn't lined up with
+/// `last`; otherwise a corner on the grid straight across or down from `last`.
+fn next_points(
+    prev: Option<[f32; 2]>,
+    last: [f32; 2],
+    p: [f32; 2],
+    onto: Option<[f32; 2]>,
+) -> Vec<[f32; 2]> {
+    // Half the 0.5 mm the wire checks allow, so a point this close counts as lined up.
+    const LINED_UP: f32 = 0.25;
+    match onto {
+        Some([x, y]) if (x - last[0]).abs() < LINED_UP => vec![[last[0], y]],
+        Some([x, y]) if (y - last[1]).abs() < LINED_UP => vec![[x, last[1]]],
+        Some([x, y]) => {
+            // Carry on the way the last segment runs, unless that doubles back; then turn.
+            let ahead =
+                |k: usize| prev.is_some_and(|q| ([x, y][k] - last[k]) * (last[k] - q[k]) > 0.0);
+            let level = prev.is_some_and(|q| q[1] == last[1]);
+            if ahead(1) || (level && !ahead(0)) {
+                vec![[last[0], y], [x, y]]
+            } else {
+                vec![[x, last[1]], [x, y]]
+            }
+        }
+        None if (p[0] - last[0]).abs() >= (p[1] - last[1]).abs() => vec![[snap(p[0]), last[1]]],
+        None => vec![[last[0], snap(p[1])]],
+    }
+}
+
+/// `points` without repeats or corners that don't turn.
+fn straighten(points: Vec<[f32; 2]>) -> Vec<[f32; 2]> {
+    let mut out: Vec<[f32; 2]> = Vec::new();
+    for p in points {
+        if let [.., a, b] = out[..]
+            && ((a[0] == b[0] && b[0] == p[0]) || (a[1] == b[1] && b[1] == p[1]))
+        {
+            out.pop();
+        }
+        if out.last() != Some(&p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
 /// The port anchor nearest `p` within `reach`. External ports (whose anchor is the whole part)
 /// only count when `include_external`, so that dragging one moves it instead.
 fn port_at(
@@ -1861,6 +2272,384 @@ mod tests {
         h.run();
         assert!(h.state().0.doc.circuit.component("X1").is_none());
         assert!(h.state().0.doc.is_dirty());
+    }
+
+    /// External ports X1 at 0, 0, X2 at 30, 0 and X3 at 0, 30 on net n1, and X4 at 30, 30 on none.
+    fn wiring_harness() -> Harness<'static, State> {
+        let mut h = harness();
+        let doc = &mut h.state_mut().0.doc;
+        for (id, x, y) in [
+            ("X1", 0.0, 0.0),
+            ("X2", 30.0, 0.0),
+            ("X3", 0.0, 30.0),
+            ("X4", 30.0, 30.0),
+        ] {
+            let component = Component {
+                id: id.into(),
+                kind: ComponentKind::Port {
+                    label: id.into(),
+                    plugged: false,
+                },
+            };
+            let placement = Placement {
+                x,
+                y,
+                ..Placement::default()
+            };
+            (doc.apply(Command::Add {
+                component,
+                placement,
+                in_block: false,
+            }))
+            .unwrap();
+        }
+        for b in ["X2", "X3"] {
+            let port = |c: &str| PortRef {
+                component: c.into(),
+                port: PORT_PIN.into(),
+            };
+            doc.apply(Command::Connect {
+                a: port("X1"),
+                b: port(b),
+            })
+            .unwrap();
+        }
+        h.run();
+        h
+    }
+
+    /// Click the canvas at sheet point `p`.
+    fn click_sheet(h: &mut Harness<State>, p: [f32; 2], button: egui::PointerButton) {
+        let at = h.state().0.to_screen(p);
+        click(h, at, button);
+        // Spaced out, so two clicks are never a double-click.
+        h.run_steps(20);
+    }
+
+    fn wires(h: &Harness<State>) -> Vec<Vec<[f32; 2]>> {
+        let wires = &h.state().0.doc.circuit.layout.wires;
+        (wires.get("n1").into_iter().flatten())
+            .map(|w| w.points.clone())
+            .collect()
+    }
+
+    #[test]
+    fn drawing_cancelling_deleting_and_resetting_wires() {
+        use egui::PointerButton::{Primary, Secondary};
+        let mut h = wiring_harness();
+        let first = vec![[0.0, 0.0], [0.0, -10.0], [30.0, -10.0], [30.0, 0.0]];
+
+        // Draw from X1 up, then on to X2: the last click adds the elbow above X2.
+        h.get_by_label("Draw wires").click();
+        h.run();
+        for p in [[0.3, 0.2], [2.0, -10.4], [30.2, 0.1]] {
+            click_sheet(&mut h, p, Primary);
+        }
+        assert_eq!(wires(&h), std::slice::from_ref(&first));
+        let e = &h.state().0;
+        assert_eq!(
+            e.doc.undo_label(),
+            Some("Draw a wire from X1.port to X2.port")
+        );
+        // X3 is on the net, but no drawn wire reaches it yet.
+        h.get_by_label_contains("Validation:").click();
+        h.run_steps(2);
+        let missing = "port X3.port at 0, 30 is on net n1, but none of the net's wires reaches it";
+        assert!(h.query_by_label_contains(missing).is_some());
+
+        // Esc, or a right-click, drops a wire being drawn; Esc again stops drawing.
+        click_sheet(&mut h, [0.0, 30.0], Primary);
+        click_sheet(&mut h, [10.0, 30.5], Primary);
+        h.key_press(Key::Escape);
+        h.run();
+        assert!(h.state().0.route.is_none() && h.state().0.wiring);
+        click_sheet(&mut h, [0.0, 30.0], Primary);
+        click_sheet(&mut h, [10.0, 30.5], Primary);
+        click_sheet(&mut h, [10.0, 30.5], Secondary);
+        assert!(h.state().0.route.is_none());
+        assert_eq!(wires(&h).len(), 1);
+        h.key_press(Key::Escape);
+        h.run();
+        assert!(!h.state().0.wiring);
+
+        // From loose X4 on to the wire: X4 joins net n1.
+        h.key_press(Key::W);
+        h.run();
+        click_sheet(&mut h, [30.0, 30.0], Primary);
+        click_sheet(&mut h, [15.3, 30.4], Primary);
+        // Clicked off the corner's line, but the wire runs across its way: no elbow.
+        click_sheet(&mut h, [22.6, -10.2], Primary);
+        assert_eq!(nets(&h), [["X1.port", "X2.port", "X3.port", "X4.port"]]);
+        assert_eq!(wires(&h)[1], [[30.0, 30.0], [15.0, 30.0], [15.0, -10.0]]);
+        h.key_press(Key::W);
+        h.run();
+
+        // Click the new wire to select it, and delete it.
+        click_sheet(&mut h, [15.4, 15.0], Primary);
+        assert!(h.query_by_label("Wire 2 of net n1").is_some());
+        h.key_press(Key::Delete);
+        h.run();
+        assert_eq!(wires(&h), std::slice::from_ref(&first));
+        assert_eq!(
+            h.state().0.doc.undo_label(),
+            Some("Delete wire 2 of net n1")
+        );
+
+        // Select the first and send the net back to automatic elbows.
+        click_sheet(&mut h, [12.0, -9.8], Primary);
+        h.get_by_label("Draw net automatically").click();
+        h.run();
+        assert!(h.state().0.doc.circuit.layout.wires.is_empty());
+        assert!(h.query_by_label_contains(missing).is_none());
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert_eq!(wires(&h), [first]);
+        assert!(
+            h.query_by_label_contains(missing).is_some(),
+            "the warning is back"
+        );
+    }
+
+    #[test]
+    fn clicking_a_wire_between_grid_points_when_zoomed_in_and_its_buttons() {
+        let mut h = wiring_harness();
+        let doc = &mut h.state_mut().0.doc;
+        doc.circuit.nets[0].name = Some("P".into());
+        let wire = vec![[0.0, 0.0], [0.0, -10.0], [30.0, -10.0], [30.0, 0.0]];
+        doc.circuit
+            .layout
+            .wires
+            .insert("n1".into(), vec![wire.into()]);
+        // Zoom in on 11.25, -10: midway between grid points, farther from them than reach.
+        let e = &mut h.state_mut().0;
+        e.zoom = 20.0;
+        e.pan = e.view.size() / 2.0 - Vec2::new(11.25, -10.0) * e.zoom;
+        h.run();
+        click_sheet(&mut h, [11.25, -10.1], egui::PointerButton::Primary);
+        assert!(h.query_by_label("Wire 1 of net P").is_some());
+        h.get_by_label("Delete wire").click();
+        h.run();
+        assert!(wires(&h).is_empty());
+        assert_eq!(
+            h.state().0.doc.undo_label(),
+            Some("Delete wire 1 of net n1")
+        );
+    }
+
+    #[test]
+    fn a_wire_joining_two_named_nets_says_so() {
+        let mut h = wiring_harness();
+        let doc = &mut h.state_mut().0.doc;
+        let component = Component {
+            id: "X5".into(),
+            kind: ComponentKind::Port {
+                label: "X5".into(),
+                plugged: false,
+            },
+        };
+        let placement = Placement {
+            x: 60.0,
+            y: 30.0,
+            ..Placement::default()
+        };
+        (doc.apply(Command::Add {
+            component,
+            placement,
+            in_block: false,
+        }))
+        .unwrap();
+        let port = |c: &str| PortRef {
+            component: c.into(),
+            port: PORT_PIN.into(),
+        };
+        (doc.apply(Command::Connect {
+            a: port("X4"),
+            b: port("X5"),
+        }))
+        .unwrap();
+        doc.circuit.nets[0].name = Some("P".into());
+        doc.circuit.nets[1].name = Some("T".into());
+        h.run();
+        h.key_press(Key::W);
+        h.run();
+        click_sheet(&mut h, [30.0, 30.0], egui::PointerButton::Primary);
+        click_sheet(&mut h, [30.0, 0.0], egui::PointerButton::Primary);
+        assert_eq!(nets(&h).len(), 1);
+        let said =
+            "Joined nets T and P into net T; P's name was dropped. Undo to split them again.";
+        assert!(h.query_by_label(said).is_some());
+    }
+
+    #[test]
+    fn drawing_mode_ignores_a_part_selected_before_and_edits_cancel_a_wire() {
+        use egui::PointerButton::Primary;
+        let mut h = wiring_harness();
+        h.state_mut()
+            .0
+            .doc
+            .circuit
+            .layout
+            .wires
+            .insert("n1".into(), vec![vec![[0.0, 0.0], [30.0, 0.0]].into()]);
+        // Moving a part drops its nets' drawn wires, and says so.
+        click_sheet(&mut h, [30.0, 0.0], Primary);
+        assert_eq!(h.state().0.selected(), Some("X2"));
+        h.key_press(Key::R);
+        h.run();
+        assert!(wires(&h).is_empty());
+        let said = "Dropped the drawn wires of net n1; Undo brings them back.";
+        assert!(h.query_by_label(said).is_some());
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert_eq!(wires(&h).len(), 1);
+        // So does disconnecting a port with a right-click.
+        click_sheet(&mut h, [0.0, 30.0], egui::PointerButton::Secondary);
+        assert!(wires(&h).is_empty());
+        assert!(h.query_by_label(said).is_some());
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert_eq!(wires(&h).len(), 1);
+
+        // With X2 selected, start drawing: Delete, R and M leave X2 alone.
+        click_sheet(&mut h, [30.0, 0.0], Primary);
+        assert_eq!(h.state().0.selected(), Some("X2"));
+        h.key_press(Key::W);
+        h.run();
+        let generation = h.state().0.doc.generation();
+        for key in [Key::Delete, Key::R, Key::M] {
+            h.key_press(key);
+            h.run();
+        }
+        assert_eq!(h.state().0.doc.generation(), generation);
+
+        // A loop back to its own loose port is refused, and keeps the corners clicked.
+        for p in [[30.0, 30.0], [40.0, 30.2], [40.2, 40.0], [30.0, 30.0]] {
+            click_sheet(&mut h, p, Primary);
+        }
+        let corners = Some(vec![[30.0, 30.0], [40.0, 30.0], [40.0, 40.0]]);
+        let route = |h: &Harness<State>| h.state().0.route.as_ref().map(|r| r.points.clone());
+        assert_eq!(route(&h), corners);
+        // Still refused when the click also finishes an edit being typed, which is applied.
+        let (e, shared) = &mut *h.state_mut();
+        e.doc.circuit.import = Some(hydra_core::Import::default());
+        e.editing = Some(Editing {
+            field: Field::Notes,
+            id: egui::Id::new("notes"),
+            original: String::new(),
+            text: "Typed (demo).".into(),
+        });
+        let circuit = e.doc.circuit.clone();
+        let parts = render_parts(&circuit, &shared.catalogue);
+        e.wire_click(&parts, &circuit, [30.0, 30.0], PORT_REACH / e.zoom);
+        assert_eq!(route(&h), corners);
+        let typed = "Edit the import notes";
+        assert_eq!(h.state().0.doc.undo_label(), Some(typed));
+        // Undo cancels the wire being drawn, and only that.
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        h.run();
+        assert!(h.state().0.route.is_none());
+        assert_eq!(h.state().0.doc.undo_label(), Some(typed));
+    }
+
+    #[test]
+    fn connecting_by_dragging_says_when_the_net_is_drawn_by_hand_or_nets_join() {
+        let mut h = wiring_harness();
+        let port = |c: &str| PortRef {
+            component: c.into(),
+            port: PORT_PIN.into(),
+        };
+        let e = &mut h.state_mut().0;
+        e.doc.circuit.nets[0].name = Some("P".into());
+        let wire = vec![vec![[0.0, 0.0], [30.0, 0.0]].into()];
+        e.doc.circuit.layout.wires.insert("n1".into(), wire);
+        e.connect(port("X4"), port("X1"));
+        assert_eq!(
+            e.status.as_deref(),
+            Some(
+                "X4.port joined net P, which is drawn by hand; draw a wire to it (W) or choose \
+                 Draw net automatically."
+            )
+        );
+        assert_eq!(e.doc.circuit.layout.wires["n1"].len(), 1, "the wires stay");
+        // An unnamed net joined by a named one takes its name.
+        e.undo();
+        e.doc.circuit.nets[0].name = None;
+        let x3 = Command::Disconnect { port: port("X3") };
+        e.doc.apply(x3).unwrap();
+        (e.doc.apply(Command::Connect {
+            a: port("X4"),
+            b: port("X3"),
+        }))
+        .unwrap();
+        e.doc.circuit.nets[1].name = Some("T".into());
+        e.connect(port("X1"), port("X4"));
+        assert_eq!(
+            e.status.as_deref(),
+            Some("Joined nets n1 and T into net T. Undo to split them again.")
+        );
+        // Joining nets moves the wires, which is not dropping them.
+        e.undo();
+        let wire = vec![vec![[0.0, 30.0], [30.0, 30.0]].into()];
+        e.doc.circuit.layout.wires.insert("n2".into(), wire);
+        let join = Command::Connect {
+            a: port("X1"),
+            b: port("X4"),
+        };
+        assert!(e.apply(join));
+        assert_eq!(e.status, None);
+    }
+
+    #[test]
+    fn wire_points_line_up_and_drop_corners_that_dont_turn() {
+        // A corner straight across or down from the last point, on the grid.
+        assert_eq!(
+            next_points(None, [1.0, 1.0], [9.1, 2.0], None),
+            [[10.0, 1.0]]
+        );
+        assert_eq!(
+            next_points(None, [1.0, 1.0], [2.0, -9.1], None),
+            [[1.0, -10.0]]
+        );
+        // On to a port: straight when within a quarter millimetre of lined up.
+        let onto = |prev, to| next_points(prev, [1.0, 1.0], [0.0, 0.0], Some(to));
+        assert_eq!(onto(None, [1.2, 7.0]), [[1.0, 7.0]]);
+        // Else an elbow: across first from a port, else on the way the last segment runs,
+        // unless that doubles back.
+        assert_eq!(onto(None, [5.0, 7.0]), [[5.0, 1.0], [5.0, 7.0]]);
+        assert_eq!(
+            onto(Some([1.0, -4.0]), [5.0, 7.0]),
+            [[1.0, 7.0], [5.0, 7.0]]
+        );
+        assert_eq!(onto(Some([1.0, 4.0]), [5.0, 7.0]), [[5.0, 1.0], [5.0, 7.0]]);
+        assert_eq!(
+            onto(Some([-3.0, 1.0]), [5.0, 7.0]),
+            [[5.0, 1.0], [5.0, 7.0]]
+        );
+        assert_eq!(onto(Some([8.0, 1.0]), [5.0, 7.0]), [[1.0, 7.0], [5.0, 7.0]]);
+        // A wire started on a level drawn wire leaves it upright, and on an upright one level.
+        let start = |level, to| {
+            let prev = came_from(&[[1.0, 1.0]], Some(level), to);
+            next_points(prev, [1.0, 1.0], [0.0, 0.0], Some(to))
+        };
+        assert_eq!(start(true, [5.0, 7.0]), [[1.0, 7.0], [5.0, 7.0]]);
+        assert_eq!(start(true, [5.0, -7.0]), [[1.0, -7.0], [5.0, -7.0]]);
+        assert_eq!(start(false, [-5.0, 7.0]), [[-5.0, 1.0], [-5.0, 7.0]]);
+        // The nearest point of a level or upright segment is exact.
+        assert_eq!(nearest([0.0, 2.5], [0.0, 40.0], [3.0, 12.5]), [0.0, 12.5]);
+        assert_eq!(nearest([-7.5, 0.0], [40.0, 0.0], [22.5, 3.0]), [22.5, 0.0]);
+        let points = vec![
+            [0.0, 0.0],
+            [0.0, 5.0],
+            [0.0, 10.0],
+            [0.0, 10.0],
+            [5.0, 10.0],
+        ];
+        assert_eq!(straighten(points), [[0.0, 0.0], [0.0, 10.0], [5.0, 10.0]]);
+        // Doubling back to a point leaves it once.
+        assert_eq!(
+            straighten(vec![[0.0, 0.0], [5.0, 0.0], [0.0, 0.0]]),
+            [[0.0, 0.0]]
+        );
     }
 
     #[test]
@@ -2079,7 +2868,10 @@ mod tests {
         assert!(h.state().0.dialog.is_none());
         assert!(h.state().0.in_flight.is_some(), "the copy is being saved");
         // The reply for a copy names a new circuit at revision 1.
+        assert!(h.state().0.wire_issues.is_some());
         h.state_mut().0.circuit_saved("c2".into(), 1);
+        // The copy is a new document: nothing cached about the original carries over.
+        assert!(h.state().0.wire_issues.is_none() && h.state().0.valve_status.is_none());
         assert_eq!(
             h.state()
                 .0
@@ -2391,8 +3183,19 @@ mod tests {
         h.get_by_label("DEMO-06 4-3-T-B").click();
         h.run_steps(2);
         assert!(h.query_by_label("Connect 5.1's ports as:").is_some());
+        let doc = &mut h.state_mut().0.doc;
+        let net = (doc.circuit.nets.iter())
+            .find(|n| n.ports.iter().any(|p| p.component == "5.1"))
+            .unwrap()
+            .clone();
+        let wire = vec![vec![[0.0, 0.0], [10.0, 0.0]].into()];
+        doc.circuit.layout.wires.insert(net.id.clone(), wire);
         h.get_by_label("Swap").click();
         h.run_steps(2);
+        // Swapping drops the drawn wires of the valve's nets, and says so.
+        let name = net.name.unwrap_or(net.id);
+        let said = format!("Dropped the drawn wires of net {name}; Undo brings them back.");
+        assert!(h.query_by_label(&said).is_some());
         assert_eq!(
             valve_type_of(&h, "5.1").as_deref(),
             Some("vt-demo-4-3-tandem-b@1")
