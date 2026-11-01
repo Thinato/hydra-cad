@@ -22,13 +22,15 @@ pub struct ProposalsPanel {
     /// A list, approve or reject request is waiting for its reply.
     busy: bool,
     error: Option<String>,
-    /// Each listed proposal's check for its queue row (`None` once reviewed), with the
-    /// catalogue size it was made against. Cleared when a new list arrives.
-    row_checks: Option<([usize; 4], Vec<RowCheck>)>,
+    /// Each listed proposal's check of its draft for its queue row (`None` once reviewed),
+    /// with the catalogue size and list length it was made for. Cleared when a list arrives.
+    row_checks: Option<RowChecks>,
 }
 
 /// A queue row's check: its mark and words, or `None` once the proposal is reviewed.
 type RowCheck = Option<(Mark, String)>;
+/// Every row's check, keyed by the catalogue size and list length they were made for.
+type RowChecks = (([usize; 4], usize), Vec<RowCheck>);
 
 /// How many rows the catalogue has of each kind. Rows are only ever added, so a change in
 /// these tells that checks against it may have changed.
@@ -43,8 +45,9 @@ fn catalogue_size(c: &Catalogue) -> [usize; 4] {
 
 /// What a waiting proposal's queue row says about it: its problems, that it replaces a
 /// released valve type, or that its checks pass.
-fn row_check(p: &Proposal, catalogue: &Catalogue) -> (Mark, String) {
-    let n = p.problems(catalogue).len();
+/// `problems` counts what stops approval, of the draft or of the reviewer's edit.
+fn row_check(p: &Proposal, problems: usize, catalogue: &Catalogue) -> (Mark, String) {
+    let n = problems;
     let base = catalogue.valve_type(&CatalogueRef::new(&p.valve_type.key, p.valve_type.version));
     if n > 0 {
         let s = if n == 1 { "" } else { "s" };
@@ -317,17 +320,25 @@ impl ProposalsPanel {
             return;
         };
         let catalogue = &shared.catalogue;
-        let size = catalogue_size(catalogue);
-        if self.row_checks.as_ref().is_none_or(|(s, _)| *s != size) {
+        let key = (catalogue_size(catalogue), list.len());
+        if self.row_checks.as_ref().is_none_or(|(k, _)| *k != key) {
             let checks = list
                 .iter()
                 .map(|p| {
-                    (p.status == ProposalStatus::Pending).then(|| row_check(&p.proposal, catalogue))
+                    let pending = p.status == ProposalStatus::Pending;
+                    let problems = || p.proposal.problems(catalogue).len();
+                    pending.then(|| row_check(&p.proposal, problems(), catalogue))
                 })
                 .collect();
-            self.row_checks = Some((size, checks));
+            self.row_checks = Some((key, checks));
         }
         let checks = &self.row_checks.as_ref().expect("just checked").1;
+        // The selected row follows the reviewer's edits, as the action bar does.
+        let edited = self.review.as_mut().filter(|r| r.pending()).map(|r| {
+            let problems = r.checked(catalogue).problems.len();
+            let check = row_check(&r.record.proposal, problems, catalogue);
+            (r.record.id.clone(), check)
+        });
         if list.is_empty() {
             egui::Frame::new()
                 .inner_margin(egui::Margin::same(12))
@@ -344,7 +355,11 @@ impl ProposalsPanel {
             ui.spacing_mut().item_spacing.y = 0.0;
             for (p, check) in list.iter().zip(checks) {
                 let selected = self.review.as_ref().is_some_and(|r| r.record.id == p.id);
-                if queue_row(ui, p, check.as_ref(), selected, catalogue).clicked() {
+                let check = match &edited {
+                    Some((id, edited)) if *id == p.id => Some(edited),
+                    _ => check.as_ref(),
+                };
+                if queue_row(ui, p, check, selected, catalogue).clicked() {
                     picked = Some(p.clone());
                 }
             }
@@ -696,7 +711,14 @@ fn symbol_preview(ui: &mut egui::Ui, symbol: Option<&SymbolDef>, proposal: &Prop
                                 });
                             }
                             None => {
-                                theme::marked(ui, Mark::Error, RichText::new("No symbol").small());
+                                let right = egui::Layout::right_to_left(egui::Align::Center);
+                                ui.with_layout(right, |ui| {
+                                    theme::marked(
+                                        ui,
+                                        Mark::Error,
+                                        RichText::new("No symbol").small(),
+                                    );
+                                });
                             }
                         }
                     });
@@ -1225,6 +1247,39 @@ mod tests {
             });
         h.run();
         assert!(h.query_by_label("1 problem").is_some());
+    }
+
+    #[test]
+    fn the_selected_row_follows_the_reviewers_edits() {
+        let (mut h, _sent) = panel_harness();
+        h.step();
+        let mut draft = record(ProposalStatus::Pending);
+        draft.proposal.valve_type.params = serde_json::json!({});
+        h.state_mut().0.listed(vec![draft]);
+        h.run();
+        h.get_by_role_and_label(Role::Button, "DEMO-10 4-3-C")
+            .click();
+        h.run();
+        assert!(h.query_by_label("1 problem").is_some());
+        // The reviewer says what the valve does: the row agrees with the action bar.
+        h.state_mut().0.review.as_mut().unwrap().params = r#"{"function": "relief"}"#.into();
+        h.run();
+        assert!(h.query_by_label("1 problem").is_none());
+        assert!(h.query_by_label("Checks pass").is_some());
+        assert!(!h.get_by_label("Approve").accesskit_node().is_disabled());
+    }
+
+    #[test]
+    fn no_symbol_is_said_at_the_right_of_the_caption() {
+        let mut r = record(ProposalStatus::Pending);
+        r.proposal.valve_type.symbol = None;
+        let h = detail_harness(r);
+        let right = |label: &str| {
+            let node = h.get_by_label(label);
+            node.accesskit_node().raw_bounds().unwrap().x1
+        };
+        // The caption strip is 360 px wide; its right side holds the symbol's ref or this.
+        assert!(right("No symbol") - right("How Hydra will draw it") > 150.0);
     }
 
     #[test]

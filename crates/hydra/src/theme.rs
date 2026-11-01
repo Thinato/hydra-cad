@@ -6,7 +6,7 @@
 use eframe::egui::{
     self, Align, Button, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId,
     Frame, Label, Layout, Margin, Painter, Rect, Response, RichText, Sense, Shadow, Shape, Stroke,
-    StrokeKind, TextStyle, Theme, Ui, Vec2, Widget, WidgetInfo, WidgetType,
+    StrokeKind, TextStyle, Theme, Ui, Vec2, Widget, WidgetInfo, WidgetText, WidgetType,
     text::{LayoutJob, TextFormat},
 };
 use std::sync::Arc;
@@ -217,11 +217,20 @@ pub fn marked(ui: &mut Ui, mark: Mark, text: impl Into<RichText>) -> Response {
     let color = mark.tone().text;
     let text = text.into().color(color);
     let side = ui.fonts_mut(|f| text.font_height(f, ui.style()));
-    let row = Vec2::new(ui.available_size_before_wrap().x, side);
+    let gap = ui.spacing().item_spacing.x;
+    // Laid out first, so the pair takes only its own width and right-aligns when asked to.
+    let room = (ui.available_size_before_wrap().x - side - gap).max(0.0);
+    let text = WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Wrap),
+        room,
+        TextStyle::Body,
+    );
+    let row = Vec2::new(side + gap + text.size().x, side);
     ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
         mark.paint(ui.painter(), rect.shrink(side * 0.2), color);
-        ui.add(Label::new(text).wrap())
+        ui.label(text)
     })
     .inner
 }
