@@ -23,7 +23,8 @@ pub use circuit::{
 };
 pub use edit::{Command, Document, next_id};
 pub use import::{
-    MAX_CIRCUIT_NAME, MAX_IMPORT_COMPONENTS, MAX_IMPORT_EXTRA_LINES, MAX_IMPORT_TEXT,
+    MAX_CIRCUIT_NAME, MAX_IMPORT_COMPONENTS, MAX_IMPORT_EXTRA_LINES, MAX_IMPORT_TEXT, MAX_SHEET_MM,
+    MAX_WIRE_POINTS, MAX_WIRES_PER_NET,
 };
 pub use proposal::{MAX_PROPOSAL_NOTES, MAX_PROPOSAL_PARTS, PartDraft, Proposal};
 pub use status::{Available, CircuitStatus, NoStandIn, StandIn, ValveStatus, stand_ins};

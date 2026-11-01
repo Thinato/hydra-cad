@@ -207,3 +207,48 @@ fn a_listed_requested_part_is_chosen() {
     // A part the type doesn't list stays unchosen.
     assert_eq!(c.component("5.1").unwrap().valve().unwrap().part, None);
 }
+
+#[test]
+fn drawn_wires_must_be_well_formed() {
+    let wired = |net: &str, wires: Vec<Vec<[f32; 2]>>| {
+        let mut c = manifold();
+        c.layout.wires.insert(net.into(), wires);
+        c
+    };
+    let net = manifold().nets[0].id.clone();
+    let ok = wired(&net, vec![vec![[0.0, 0.0], [0.0, 10.0], [5.0, 10.0]]]);
+    assert_eq!(problems(&ok), Vec::<String>::new());
+
+    has(
+        &wired("n-nope", vec![]),
+        "names net \"n-nope\", which is not in nets",
+    );
+    has(
+        &wired(
+            &net,
+            vec![vec![[0.0, 0.0], [0.0, 1.0]]; MAX_WIRES_PER_NET + 1],
+        ),
+        "with 101 wires, more than 100",
+    );
+    has(&wired(&net, vec![vec![[1.0, 2.0]]]), "has 1 point(s)");
+    has(
+        &wired(&net, vec![vec![[0.0, 0.0]; MAX_WIRE_POINTS + 1]]),
+        "has 101 points, more than 100",
+    );
+    has(
+        &wired(&net, vec![vec![[0.0, 0.0], [0.0, f32::INFINITY]]]),
+        "has point 0, inf; keep the layout within",
+    );
+    has(
+        &wired(&net, vec![vec![[0.0, 0.0], [0.0, f32::NAN]]]),
+        "has point 0, NaN",
+    );
+    has(
+        &wired(&net, vec![vec![[0.0, 0.0], [MAX_SHEET_MM + 1.0, 0.0]]]),
+        "has point 10001, 0",
+    );
+    has(
+        &wired(&net, vec![vec![[0.0, 0.0], [0.0, 5.0], [3.0, 9.0]]]),
+        &format!("wire 1 of net {net} runs diagonally from 0, 5 to 3, 9"),
+    );
+}

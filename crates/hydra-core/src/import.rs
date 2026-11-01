@@ -12,6 +12,10 @@ pub const MAX_CIRCUIT_NAME: usize = 200;
 pub const MAX_IMPORT_TEXT: usize = 200;
 /// Farthest a part may sit from the sheet's origin, in millimetres: well beyond an A0 sheet.
 pub const MAX_SHEET_MM: f32 = 10_000.0;
+/// Most wires one net may be drawn with; a drawing's busiest line has a few dozen branches.
+pub const MAX_WIRES_PER_NET: usize = 100;
+/// Most points one wire may have.
+pub const MAX_WIRE_POINTS: usize = 100;
 
 impl Circuit {
     /// Where a valve's valve type lists the requested part, use it: the assistant often names the
@@ -160,6 +164,52 @@ impl Circuit {
                     }
                 }
                 ComponentKind::Port { .. } => {}
+            }
+        }
+        for (net, wires) in &self.layout.wires {
+            if !self.nets.iter().any(|n| n.id == *net) {
+                problems.push(format!(
+                    "layout.wires names net {net:?}, which is not in nets; key each net's wires by \
+                     its id"
+                ));
+                continue;
+            }
+            if wires.len() > MAX_WIRES_PER_NET {
+                problems.push(format!(
+                    "net {net} is drawn with {} wires, more than {MAX_WIRES_PER_NET}; join wires \
+                     that run on from one another",
+                    wires.len()
+                ));
+                continue;
+            }
+            for (i, w) in wires.iter().enumerate() {
+                let what = format!("wire {} of net {net}", i + 1);
+                let far = |p: &[f32; 2]| p.iter().any(|v| !v.is_finite() || v.abs() > MAX_SHEET_MM);
+                if w.len() < 2 {
+                    problems.push(format!(
+                        "{what} has {} point(s); a wire runs between at least 2",
+                        w.len()
+                    ));
+                } else if w.len() > MAX_WIRE_POINTS {
+                    problems.push(format!(
+                        "{what} has {} points, more than {MAX_WIRE_POINTS}; split it into wires \
+                         that meet",
+                        w.len()
+                    ));
+                } else if let Some([x, y]) = w.iter().find(|p| far(p)) {
+                    problems.push(format!(
+                        "{what} has point {x}, {y}; keep the layout within {MAX_SHEET_MM} mm"
+                    ));
+                } else if let Some(s) = w
+                    .windows(2)
+                    .find(|s| s[0][0] != s[1][0] && s[0][1] != s[1][1])
+                {
+                    let ([x0, y0], [x1, y1]) = (s[0], s[1]);
+                    problems.push(format!(
+                        "{what} runs diagonally from {x0}, {y0} to {x1}, {y1}; wires run \
+                         horizontally or vertically, so add the corner point between them"
+                    ));
+                }
             }
         }
         for (i, e) in self.bom_extra.iter().enumerate() {

@@ -472,6 +472,12 @@ async fn imported_circuits_are_saved_as_unchecked_drafts(pool: PgPool) {
         assert_eq!(opened.revision, 1);
         let expected = Circuit::from_json(&json.to_string()).unwrap();
         assert_eq!(opened.document, expected, "{name}");
+        // The motors drawing comes with its wires traced; they are kept as drawn.
+        assert_eq!(
+            opened.document.layout.wires.len(),
+            if name == "demo-import-motors" { 5 } else { 0 },
+            "{name}"
+        );
         let revisions = list_revisions(&pool, &summary.id).await.unwrap();
         assert_eq!(revisions[0].created_by, me);
         assert!(
@@ -529,6 +535,16 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
         "{e}"
     );
     assert!(e.contains("HM1 is placed at 200000000, 15"), "{e}");
+    // A wire that stops short of its port, and one that cuts a corner.
+    let mut wired = demo_circuit("demo-import-motors");
+    wired["layout"]["wires"]["n-1"] = json!([[[40, 52], [40, 30]]]);
+    wired["layout"]["wires"]["n-2"] = json!([[[90, 52], [95, 23]]]);
+    let e = mcp.import_circuit(import(wired)).await.unwrap_err();
+    assert!(
+        e.contains("port HM1.A at 40, 23 is on net n-1, but none of the net's wires reaches it"),
+        "{e}"
+    );
+    assert!(e.contains("wire 1 of net n-2 runs diagonally"), "{e}");
     assert!(list_circuits(&pool).await.unwrap().is_empty());
     // A JSON string holding the object works, and a missing schema is filled in.
     let mut json = demo_circuit("demo-import-motors");

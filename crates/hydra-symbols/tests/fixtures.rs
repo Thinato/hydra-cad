@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use hydra_core::{Catalogue, Circuit, SCHEMA_VERSION, Severity};
 use hydra_symbols::{
     Align, Primitive, block_outline, bounds, outline_issues, render_circuit, render_symbol, to_pdf,
-    to_svg,
+    to_svg, wire_problems, wire_warnings,
 };
 
 fn fixtures() -> PathBuf {
@@ -52,6 +52,11 @@ fn golden_circuits_load_validate_round_trip_and_render() {
         assert!(issues.is_empty(), "{name}: {issues:?}");
         let misplaced = outline_issues(&circuit, &catalogue);
         assert!(misplaced.is_empty(), "{name}: {misplaced:?}");
+        let wiring = [
+            wire_problems(&circuit, &catalogue),
+            wire_warnings(&circuit, &catalogue),
+        ];
+        assert_eq!(wiring, [Vec::<String>::new(), vec![]], "{name}");
         assert_eq!(
             Circuit::from_json(&circuit.to_json()).unwrap(),
             circuit,
@@ -413,4 +418,119 @@ fn statuses_and_item_labels_are_written_out() {
     // 1.1 and 5.1 not listed, 4.1, 5.2 and 9.1 missing, 3.1 a stand-in.
     assert_eq!(frames, 6);
     assert!(to_pdf(&drawing.primitives).is_ok());
+}
+
+fn motors() -> Circuit {
+    let path = fixtures().join("circuits/demo-import-motors.json");
+    Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn polylines(circuit: &Circuit) -> Vec<Vec<[f32; 2]>> {
+    render_circuit(circuit, &catalogue())
+        .primitives
+        .into_iter()
+        .filter_map(|p| match p {
+            Primitive::Polyline { points, .. } => Some(points),
+            _ => None,
+        })
+        .collect()
+}
+
+fn dot_at(circuit: &Circuit, at: [f32; 2]) -> bool {
+    render_circuit(circuit, &catalogue())
+        .primitives
+        .iter()
+        .any(|p| matches!(p, Primitive::Circle { center, filled: true, .. } if *center == at))
+}
+
+#[test]
+fn drawn_wires_replace_the_automatic_ones() {
+    let mut circuit = motors();
+    let drawn = polylines(&circuit);
+    for w in circuit.layout.wires.values().flatten() {
+        assert!(drawn.contains(w), "{w:?} is drawn");
+    }
+    // n-p's trunk meets FC2.In's wire partway along: a junction dot. Its corner gets none.
+    assert!(dot_at(&circuit, [90.0, 106.0]));
+    assert!(!dot_at(&circuit, [0.0, 106.0]));
+    // FC1.Out to HM1.A: as drawn, not the automatic elbow from the net's first port.
+    let auto = vec![[40.0, 52.0], [40.0, 52.0], [40.0, 23.0]];
+    assert!(!drawn.contains(&auto));
+    let first = |c: &Circuit| polylines(c).into_iter().filter(|w| w == &auto).count();
+    circuit.layout.wires.remove("n-1");
+    assert_eq!(
+        first(&circuit),
+        1,
+        "a net without wires gets its elbow back"
+    );
+    assert!(polylines(&circuit).contains(&circuit.layout.wires["n-p"][0]));
+}
+
+#[test]
+fn drawn_wires_must_join_their_ports() {
+    let catalogue = catalogue();
+    let problems = |c: &Circuit| wire_problems(c, &catalogue);
+    let mut c = motors();
+    // FC1.Out's wire stops short of HM1.A.
+    c.layout
+        .wires
+        .insert("n-1".into(), vec![vec![[40.0, 52.0], [40.0, 30.0]]]);
+    assert_eq!(
+        problems(&c),
+        [
+            "wire 1 of net n-1 ends at 40, 30, on no port or other wire of the net; end it on one \
+             (the net's ports: FC1.Out at 40, 52; HM1.A at 40, 23)",
+            "port HM1.A at 40, 23 is on net n-1, but none of the net's wires reaches it; draw one \
+             to it"
+        ]
+    );
+    // Within half a millimetre counts, and a port partway along a wire is reached.
+    c.layout.wires.insert(
+        "n-1".into(),
+        vec![vec![[40.0, 52.4], [40.0, 10.0], [40.3, 10.0]]],
+    );
+    let p = problems(&c);
+    assert!(
+        p.len() == 1 && p[0].starts_with("wire 1 of net n-1 ends at 40.3, 10,"),
+        "{p:?}"
+    );
+    // Two wires, each ending on a port, but not meeting.
+    let mut c = motors();
+    let n_t = c.layout.wires.get_mut("n-t").unwrap();
+    n_t[0] = vec![[20.0, 110.0], [20.0, 2.0], [100.0, 2.0]];
+    n_t.push(vec![[230.0, 72.0], [230.0, 2.0], [101.0, 2.0]]);
+    let p = problems(&c);
+    assert!(p.iter().any(|p| p.contains("ends at 100, 2")), "{p:?}");
+    assert!(
+        p.iter().any(|p| p
+            == "the wires of net n-t are drawn in 2 separate pieces; join them, \
+             as a net is one line"),
+        "{p:?}"
+    );
+    // A malformed net is import_problems' to report, once.
+    let mut c = motors();
+    c.layout
+        .wires
+        .insert("n-1".into(), vec![vec![[40.0, 52.0]]]);
+    assert_eq!(problems(&c), Vec::<String>::new());
+    c.layout
+        .wires
+        .insert("n-1".into(), vec![vec![[40.0, 52.0], [40.0, f32::NAN]]]);
+    assert_eq!(problems(&c), Vec::<String>::new());
+}
+
+#[test]
+fn a_wire_through_another_part_is_a_warning() {
+    let catalogue = catalogue();
+    let mut c = motors();
+    c.layout
+        .wires
+        .get_mut("n-1")
+        .unwrap()
+        .push(vec![[40.0, 60.0], [100.0, 60.0]]);
+    // Through FC2, not FC1, whose port the net has.
+    assert_eq!(
+        wire_warnings(&c, &catalogue),
+        ["a wire of net n-1 runs through FC2; check its route against the drawing"]
+    );
 }
