@@ -3,3 +3,4 @@
 * text=auto eol=lf
 *.glb binary
 *.pdf binary
+*.ttf binary

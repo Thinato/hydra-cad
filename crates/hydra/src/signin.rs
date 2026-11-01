@@ -319,16 +319,18 @@ mod tests {
         let signin =
             SignIn::new("postgres://hydra-db.office.local:5433/hydra?sslmode=require".into())
                 .unwrap();
-        let mut h = Harness::builder()
-            .with_size(egui::vec2(600.0, 400.0))
-            .build_ui_state(
-                |ui, (s, submitted): &mut State| {
-                    if let Some((c, remember)) = s.window(ui.ctx()) {
-                        *submitted = Some((c.user, c.password, remember));
-                    }
-                },
-                (signin, None),
-            );
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(egui::vec2(600.0, 400.0))
+                .build_ui_state(
+                    |ui, (s, submitted): &mut State| {
+                        if let Some((c, remember)) = s.window(ui.ctx()) {
+                            *submitted = Some((c.user, c.password, remember));
+                        }
+                    },
+                    (signin, None),
+                ),
+        );
         h.run();
         h
     }
@@ -375,12 +377,14 @@ mod tests {
         let mut shared = Shared::new(hydra_core::Catalogue::default());
         let (requests, _inbox) = std::sync::mpsc::channel();
         shared.db = Some(Db::new(requests, std::sync::mpsc::channel().1));
-        let mut h = Harness::builder()
-            .with_size(egui::vec2(600.0, 100.0))
-            .build_ui_state(
-                |ui, (s, shared): &mut (SignIn, Shared)| s.status(ui, shared),
-                (signin, shared),
-            );
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(egui::vec2(600.0, 100.0))
+                .build_ui_state(
+                    |ui, (s, shared): &mut (SignIn, Shared)| s.status(ui, shared),
+                    (signin, shared),
+                ),
+        );
         h.run();
         h.get_by_label("Signed in as anna");
         assert!(h.query_by_label("Retry").is_none());

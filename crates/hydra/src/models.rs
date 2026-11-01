@@ -504,16 +504,18 @@ mod tests {
     type State = (ModelPanel, Shared, SchematicEditor);
 
     fn harness(circuit: Circuit) -> Harness<'static, State> {
-        let mut h = Harness::builder()
-            .with_size(egui::Vec2::new(900.0, 600.0))
-            .build_ui_state(
-                |ui, (p, s, e): &mut State| p.ui(ui, s, e),
-                (
-                    ModelPanel::new(None),
-                    shared(),
-                    SchematicEditor::new(circuit, None),
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(egui::Vec2::new(900.0, 600.0))
+                .build_ui_state(
+                    |ui, (p, s, e): &mut State| p.ui(ui, s, e),
+                    (
+                        ModelPanel::new(None),
+                        shared(),
+                        SchematicEditor::new(circuit, None),
+                    ),
                 ),
-            );
+        );
         h.run();
         h
     }

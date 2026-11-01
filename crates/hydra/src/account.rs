@@ -141,6 +141,12 @@ impl AccountPanel {
             }
         }
         ui.weak(format!("Hydra {}", env!("CARGO_PKG_VERSION")));
+        // The licence travels with the fonts compiled into the binary (OFL section 2).
+        egui::CollapsingHeader::new("Font licence: IBM Plex")
+            .id_salt("font-licence")
+            .show(ui, |ui| {
+                ui.label(include_str!("../fonts/OFL.txt"));
+            });
         if shared.db.is_none() {
             return;
         }
@@ -463,12 +469,14 @@ mod tests {
         };
         panel.signed_in(account, &shared);
         let signin = SignIn::test(name, "old-password-1");
-        let mut h = Harness::builder()
-            .with_size(egui::vec2(900.0, 700.0))
-            .build_ui_state(
-                |ui, (p, shared, signin): &mut State| p.ui(ui, shared, signin.as_mut()),
-                (panel, shared, Some(signin)),
-            );
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(egui::vec2(900.0, 700.0))
+                .build_ui_state(
+                    |ui, (p, shared, signin): &mut State| p.ui(ui, shared, signin.as_mut()),
+                    (panel, shared, Some(signin)),
+                ),
+        );
         h.run_steps(4);
         (h, inbox)
     }
@@ -504,19 +512,26 @@ mod tests {
 
     #[test]
     fn offline_shows_how_to_connect() {
-        let mut h = Harness::builder()
-            .with_size(egui::vec2(900.0, 400.0))
-            .build_ui_state(
-                |ui, (p, shared): &mut (AccountPanel, Shared)| p.ui(ui, shared, None),
-                (
-                    AccountPanel::default(),
-                    Shared::new(hydra_core::Catalogue::default()),
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(egui::vec2(900.0, 400.0))
+                .build_ui_state(
+                    |ui, (p, shared): &mut (AccountPanel, Shared)| p.ui(ui, shared, None),
+                    (
+                        AccountPanel::default(),
+                        Shared::new(hydra_core::Catalogue::default()),
+                    ),
                 ),
-            );
+        );
         h.run_steps(4);
         h.get_by_label("Offline: no database");
         h.get_by_label_contains("Set database_url in hydra.ini or HYDRA_DATABASE_URL");
         assert!(h.query_by_label("Change password").is_none());
+        // The bundled fonts' licence can be read.
+        assert!(h.query_by_label_contains("SIL OPEN FONT LICENSE").is_none());
+        h.get_by_label("Font licence: IBM Plex").click();
+        h.run_steps(4);
+        h.get_by_label_contains("SIL OPEN FONT LICENSE Version 1.1");
     }
 
     #[test]

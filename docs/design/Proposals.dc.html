@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hydra proposals tab</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans+Condensed:wght@500;600;700&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0;background:#E9ECEF}
+a{color:#1F5FAD}a:hover{color:#174C8C}
+</style>
+</helmet>
+<div style="font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif; color: #14181F; background: #E9ECEF; height: 100vh; min-height: 640px; display: flex; flex-direction: column; overflow: hidden">
+
+  <div style="height: 40px; flex: none; display: flex; align-items: flex-end; gap: 20px; padding: 0 12px; background: #E9ECEF; border-bottom: 1px solid #C3C9D1">
+    <div style="align-self: center; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.12em">HYDRA</div>
+    <nav aria-label="Tabs" style="display: flex; align-items: flex-end; gap: 2px; flex: 1; min-width: 0; overflow-x: auto">
+      <a href="Schematic.dc.html" style="height: 32px; padding: 0 16px; display: flex; align-items: center; font-size: 14px; color: #4A5361; text-decoration: none">Schematic</a>
+      <a href="#" style="height: 32px; padding: 0 16px; display: flex; align-items: center; font-size: 14px; color: #4A5361; text-decoration: none">Catalogue</a>
+      <a href="#" aria-current="page" style="height: 34px; padding: 0 16px; display: flex; align-items: center; gap: 8px; background: #F4F5F7; border: 1px solid #C3C9D1; border-bottom: 0; border-top: 3px solid #1F5FAD; box-sizing: border-box; font-size: 14px; font-weight: 600; color: #14181F; text-decoration: none; margin-bottom: -1px">Proposals <span style="min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: 10px; background: #0E7C86; color: #FFFFFF; font: 600 12px 'IBM Plex Mono', monospace; display: inline-flex; align-items: center; justify-content: center">3</span></a>
+      <a href="#" style="height: 32px; padding: 0 16px; display: flex; align-items: center; font-size: 14px; color: #4A5361; text-decoration: none">3D</a>
+      <a href="#" style="height: 32px; padding: 0 16px; display: flex; align-items: center; font-size: 14px; color: #4A5361; text-decoration: none">Account</a>
+    </nav>
+    <div style="align-self: center; display: flex; align-items: center; gap: 14px; font-size: 12px; color: #4A5361; white-space: nowrap">
+      <span style="display: flex; align-items: center; gap: 6px"><span style="width: 8px; height: 8px; border-radius: 4px; background: #2A8A52"></span>hydra_app</span>
+      <span style="font-weight: 500; color: #14181F">r.costa</span>
+    </div>
+  </div>
+
+  <div style="flex: 1; min-height: 0; display: flex">
+
+    <aside aria-label="Review queue" style="width: 300px; flex: none; background: #F4F5F7; border-right: 1px solid #C3C9D1; display: flex; flex-direction: column; min-height: 0">
+      <div style="padding: 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #C3C9D1">
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <span style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase">Review queue</span>
+          <button type="button" aria-label="Refresh" style="width: 28px; height: 28px; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#14181F" stroke-width="1.75" aria-hidden="true"><path d="M13.5 8A5.5 5.5 0 1 1 11.9 4.1"></path><path d="M13.5 2v3.5H10"></path></svg></button>
+        </div>
+        <div role="group" aria-label="Show" style="display: flex; border: 1px solid #7F8895; border-radius: 3px; overflow: hidden; background: #FFFFFF">
+          <button type="button" aria-pressed="true" style="flex: 1; height: 28px; border: 0; border-right: 1px solid #7F8895; background: #1F5FAD; color: #FFFFFF; font: 600 13px 'IBM Plex Sans', sans-serif">Waiting · 3</button>
+          <button type="button" aria-pressed="false" style="flex: 1; height: 28px; border: 0; border-right: 1px solid #7F8895; background: #FFFFFF; color: #14181F; font: 500 13px 'IBM Plex Sans', sans-serif">Reviewed</button>
+          <button type="button" aria-pressed="false" style="flex: 1; height: 28px; border: 0; background: #FFFFFF; color: #14181F; font: 500 13px 'IBM Plex Sans', sans-serif">All</button>
+        </div>
+      </div>
+      <div style="flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column">
+        <sc-for list="{{queue}}" as="q" hint-placeholder-count="3">
+          <button type="button" style="text-align: left; border: 0; border-bottom: 1px solid #DDE1E6; padding: 12px; background: {{q.bg}}; box-shadow: inset 0 0 0 1px {{q.edge}}; display: flex; flex-direction: column; gap: 6px; font-family: 'IBM Plex Sans', sans-serif; color: #14181F">
+            <span style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; width: 100%"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 600">{{q.code}}</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{q.time}}</span></span>
+            <span style="font-size: 13px">{{q.target}}</span>
+            <span style="font-size: 12px; color: #4A5361">Demo · for {{q.who}}</span>
+            <span style="font-size: 12px; font-weight: 600; color: {{q.checkColor}}">{{q.check}}</span>
+          </button>
+        </sc-for>
+      </div>
+    </aside>
+
+    <main style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: #FFFFFF">
+      <div style="flex: 1; min-height: 0; overflow: auto; padding: 20px 28px; display: flex; flex-direction: column; gap: 24px">
+
+        <header style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; align-items: flex-start">
+          <div style="display: flex; flex-direction: column; gap: 8px; min-width: 0">
+            <div style="display: flex; flex-wrap: wrap; gap: 8px">
+              <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 3px; border: 1px solid #1F5FAD; background: #E3ECF7; color: #174C8C; font-size: 12px; font-weight: 600">● Waiting for review</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 3px; border: 1px solid #0E7C86; background: #E0F2F3; color: #0B5F67; font-size: 12px; font-weight: 600">◆ Assistant draft</span>
+            </div>
+            <h1 style="margin: 0; font-size: 20px; line-height: 26px; font-weight: 600">DEMO-RV10 relief valve, direct acting</h1>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 500; color: #14181F">New valve type demo-rv10@1</div>
+            <div style="font-size: 12px; color: #4A5361">Drafted by the assistant for r.costa · today 14:02 · from DEMO-RV10.pdf</div>
+          </div>
+          <button type="button" style="height: 32px; padding: 0 14px; border-radius: 3px; border: 1px solid #7F8895; background: #FFFFFF; color: #14181F; font: 500 13px 'IBM Plex Sans', sans-serif">Open datasheet</button>
+        </header>
+
+        <section style="display: flex; flex-direction: column; gap: 10px">
+          <h2 style="margin: 0; font-size: 16px; line-height: 22px; font-weight: 600">What the assistant did</h2>
+          <ol style="margin: 0; padding: 0; list-style: none; border: 1px solid #C3C9D1; display: flex; flex-direction: column">
+            <sc-for list="{{steps}}" as="s" hint-placeholder-count="5">
+              <li style="display: grid; grid-template-columns: 28px 96px minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 9px 12px; border-bottom: 1px solid #DDE1E6; background: {{s.bg}}">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{s.n}}</span>
+                <span style="font-size: 12px; font-weight: 600; color: {{s.color}}">{{s.result}}</span>
+                <span style="font-size: 14px; line-height: 20px">{{s.text}}</span>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361; white-space: nowrap">{{s.src}}</span>
+              </li>
+            </sc-for>
+          </ol>
+        </section>
+
+        <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 16px">
+          <figure style="margin: 0; border: 1px solid #C3C9D1; display: flex; flex-direction: column">
+            <div style="height: 200px; background-color: #FFFFFF; background-image: linear-gradient(#E4E8ED 1px, transparent 1px), linear-gradient(90deg, #E4E8ED 1px, transparent 1px); background-size: 20px 20px; display: flex; align-items: center; justify-content: center">
+              <svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="Relief valve symbol, demo-relief@2" fill="none" stroke="#14181F" stroke-width="2.4"><rect x="40" y="40" width="80" height="80"></rect><path d="M80 120v30 M80 40V10 M52 108l56-56 M100 52l8 0 0 8 M120 64l14 7-14 7 14 7-14 7 14 7"></path><path d="M60 120v12 M60 132H40" stroke-dasharray="6 4" stroke-width="1.6"></path></svg>
+            </div>
+            <figcaption style="padding: 8px 12px; border-top: 1px solid #C3C9D1; background: #F4F5F7; font-size: 12px; display: flex; justify-content: space-between; gap: 8px"><span style="font-weight: 600">How Hydra will draw it</span><span style="font-family: 'IBM Plex Mono', monospace; color: #4A5361">demo-relief@2</span></figcaption>
+          </figure>
+          <figure style="margin: 0; border: 1px solid #C3C9D1; display: flex; flex-direction: column">
+            <div style="height: 200px; background: #F4F5F7; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border: 0">
+              <svg width="28" height="28" viewBox="0 0 16 16" fill="none" stroke="#4A5361" stroke-width="1.25" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z"></path><path d="M9.5 1.5v3h3 M5.5 8h5 M5.5 10.5h5"></path></svg>
+              <span style="font-size: 13px; color: #4A5361">[Datasheet page 2, symbol and tables]</span>
+              <button type="button" style="height: 28px; padding: 0 12px; border-radius: 3px; border: 1px solid #7F8895; background: #FFFFFF; color: #14181F; font: 500 13px 'IBM Plex Sans', sans-serif">Open at page 2</button>
+            </div>
+            <figcaption style="padding: 8px 12px; border-top: 1px solid #C3C9D1; background: #F4F5F7; font-size: 12px; display: flex; justify-content: space-between; gap: 8px"><span style="font-weight: 600">What the datasheet shows</span><span style="font-family: 'IBM Plex Mono', monospace; color: #4A5361">DEMO-RV10.pdf</span></figcaption>
+          </figure>
+        </section>
+
+        <section style="display: flex; flex-direction: column; gap: 10px">
+          <h2 style="margin: 0; font-size: 16px; line-height: 22px; font-weight: 600">Fields</h2>
+          <div style="border: 1px solid #C3C9D1; overflow-x: auto">
+            <div style="display: grid; grid-template-columns: 160px minmax(220px, 1fr) 80px; min-width: 520px; background: #F4F5F7; border-bottom: 1px solid #C3C9D1; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">
+              <span style="padding: 8px 12px">FIELD</span><span style="padding: 8px 12px">FROM THE ASSISTANT · EDIT BEFORE APPROVING</span><span style="padding: 8px 12px">SOURCE</span>
+            </div>
+            <sc-for list="{{fields}}" as="f" hint-placeholder-count="7">
+              <div style="display: grid; grid-template-columns: 160px minmax(220px, 1fr) 80px; min-width: 520px; align-items: center; border-bottom: 1px solid #DDE1E6; background: {{f.bg}}">
+                <label for="{{f.id}}" style="padding: 6px 12px; font-size: 13px; font-weight: 500">{{f.label}}</label>
+                <span style="padding: 6px 12px; display: flex; flex-direction: column; gap: 4px">
+                  <input id="{{f.id}}" value="{{f.value}}" style="height: 30px; box-sizing: border-box; padding: 0 10px; border: 1px solid {{f.border}}; border-radius: 3px; font: 500 13px 'IBM Plex Mono', monospace; color: #14181F; background: #FFFFFF; width: 100%">
+                  <sc-if value="{{f.problem}}" hint-placeholder-val="{{ false }}"><span style="font-size: 12px; font-weight: 500; color: #A3201A">{{f.problem}}</span></sc-if>
+                </span>
+                <span style="padding: 6px 12px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{f.src}}</span>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 16px">
+          <div style="display: flex; flex-direction: column; gap: 10px">
+            <h2 style="margin: 0; font-size: 16px; line-height: 22px; font-weight: 600">Parts of the new version (3)</h2>
+            <div style="border: 1px solid #C3C9D1">
+              <sc-for list="{{parts}}" as="p" hint-placeholder-count="3">
+                <div style="display: grid; grid-template-columns: 136px minmax(0, 1fr); gap: 12px; padding: 8px 12px; border-bottom: 1px solid #DDE1E6; font-size: 13px">
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-weight: 600">{{p.n}}</span><span style="color: #4A5361">{{p.opt}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px">
+            <h2 style="margin: 0; font-size: 16px; line-height: 22px; font-weight: 600">Assistant's notes</h2>
+            <div style="border: 1px solid #C3C9D1; background: #F4F5F7; padding: 12px; font-size: 14px; line-height: 20px; display: flex; flex-direction: column; gap: 6px">
+              <span>Seal material is not stated in the datasheet; left out.</span>
+              <span>Mounting is printed as "DEMO-CAV-10"; no such cavity is in the catalogue yet.</span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div style="flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 28px; border-top: 1px solid #C3C9D1; background: #F4F5F7">
+        <label for="why" style="font-size: 13px; font-weight: 500">Reason</label>
+        <input id="why" placeholder="Why reject? The assistant reads this." style="flex: 1 1 260px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #7F8895; border-radius: 3px; font: 400 14px 'IBM Plex Sans', sans-serif; background: #FFFFFF">
+        <button type="button" style="height: 32px; padding: 0 14px; border-radius: 3px; border: 1px solid #A3201A; background: #FFFFFF; color: #A3201A; font: 600 13px 'IBM Plex Sans', sans-serif">Reject</button>
+        <div style="width: 1px; height: 24px; background: #C3C9D1"></div>
+        <span style="font-size: 12px; font-weight: 600; color: #A3201A">■ Fix 1 problem to approve</span>
+        <button type="button" disabled="" title="Mounting DEMO-CAV-10 is not a known cavity" style="height: 32px; padding: 0 18px; border-radius: 3px; border: 1px solid #C3C9D1; background: #E9ECEF; color: #6B7380; font: 600 13px 'IBM Plex Sans', sans-serif">Approve</button>
+      </div>
+    </main>
+
+    <aside aria-label="Assistant activity" style="width: 300px; flex: none; background: #F4F5F7; border-left: 1px solid #C3C9D1; display: flex; flex-direction: column; min-height: 0">
+      <div style="padding: 12px; border-bottom: 1px solid #C3C9D1; display: flex; flex-direction: column; gap: 6px">
+        <span style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase">Assistant activity</span>
+        <span style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4A5361"><span style="width: 8px; height: 8px; border-radius: 4px; background: #0E7C86"></span>Connected through hydra-mcp · last call 14:02</span>
+      </div>
+      <div style="flex: 1; min-height: 0; overflow: auto; padding: 4px 0">
+        <div style="padding: 8px 12px 4px; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">TODAY</div>
+        <sc-for list="{{activity}}" as="a" hint-placeholder-count="6">
+          <div style="display: grid; grid-template-columns: 44px 14px minmax(0, 1fr); gap: 8px; padding: 8px 12px; align-items: baseline">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{a.t}}</span>
+            <span style="font-size: 11px; color: {{a.color}}">{{a.glyph}}</span>
+            <span style="display: flex; flex-direction: column; gap: 3px">
+              <span style="font-size: 13px; line-height: 18px">{{a.text}}</span>
+              <sc-if value="{{a.detail}}" hint-placeholder-val="{{ false }}"><span style="font-size: 12px; line-height: 16px; color: #4A5361">{{a.detail}}</span></sc-if>
+              <sc-if value="{{a.link}}" hint-placeholder-val="{{ false }}"><a href="#" style="font-size: 12px; font-weight: 500">{{a.link}}</a></sc-if>
+            </span>
+          </div>
+        </sc-for>
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const ok = '#1E6B3E', bad = '#A3201A', warn = '#8A5300';
+    return {
+      queue: [
+        { code: 'DEMO-RV10', time: '14:02', target: 'New valve type', who: 'r.costa', check: '■ 1 problem', checkColor: bad, bg: '#E3ECF7', edge: '#1F5FAD' },
+        { code: 'DEMO-DCV43', time: '13:40', target: 'Update demo-dcv43@1 to @2', who: 'r.costa', check: '▲ Replaces a released type', checkColor: warn, bg: 'transparent', edge: 'transparent' },
+        { code: 'DEMO-FC2', time: '11:15', target: 'New valve type and new symbol', who: 'm.silva', check: '✓ Checks pass', checkColor: ok, bg: 'transparent', edge: 'transparent' }
+      ],
+      steps: [
+        { n: '1', result: '✓ Done', color: ok, text: 'Read the datasheet DEMO-RV10.pdf, 4 pages.', src: '14:01', bg: '#FFFFFF' },
+        { n: '2', result: '✓ Matched', color: ok, text: 'Symbol: relief valve, direct acting. Used the existing demo-relief@2, no new symbol.', src: 'p. 2', bg: '#FFFFFF' },
+        { n: '3', result: '✓ Filled', color: ok, text: 'Series, code, mounting and 3 ratings from the technical data table.', src: 'p. 2', bg: '#FFFFFF' },
+        { n: '4', result: '✓ Listed', color: ok, text: '3 parts from the ordering code, one per spring range.', src: 'p. 4', bg: '#FFFFFF' },
+        { n: '5', result: '■ 1 problem', color: bad, text: 'Catalogue check: mounting DEMO-CAV-10 is not a known cavity. Correct it below or add the cavity first.', src: 'now', bg: '#FDE7E5' }
+      ],
+      fields: [
+        { id: 'f1', label: 'Manufacturer', value: 'Demo', src: 'p. 1', border: '#7F8895', bg: '#FFFFFF', problem: '' },
+        { id: 'f2', label: 'Series', value: 'DEMO-RV', src: 'p. 1', border: '#7F8895', bg: '#FFFFFF', problem: '' },
+        { id: 'f3', label: 'Code', value: 'DEMO-RV10', src: 'p. 1', border: '#7F8895', bg: '#FFFFFF', problem: '' },
+        { id: 'f4', label: 'Mounting', value: 'DEMO-CAV-10', src: 'p. 2', border: '#C4291C', bg: '#FFF7F6', problem: '■ Not a known cavity. Known: DEMO-CAV-08, DEMO-CAV-12.' },
+        { id: 'f5', label: 'Max pressure', value: '350 bar', src: 'p. 2', border: '#7F8895', bg: '#FFFFFF', problem: '' },
+        { id: 'f6', label: 'Max flow', value: '40 L/min', src: 'p. 2', border: '#7F8895', bg: '#FFFFFF', problem: '' },
+        { id: 'f7', label: 'Setting range', value: '50–210 bar', src: 'p. 2', border: '#7F8895', bg: '#FFFFFF', problem: '' }
+      ],
+      parts: [
+        { n: 'DEMO-RV10-050', opt: 'Spring 50–100 bar' },
+        { n: 'DEMO-RV10-150', opt: 'Spring 100–150 bar' },
+        { n: 'DEMO-RV10-210', opt: 'Spring 150–210 bar' }
+      ],
+      activity: [
+        { t: '14:02', glyph: '◆', color: '#0E7C86', text: 'Submitted DEMO-RV10 as a new valve type', detail: 'Hydra found 1 problem; waiting for review.', link: '' },
+        { t: '14:01', glyph: '○', color: '#4A5361', text: 'Read the datasheet DEMO-RV10.pdf', detail: '', link: '' },
+        { t: '13:40', glyph: '◆', color: '#0E7C86', text: 'Submitted an update to demo-dcv43@1', detail: 'Changes 2 fields of a released type.', link: '' },
+        { t: '13:12', glyph: '◆', color: '#0E7C86', text: 'Imported circuit DEMO-MAN-01', detail: 'Saved as revision 1, unchecked. 1 valve part not listed.', link: 'Open in Schematic' },
+        { t: '12:58', glyph: '✕', color: '#3A424E', text: 'Read your rejection of DEMO-CV06', detail: '"Wrong cavity size." Resubmitted at 13:05 with DEMO-CAV-08.', link: '' },
+        { t: '11:15', glyph: '◆', color: '#0E7C86', text: 'Submitted DEMO-FC2 with a new symbol', detail: '', link: '' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

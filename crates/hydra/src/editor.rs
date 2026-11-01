@@ -21,20 +21,21 @@ use hydra_symbols::{
 use crate::catalogue::Shared;
 use crate::db::Request;
 use crate::schematic::{draw_fitted, fit, paint_sheet};
+use crate::theme;
 
 /// Parts snap to this grid, in millimetres.
 const GRID: f32 = 2.5;
 /// How close to a port anchor, in screen points, a press or release must be.
 const PORT_REACH: f32 = 8.0;
-const ACCENT: Color32 = Color32::from_rgb(0, 120, 215);
+const ACCENT: Color32 = theme::LIGHT.accent;
 
-/// Outline of a valve by status: red missing, amber part not listed, violet stand-in.
-fn status_color(s: ValveStatus) -> Color32 {
+/// A valve's status colour: red missing, amber part not listed, violet stand-in; none if normal.
+fn status_tone(s: ValveStatus) -> Option<theme::Tone> {
     match s {
-        ValveStatus::Normal => Color32::TRANSPARENT,
-        ValveStatus::Missing => Color32::from_rgb(215, 40, 40),
-        ValveStatus::PartNotListed => Color32::from_rgb(230, 150, 0),
-        ValveStatus::StandIn => Color32::from_rgb(120, 80, 220),
+        ValveStatus::Normal => None,
+        ValveStatus::Missing => Some(theme::LIGHT.missing),
+        ValveStatus::PartNotListed => Some(theme::LIGHT.unlisted),
+        ValveStatus::StandIn => Some(theme::LIGHT.stand_in),
     }
 }
 
@@ -1181,8 +1182,10 @@ impl SchematicEditor {
                             asked.on_hover_text(&r.description);
                         }
                     }
-                    if let Some(s) = status.status(&c.id).filter(|s| *s != ValveStatus::Normal) {
-                        ui.colored_label(status_color(s), s.words());
+                    if let Some(s) = status.status(&c.id)
+                        && let Some(tone) = status_tone(s)
+                    {
+                        ui.colored_label(tone.text, s.words());
                     }
                 }
                 ComponentKind::Port { label, .. }
@@ -1542,14 +1545,14 @@ impl SchematicEditor {
         let painter = ui.painter_at(rect);
         paint_sheet(&painter, rect, self.pan, self.zoom, &drawing.primitives);
         for (id, part) in parts {
-            if let Some(s) = status.status(id).filter(|s| *s != ValveStatus::Normal)
+            if let Some(tone) = status.status(id).and_then(status_tone)
                 && let Some((min, max)) = bounds(&part.primitives)
             {
                 let r = Rect::from_min_max(self.to_screen(min), self.to_screen(max)).expand(7.0);
                 painter.rect_stroke(
                     r,
-                    3.0,
-                    Stroke::new(2.0, status_color(s)),
+                    f32::from(theme::RADIUS),
+                    Stroke::new(2.0, tone.strong),
                     egui::StrokeKind::Outside,
                 );
             }
@@ -2267,12 +2270,14 @@ mod tests {
     }
 
     fn harness() -> Harness<'static, State> {
-        let mut h = Harness::builder()
-            .with_size(Vec2::new(1100.0, 750.0))
-            .build_ui_state(
-                |ui, (e, s): &mut State| e.ui(ui, s),
-                (SchematicEditor::new(empty_circuit(), None), shared()),
-            );
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(Vec2::new(1100.0, 750.0))
+                .build_ui_state(
+                    |ui, (e, s): &mut State| e.ui(ui, s),
+                    (SchematicEditor::new(empty_circuit(), None), shared()),
+                ),
+        );
         h.run();
         // A fixed zoom, so ports a few millimetres apart are far enough apart on screen.
         let e = &mut h.state_mut().0;
@@ -2323,6 +2328,15 @@ mod tests {
             .iter()
             .map(|n| n.ports.iter().map(|p| p.to_string()).collect())
             .collect()
+    }
+
+    #[test]
+    fn each_valve_status_has_its_own_colour_and_normal_has_none() {
+        let p = theme::LIGHT;
+        assert_eq!(status_tone(ValveStatus::Normal), None);
+        assert_eq!(status_tone(ValveStatus::Missing), Some(p.missing));
+        assert_eq!(status_tone(ValveStatus::PartNotListed), Some(p.unlisted));
+        assert_eq!(status_tone(ValveStatus::StandIn), Some(p.stand_in));
     }
 
     #[test]
@@ -3283,20 +3297,22 @@ mod tests {
             revision,
             project: None,
         });
-        let mut h = Harness::builder()
-            .with_size(Vec2::new(1400.0, 900.0))
-            .build_ui_state(
-                |ui, (e, s): &mut State| {
-                    // Not drawn, as behind another dock tab, while `hide` says so.
-                    if !ui
-                        .ctx()
-                        .data(|d| d.get_temp::<bool>(hidden_id()).unwrap_or(false))
-                    {
-                        e.ui(ui, s);
-                    }
-                },
-                (SchematicEditor::new(circuit, saved), shared),
-            );
+        let mut h = crate::theme::themed(
+            Harness::builder()
+                .with_size(Vec2::new(1400.0, 900.0))
+                .build_ui_state(
+                    |ui, (e, s): &mut State| {
+                        // Not drawn, as behind another dock tab, while `hide` says so.
+                        if !ui
+                            .ctx()
+                            .data(|d| d.get_temp::<bool>(hidden_id()).unwrap_or(false))
+                        {
+                            e.ui(ui, s);
+                        }
+                    },
+                    (SchematicEditor::new(circuit, saved), shared),
+                ),
+        );
         h.run_steps(4);
         h
     }

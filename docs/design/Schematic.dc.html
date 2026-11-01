@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hydra schematic tab</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans+Condensed:wght@500;600;700&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0;background:#E9ECEF}
+a{color:#1F5FAD}a:hover{color:#174C8C}
+</style>
+</helmet>
+<div style="font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif; color: #14181F; background: #E9ECEF; height: 100vh; min-height: 640px; display: flex; flex-direction: column; overflow: hidden">
+
+  <div style="height: 40px; flex: none; display: flex; align-items: flex-end; gap: 20px; padding: 0 12px; background: #E9ECEF; border-bottom: 1px solid #C3C9D1">
+    <div style="align-self: center; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.12em">HYDRA</div>
+    <nav aria-label="Tabs" style="display: flex; align-items: flex-end; gap: 2px; flex: 1; min-width: 0; overflow-x: auto">
+      <a href="#" aria-current="page" style="height: 34px; padding: 0 16px; display: flex; align-items: center; background: #F4F5F7; border: 1px solid #C3C9D1; border-bottom: 0; border-top: 3px solid #1F5FAD; box-sizing: border-box; font-size: 14px; font-weight: 600; color: #14181F; text-decoration: none; margin-bottom: -1px">Schematic</a>
+      <a href="#" style="height: 32px; padding: 0 16px; display: flex; align-items: center; font-size: 14px; color: #4A5361; text-decoration: none">Catalogue</a>
+      <a href="Proposals.dc.html" style="height: 32px; padding: 0 16px; display: flex; align-items: center; gap: 8px; font-size: 14px; color: #4A5361; text-decoration: none">Proposals <span style="min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: 10px; background: #0E7C86; color: #FFFFFF; font: 600 12px 'IBM Plex Mono', monospace; display: inline-flex; align-items: center; justify-content: center">3</span></a>
+      <a href="#" style="height: 32px; padding: 0 16px; display: flex; align-items: center; font-size: 14px; color: #4A5361; text-decoration: none">3D</a>
+      <a href="#" style="height: 32px; padding: 0 16px; display: flex; align-items: center; font-size: 14px; color: #4A5361; text-decoration: none">Account</a>
+    </nav>
+    <div style="align-self: center; display: flex; align-items: center; gap: 14px; font-size: 12px; color: #4A5361; white-space: nowrap">
+      <span style="display: flex; align-items: center; gap: 6px"><span style="width: 8px; height: 8px; border-radius: 4px; background: #2A8A52"></span>hydra_app</span>
+      <span style="font-weight: 500; color: #14181F">r.costa</span>
+    </div>
+  </div>
+
+  <div style="flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; background: #F4F5F7; border-bottom: 1px solid #C3C9D1">
+    <div style="display: flex; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; overflow: hidden">
+      <button type="button" style="height: 28px; padding: 0 10px; border: 0; border-right: 1px solid #C3C9D1; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">New</button>
+      <button type="button" style="height: 28px; padding: 0 10px; border: 0; border-right: 1px solid #C3C9D1; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">Open…</button>
+      <button type="button" style="height: 28px; padding: 0 12px; border: 0; border-right: 1px solid #C3C9D1; background: #1F5FAD; font: 600 13px 'IBM Plex Sans', sans-serif; color: #FFFFFF">Save</button>
+      <button type="button" style="height: 28px; padding: 0 10px; border: 0; border-right: 1px solid #C3C9D1; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">Save as copy</button>
+      <button type="button" style="height: 28px; padding: 0 10px; border: 0; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">History…</button>
+    </div>
+    <div style="display: flex; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; overflow: hidden">
+      <button type="button" aria-label="Undo move V3" style="height: 28px; width: 32px; border: 0; border-right: 1px solid #C3C9D1; background: #FFFFFF; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#14181F" stroke-width="1.75" aria-hidden="true"><path d="M5 3 2 6l3 3"></path><path d="M2 6h7.5a4 4 0 0 1 0 8H7"></path></svg></button>
+      <button type="button" aria-label="Redo" disabled="" style="height: 28px; width: 32px; border: 0; background: #FFFFFF; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#9AA2AD" stroke-width="1.75" aria-hidden="true"><path d="m11 3 3 3-3 3"></path><path d="M14 6H6.5a4 4 0 0 0 0 8H9"></path></svg></button>
+    </div>
+    <div style="width: 1px; height: 24px; background: #C3C9D1"></div>
+    <div style="display: flex; align-items: center; gap: 6px">
+      <label for="place" style="font-size: 13px; font-weight: 500">Place</label>
+      <select id="place" style="height: 28px; min-width: 220px; padding: 0 8px; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; font: 500 13px 'IBM Plex Mono', monospace; color: #14181F"><option>DEMO-RV10 relief (v2)</option></select>
+      <button type="button" style="height: 28px; padding: 0 10px; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">Add port</button>
+      <button type="button" style="height: 28px; padding: 0 10px; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">Add part ▾</button>
+    </div>
+    <button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; border-radius: 3px; border: 1px solid #7F8895; background: #FFFFFF; color: #14181F; font: 500 13px 'IBM Plex Sans', sans-serif; display: flex; align-items: center; gap: 6px">Draw wires <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; border: 1px solid #7F8895; border-radius: 2px; padding: 0 4px; color: #4A5361">W</span></button>
+    <div style="flex: 1"></div>
+    <button type="button" style="height: 28px; padding: 0 10px; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">Export ▾</button>
+  </div>
+
+  <div style="flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 14px; background: #FFF1D6; border-bottom: 1px solid #C07A00; font-size: 14px">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#8A5300" stroke-width="1.75" aria-hidden="true"><path d="M8 1.8 15 14H1z"></path><path d="M8 6v4M8 11.6v.4"></path></svg>
+    <span style="flex: 1 1 360px"><b>Imported by the assistant, not checked yet.</b> Compare every symbol with the source drawing, then mark it checked.</span>
+    <button type="button" style="height: 28px; padding: 0 12px; border-radius: 3px; border: 1px solid #7F8895; background: #FFFFFF; font: 600 13px 'IBM Plex Sans', sans-serif; color: #14181F">Mark checked</button>
+  </div>
+
+  <div style="flex: 1; min-height: 0; display: flex">
+    <aside aria-label="Parts" style="width: 248px; flex: none; background: #F4F5F7; border-right: 1px solid #C3C9D1; display: flex; flex-direction: column; min-height: 0">
+      <div style="height: 36px; flex: none; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #C3C9D1">
+        <span style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase">Parts</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">7</span>
+      </div>
+      <div style="padding: 8px 12px 4px; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">VALVES</div>
+      <sc-for list="{{parts}}" as="p" hint-placeholder-count="3">
+        <div style="min-height: 36px; padding: 6px 12px; box-sizing: border-box; display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 8px; align-items: center; background: {{p.bg}}; box-shadow: inset 0 0 0 1px {{p.edge}}">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600">{{p.id}}</span>
+          <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+            <span style="font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{p.name}}</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4A5361">{{p.code}}</span>
+            <sc-if value="{{p.flag}}" hint-placeholder-val="{{ false }}"><span style="align-self: flex-start; font-size: 11px; font-weight: 600; color: #8A5300; background: #FFF1D6; border: 1px solid #C07A00; border-radius: 2px; padding: 0 5px">▲ Part not listed</span></sc-if>
+          </span>
+        </div>
+      </sc-for>
+      <div style="padding: 12px 12px 4px; font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">BLOCK PORTS</div>
+      <div style="padding: 4px 12px; display: flex; flex-wrap: wrap; gap: 6px">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; border: 1px solid #7F8895; background: #FFFFFF; border-radius: 3px; padding: 2px 8px">P</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; border: 1px solid #7F8895; background: #FFFFFF; border-radius: 3px; padding: 2px 8px">T</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; border: 1px solid #7F8895; background: #FFFFFF; border-radius: 3px; padding: 2px 8px">A</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; border: 1px solid #7F8895; background: #FFFFFF; border-radius: 3px; padding: 2px 8px">B</span>
+      </div>
+    </aside>
+
+    <main style="flex: 1; min-width: 0; background: #CDD3DA; padding: 20px; display: flex; align-items: flex-start; justify-content: center; overflow: auto">
+      <div style="position: relative; width: 100%; max-width: 860px; aspect-ratio: 297 / 210; background-color: #FFFFFF; background-image: linear-gradient(#E4E8ED 1px, transparent 1px), linear-gradient(90deg, #E4E8ED 1px, transparent 1px); background-size: 20px 20px; border: 1px solid #7F8895; box-shadow: 0 2px 0 rgba(20, 24, 31, 0.1)">
+        <svg viewBox="0 0 800 566" width="100%" height="100%" role="img" aria-label="Schematic of DEMO-MAN-01: relief valve V1, directional valve V2 and check valve V3 in a block with ports P, T, A and B" style="position: absolute; inset: 0">
+          <g fill="none" stroke="#14181F" stroke-width="2">
+            <rect x="70" y="70" width="520" height="380" stroke-width="1.5" stroke-dasharray="18 5 3 5"></rect>
+            <path d="M230 128h150v50H230z M280 128v50 M330 128v50"></path>
+            <path d="M210 138h20v30h-20z M380 138h20v30h-20z M210 168l20-30 M380 168l20-30"></path>
+            <path d="M240 172l20-36 M256 140l4-4 1 6 M270 172l-20-36"></path>
+            <path d="M295 178v-14 M289 164h12 M315 128v14 M309 142h12"></path>
+            <path d="M342 136v36 M368 136v36 M339 140l3-4 3 4 M365 168l3 4 3-4"></path>
+            <path d="M295 178v152 M200 450v-60 M200 352v-22 M200 330h95"></path>
+            <path d="M175 330h25 M175 330v-20 M150 260h50v50h-50z M157 302l36-34 M188 266l5 2-1 5 M200 272l8 4-8 4 8 4-8 4 8 4"></path>
+            <path d="M175 260v-36h114 a6 6 0 0 1 12 0 h14v-46 M315 224h125v226"></path>
+            <path d="M295 128v-58 M315 128v-58"></path>
+            <circle cx="200" cy="371" r="9"></circle>
+            <path d="M188 360l12 22 12-22"></path>
+          </g>
+          <g fill="#14181F"><circle cx="200" cy="330" r="3.5"></circle></g>
+          <rect x="176" y="352" width="48" height="40" rx="3" fill="rgba(217, 138, 0, 0.16)" stroke="#C07A00" stroke-width="3"></rect>
+          <rect x="168" y="344" width="64" height="56" fill="none" stroke="#1F5FAD" stroke-width="2"></rect>
+          <g fill="#1F5FAD"><rect x="165" y="341" width="6" height="6"></rect><rect x="229" y="341" width="6" height="6"></rect><rect x="165" y="397" width="6" height="6"></rect><rect x="229" y="397" width="6" height="6"></rect></g>
+          <g font-family="IBM Plex Mono, monospace" font-size="13" font-weight="600" fill="#14181F">
+            <text x="406" y="158">V2</text><text x="122" y="290">V1</text><text x="240" y="376">V3</text>
+            <text x="288" y="60">A</text><text x="309" y="60">B</text><text x="194" y="474">P</text><text x="434" y="474">T</text>
+          </g>
+          <g font-family="IBM Plex Sans, sans-serif" font-size="11" fill="#4A5361">
+            <text x="406" y="174">DEMO-DCV43</text><text x="98" y="306">DEMO-RV10</text><text x="240" y="392">DEMO-CV04</text>
+          </g>
+        </svg>
+        <div style="position: absolute; right: 12px; bottom: 12px; display: grid; grid-template-columns: 2fr 1fr 1fr; border: 2px solid #14181F; background: #FFFFFF; width: 46%; min-width: 300px; font-size: 12px">
+          <div style="grid-column: 1 / 4; padding: 5px 10px; border-bottom: 1px solid #14181F; display: flex; justify-content: space-between; align-items: baseline; gap: 8px"><span style="font-size: 15px; font-weight: 600">DEMO-MAN-01 manifold</span><span style="font-family: 'IBM Plex Mono', monospace; color: #4A5361">schema 5</span></div>
+          <div style="padding: 4px 10px; border-right: 1px solid #14181F"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 10px; letter-spacing: 0.06em; color: #4A5361">DRAWN BY</div><div>assistant · r.costa</div></div>
+          <div style="padding: 4px 10px; border-right: 1px solid #14181F"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 10px; letter-spacing: 0.06em; color: #4A5361">REVISION</div><div style="font-family: 'IBM Plex Mono', monospace; font-weight: 600">4 <span style="color: #8A5300">▲ edited</span></div></div>
+          <div style="padding: 4px 10px"><div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 10px; letter-spacing: 0.06em; color: #4A5361">CHECKED</div><div style="color: #8A5300; font-weight: 600">▲ Not yet</div></div>
+        </div>
+      </div>
+    </main>
+
+    <aside aria-label="Selected part" style="width: 300px; flex: none; background: #F4F5F7; border-left: 1px solid #C3C9D1; display: flex; flex-direction: column; min-height: 0; overflow: auto">
+      <div style="padding: 14px 16px; border-bottom: 1px solid #C3C9D1; display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex; align-items: baseline; gap: 10px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 600">V3</span><span style="font-size: 14px; color: #4A5361">Check valve</span></div>
+        <span style="align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 3px; border: 1px solid #C07A00; background: #FFF1D6; color: #8A5300; font-size: 12px; font-weight: 600">▲ Part not listed</span>
+        <p style="margin: 0; font-size: 13px; line-height: 18px; color: #14181F">DEMO-CV04 is in the catalogue, but part <span style="font-family: 'IBM Plex Mono', monospace">DEMO-CV04-05</span> from the drawing is not. Pick a listed part or a stand-in.</p>
+      </div>
+      <div style="padding: 14px 16px; border-bottom: 1px solid #C3C9D1; display: flex; flex-direction: column; gap: 8px">
+        <div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">CATALOGUE</div>
+        <div style="display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 6px 8px; font-size: 13px">
+          <span style="color: #4A5361">Valve type</span><span style="font-family: 'IBM Plex Mono', monospace; font-weight: 500">demo-cv04@1</span>
+          <span style="color: #4A5361">Requested</span><span style="font-family: 'IBM Plex Mono', monospace; font-weight: 500">DEMO-CV04-05</span>
+          <span style="color: #4A5361">Mounting</span><span style="font-family: 'IBM Plex Mono', monospace; font-weight: 500">DEMO-CAV-08</span>
+        </div>
+      </div>
+      <div style="padding: 14px 16px; border-bottom: 1px solid #C3C9D1; display: flex; flex-direction: column; gap: 8px">
+        <div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">USE INSTEAD</div>
+        <button type="button" style="min-height: 32px; padding: 6px 10px; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; text-align: left; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F; display: flex; justify-content: space-between; gap: 8px">DEMO-CV04 (DEMO-CV04-03)<span style="font-size: 12px; color: #4A5361">same ports</span></button>
+        <button type="button" style="min-height: 32px; padding: 6px 10px; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; text-align: left; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F; display: flex; justify-content: space-between; gap: 8px">DEMO-CV06<span style="font-size: 12px; color: #8A5300">rewire</span></button>
+      </div>
+      <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px">
+        <div style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; color: #4A5361">PLACEMENT</div>
+        <div style="display: flex; gap: 8px">
+          <button type="button" style="height: 28px; padding: 0 10px; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">Rotate <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #4A5361">R</span></button>
+          <button type="button" style="height: 28px; padding: 0 10px; border: 1px solid #7F8895; border-radius: 3px; background: #FFFFFF; font: 500 13px 'IBM Plex Sans', sans-serif; color: #14181F">Mirror <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #4A5361">M</span></button>
+          <button type="button" style="height: 28px; padding: 0 10px; border: 1px solid #A3201A; border-radius: 3px; background: #FFFFFF; font: 600 13px 'IBM Plex Sans', sans-serif; color: #A3201A">Delete</button>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 14px"><input type="checkbox" checked="" style="width: 16px; height: 16px; accent-color: #1F5FAD; margin: 0">In block</label>
+      </div>
+    </aside>
+  </div>
+
+  <section aria-label="Issues" style="flex: none; height: 116px; display: flex; flex-direction: column; background: #FFFFFF; border-top: 1px solid #C3C9D1">
+    <div style="height: 32px; flex: none; padding: 0 12px; display: flex; align-items: center; gap: 16px; background: #F4F5F7; border-bottom: 1px solid #C3C9D1">
+      <span style="font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase">Issues</span>
+      <span style="font-size: 12px; font-weight: 600; color: #4A5361">0 errors</span>
+      <span style="font-size: 12px; font-weight: 600; color: #8A5300">▲ 2 warnings</span>
+    </div>
+    <div style="display: grid; grid-template-columns: 96px 56px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 36px; padding: 6px 12px; border-bottom: 1px solid #DDE1E6; font-size: 14px">
+      <span style="font-size: 12px; font-weight: 600; color: #8A5300">▲ Warning</span><a href="#" style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600">V3</a><span>Part DEMO-CV04-05 is not listed for DEMO-CV04; pick a listed part or a stand-in.</span>
+    </div>
+    <div style="display: grid; grid-template-columns: 96px 56px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 36px; padding: 6px 12px; font-size: 14px">
+      <span style="font-size: 12px; font-weight: 600; color: #8A5300">▲ Warning</span><a href="#" style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600">V1</a><span>V1 label overlaps the T line; move the label or the valve.</span>
+    </div>
+  </section>
+
+  <footer style="height: 26px; flex: none; display: flex; align-items: center; gap: 18px; padding: 0 12px; background: #E9ECEF; border-top: 1px solid #C3C9D1; font-size: 12px; color: #4A5361; white-space: nowrap; overflow: hidden">
+    <span style="font-family: 'IBM Plex Mono', monospace">x 212.5  y 88.0 mm</span>
+    <span style="font-family: 'IBM Plex Mono', monospace">100%</span>
+    <span>Grid 5 mm</span>
+    <span style="flex: 1; overflow: hidden; text-overflow: ellipsis">Drag from a port to connect · Shift-drag from a block port · W draws wires · R rotates · double-click fits</span>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      parts: [
+        { id: 'V1', name: 'Relief valve', code: 'DEMO-RV10 · demo-rv10@2', flag: false, bg: 'transparent', edge: 'transparent' },
+        { id: 'V2', name: 'Directional valve 4/3', code: 'DEMO-DCV43 · demo-dcv43@1', flag: false, bg: 'transparent', edge: 'transparent' },
+        { id: 'V3', name: 'Check valve', code: 'DEMO-CV04 · demo-cv04@1', flag: true, bg: '#E3ECF7', edge: '#1F5FAD' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

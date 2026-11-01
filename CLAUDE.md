@@ -33,9 +33,10 @@ When in doubt, prefer refusing or warning in plain words over guessing.
 | `crates/hydra-mesh` | glTF → triangle meshes in CAD space (mm, Z up); model alignment | `lib.rs` (`load_glb` is a trust boundary) |
 | `crates/hydra-db` | Postgres migrations, schema guard, repositories, the `hydra-admin` CLI | `migrations/`, `lib.rs` (`check_schema`), `catalogue.rs`, `circuits.rs`, `proposals.rs`, `users.rs`, `bin/hydra-admin.rs` |
 | `crates/hydra-mcp` | MCP server for the AI assistant | `lib.rs`: tools, plus `GUIDE`, the format and rules the assistant follows. Changing it changes the assistant's behaviour. |
-| `crates/hydra` | The desktop binary (eframe/egui, egui_dock tabs) | `editor.rs` (Schematic tab and its kittests), `schematic.rs` (canvas painting), `catalogue.rs`, `proposals.rs`, `models.rs` (3D), `db.rs` (the one database worker thread) |
+| `crates/hydra` | The desktop binary (eframe/egui, egui_dock tabs) | `editor.rs` (Schematic tab and its kittests), `schematic.rs` (canvas painting), `catalogue.rs`, `proposals.rs`, `models.rs` (3D), `db.rs` (the one database worker thread), `theme.rs` (colours, fonts, type scale: the design system in `docs/design.md`) |
 
 Other directories:
+- `docs/`: the pilot plan, and the design system (`design.md`, with the canvas boards' source in `design/`).
 - `fixtures/`: the demo catalogue and golden circuits.
 - `tools/step2gltf`: the C++/OpenCascade STEP converter, run out of process.
 - `ops/`: roles and backups.
@@ -133,6 +134,11 @@ Each rule comes with its reason. Breaking one either corrupts something that can
   - core and drawing logic: unit or integration tests;
   - the editor: `egui_kittest` tests in `editor.rs`, which click real widgets and read real labels;
   - the database: `#[sqlx::test]` with `#[ignore = "needs DATABASE_URL (Postgres)"]`.
+- **The UI follows [docs/design.md](docs/design.md).**
+  - Colours come from `theme::LIGHT` and text from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. New code never writes a literal `Color32` or font size, so a second theme stays a new `Palette`. The older literals that remain are listed under "Not built yet" in the design doc.
+  - Kittests build their harness through `theme::themed(...)`, so they run in the real fonts and sizes and the theme's text styles exist.
+  - A status always shows a word and its mark, never colour alone.
+  - A new kind of control is added to the design doc (and the canvas boards in `docs/design/`) rather than styled on the spot.
 - **Drawing conventions:**
   - Sheet units are millimetres, x right, y down.
   - A part's placement is position, `rotation` (clockwise quarter turns) and `mirror` (a flip left to right, applied before the rotation).
