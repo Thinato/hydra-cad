@@ -162,14 +162,16 @@ fn designators_are_clear_of_wires_frames_and_the_outline() {
 #[test]
 fn a_designator_moved_by_a_wire_counts_where_it_is_drawn() {
     let catalogue = catalogue();
-    // The wire from Q to R runs down just left of X100, so its designator goes on the right.
+    // The wire drawn from Q to R runs down just left of X100, so its designator goes on the
+    // right. (An automatic wire would keep clear of the designator instead.)
     let json = r#"{"schema": 4, "name": "w", "components": [
         {"id": "Q", "kind": "port", "label": "Q"}, {"id": "R", "kind": "port", "label": "R"},
         {"id": "X100", "kind": "item", "symbol": {"kind": "orifice"}},
         {"id": "Z1", "kind": "item", "symbol": {"kind": "orifice"}}],
         "nets": [{"id": "n", "ports": [{"component": "Q", "port": "port"}, {"component": "R", "port": "port"}]}],
         "layout": {"components": {"Q": {"x": 26, "y": 0}, "R": {"x": 26, "y": 60},
-                                  "X100": {"x": 30, "y": 30}, "Z1": {"x": 46, "y": 30}}},
+                                  "X100": {"x": 30, "y": 30}, "Z1": {"x": 46, "y": 30}},
+                   "wires": {"n": [[[26, 0], [26, 60]]]}},
         "in_block": ["X100"]}"#;
     let circuit = Circuit::from_json(json).unwrap();
     let parts = render_parts(&circuit, &catalogue);
@@ -1270,15 +1272,16 @@ fn drawn_wires_replace_the_automatic_ones() {
         };
         assert!(drawn.iter().any(traced), "{w:?} is drawn");
     }
-    // FC1.Out to HM1.A: as drawn, not the automatic elbow from the net's first port.
-    let auto = vec![[40.0, 52.0], [40.0, 52.0], [40.0, 23.0]];
-    assert!(!drawn.contains(&auto));
-    let first = |c: &Circuit| polylines(c).into_iter().filter(|w| w == &auto).count();
+    // FC1.Out to HM1.A: drawn once, as traced, with no automatic wire beside it; without its
+    // wires the net is routed automatically, here along the same straight line.
+    let line = vec![[40.0, 52.0], [40.0, 23.0]];
+    let count = |c: &Circuit| polylines(c).into_iter().filter(|w| w == &line).count();
+    assert_eq!(count(&circuit), 1);
     circuit.layout.wires.remove("n-1");
     assert_eq!(
-        first(&circuit),
+        count(&circuit),
         1,
-        "a net without wires gets its elbow back"
+        "a net without wires gets its automatic wire back"
     );
     assert!(polylines(&circuit).contains(&circuit.layout.wires["n-p"][0].points));
 }
@@ -1509,7 +1512,8 @@ fn a_wire_through_a_part_is_a_warning() {
 fn a_wire_along_an_untraced_nets_elbow_is_a_warning() {
     let catalogue = catalogue();
     let mut c = motors();
-    // n-1 untraced: its automatic line runs from FC1.Out straight up to HM1.A at x = 40.
+    // n-1 untraced, and a wire of n-t turning in its column at x = 40: n-1's automatic line is
+    // routed round that wire, so the two never touch and there's nothing to warn about.
     c.layout.wires.remove("n-1");
     c.layout
         .wires
@@ -1517,39 +1521,78 @@ fn a_wire_along_an_untraced_nets_elbow_is_a_warning() {
         .unwrap()
         .push(vec![[20.0, 40.0], [40.0, 40.0], [40.0, 30.0], [62.0, 30.0]].into());
     assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
-    assert_eq!(
-        wire_warnings(&c, &catalogue),
-        [
-            "wire 9 of net n-t and the automatic line of net n-1, which has no wires, touch at \
-             40, 40; trace net n-1 as the drawing routes it, or move the wire"
-        ]
-    );
-    // Crossing it is fine, as between traced nets.
-    let n_t = c.layout.wires.get_mut("n-t").unwrap();
-    n_t[8] = vec![[20.0, 40.0], [62.0, 40.0]].into();
     assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
-    // Over the untraced net's port, FC1.Out, where its line starts: a problem, not this too.
-    c.layout.wires.get_mut("n-t").unwrap()[8] = vec![[20.0, 52.0], [62.0, 52.0]].into();
+    // A net drawn with the plain elbows, which ignore the other lines: R sits under Z's
+    // symbol, so n is drawn as a trunk from Q at 0, 0 to 30, 0 and down to R at 30, 20. Net m
+    // runs from S to U along `wire`.
+    let plain = |s: [f32; 2], u: [f32; 2], wire: &str| {
+        let json = format!(
+            r#"{{"schema": 5, "name": "w", "components": [
+            {{"id": "Q", "kind": "port", "label": "Q"}}, {{"id": "R", "kind": "port", "label": "R"}},
+            {{"id": "S", "kind": "port", "label": "S"}}, {{"id": "U", "kind": "port", "label": "U"}},
+            {{"id": "Z", "kind": "item", "symbol": {{"kind": "orifice"}}}}],
+            "nets": [{{"id": "n", "ports": [{{"component": "Q", "port": "port"}}, {{"component": "R", "port": "port"}}]}},
+                     {{"id": "m", "ports": [{{"component": "S", "port": "port"}}, {{"component": "U", "port": "port"}}]}}],
+            "layout": {{"components": {{"Q": {{"x": 0, "y": 0}}, "R": {{"x": 30, "y": 20}},
+                                      "S": {{"x": {}, "y": {}}}, "U": {{"x": {}, "y": {}}},
+                                      "Z": {{"x": 30, "y": 20}}}},
+                       "wires": {{"m": [{wire}]}}}}}}"#,
+            s[0], s[1], u[0], u[1]
+        );
+        let c = Circuit::from_json(&json).unwrap();
+        (wire_problems(&c, &catalogue), wire_warnings(&c, &catalogue))
+    };
+    let elbows = "net n couldn't be routed clear of the other lines and parts, so it is drawn \
+                  with plain elbows that may run along or cross other nets' lines; trace its wires";
+    // Along the trunk: warned about, and so is the net.
     assert_eq!(
-        wire_problems(&c, &catalogue),
-        ["wire 9 of net n-t passes over port FC1.Out, which is on net n-1; route it around"]
+        plain(
+            [5.0, -10.0],
+            [25.0, -10.0],
+            "[[5, -10], [5, 0], [25, 0], [25, -10]]"
+        ),
+        (
+            vec![],
+            vec![
+                "wire 1 of net m and the automatic line of net n, which has no wires, touch at \
+                 5, 0; trace net n as the drawing routes it, or move the wire"
+                    .to_string(),
+                elbows.to_string()
+            ]
+        )
     );
-    assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
-    // A corner of the automatic line on a traced wire that runs on past both its ends: n-2's
-    // line turns at 102, 52 on its way down to FC2.X.
-    let mut c = motors();
-    c.layout.wires.remove("n-2");
-    c.layout
-        .wires
-        .get_mut("n-t")
-        .unwrap()
-        .push(vec![[102.0, 45.0], [102.0, 70.0]].into());
+    // Across the trunk: fine, as between traced nets.
     assert_eq!(
-        wire_warnings(&c, &catalogue),
-        [
-            "wire 9 of net n-t and the automatic line of net n-2, which has no wires, touch at \
-             102, 52; trace net n-2 as the drawing routes it, or move the wire"
-        ]
+        plain([15.0, -10.0], [15.0, 10.0], "[[15, -10], [15, 10]]"),
+        (vec![], vec![elbows.to_string()])
+    );
+    // Over the untraced net's own port Q, where its line starts: a problem, and through Q's
+    // circle, but not along the line too.
+    assert_eq!(
+        plain([0.0, -10.0], [0.0, 10.0], "[[0, -10], [0, 10]]"),
+        (
+            vec![
+                "wire 1 of net m passes over port Q.port, which is on net n; route it around"
+                    .to_string()
+            ],
+            vec![
+                "a wire of net m runs through Q; check its route against the drawing".to_string(),
+                elbows.to_string()
+            ]
+        )
+    );
+    // The line's corner at 30, 0 on a traced wire that runs on past it both ways.
+    assert_eq!(
+        plain([25.0, -5.0], [35.0, 5.0], "[[25, -5], [35, 5]]"),
+        (
+            vec![],
+            vec![
+                "wire 1 of net m and the automatic line of net n, which has no wires, touch at \
+                 30, 0; trace net n as the drawing routes it, or move the wire"
+                    .to_string(),
+                elbows.to_string()
+            ]
+        )
     );
 }
 
@@ -1681,12 +1724,11 @@ fn golden(name: &str) -> Circuit {
 #[test]
 fn labels_keep_clear_of_wires() {
     let catalogue = catalogue();
-    // Status words, item labels, port names and port labels. In the imported manifold, M1's
-    // wire leaves its port downwards and the orifices X1 and X2 stand upright on their wires.
-    // PB10 is the label inside 9.1's box, which a wire is routed straight through.
+    // Status words, item labels, port names and port labels. In the imported manifold the
+    // automatic wires keep off each label and the room it slides into, so every one is clear.
     assert_eq!(
         texts_on_wires(&golden("demo-import-manifold"), &catalogue),
-        ["PB10"]
+        Vec::<String>::new()
     );
     assert_eq!(
         texts_on_wires(&golden("demo-manifold"), &catalogue),
@@ -1791,7 +1833,7 @@ fn a_wire_hops_over_another_nets_wire() {
     };
     let drawn = lines(&c);
     assert!(drawn.iter().any(|(p, _)| hopped(p)), "{drawn:?}");
-    assert!(drawn.contains(&(vec![[0.0, 10.0], [20.0, 10.0], [20.0, 10.0]], false)));
+    assert!(drawn.contains(&(vec![[0.0, 10.0], [20.0, 10.0]], false)));
     // Traced, a pilot line hops too, and stays dashed.
     let wires = &mut c.layout.wires;
     wires.insert(
