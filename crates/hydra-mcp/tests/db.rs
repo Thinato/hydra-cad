@@ -540,13 +540,18 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
     let err = mcp.import_circuit(import(json)).await.unwrap_err();
     assert!(err.contains("give requested.function"), "{err}");
     assert!(err.contains("item X1 is drawn as a valve"), "{err}");
-    // A valve left out of the block but drawn between parts that are in it, and a typo far off.
+    // A valve left out of the block but drawn amid parts that are in it, and a typo far off.
     let mut outside = demo_circuit("demo-import-motors");
-    outside["in_block"] = json!(["P", "T", "FC1", "FC2", "FC3", "RV1", "M1"]);
+    outside["in_block"] = json!(["P", "T", "FC1", "FC2", "FC3", "V1", "M1"]);
     outside["layout"]["components"]["HM1"]["x"] = json!(2e8);
     let e = mcp.import_circuit(import(outside)).await.unwrap_err();
     assert!(
-        e.contains("- V1 is not in in_block, but its layout puts it over"),
+        e.contains(
+            "- RV1 is not in in_block, but its layout puts it over the block's outline; place it \
+             more than 4 mm outside the area the block's parts span, in a corner holding no \
+             block part, or at the block's edge snug between block parts, less than 12 mm \
+             from the block parts beside it"
+        ),
         "{e}"
     );
     assert!(e.contains("HM1 is placed at 200000000, 15"), "{e}");
@@ -608,6 +613,15 @@ async fn problems_are_listed_and_nothing_is_saved(pool: PgPool) {
             "FC1 is outside the block and the outline is cut round it; check the drawing shows \
              it outside the block, otherwise add it to in_block"
         ),
+        "{reply}"
+    );
+    // One left out at the block's edge, snug between block parts, gets a U cut and a warning.
+    let mut u = demo_circuit("demo-import-motors");
+    u["name"] = "DEMO-U".into();
+    u["in_block"] = json!(["P", "T", "FC1", "FC2", "FC3", "RV1", "M1"]);
+    let reply = mcp.import_circuit(import(u)).await.unwrap();
+    assert!(
+        reply.contains("V1 is outside the block and the outline is cut round it"),
         "{reply}"
     );
     let err = mcp.import_circuit(import(json!([1]))).await.unwrap_err();
