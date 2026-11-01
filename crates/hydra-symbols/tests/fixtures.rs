@@ -983,10 +983,10 @@ fn junction_dots_mark_where_three_lines_meet() {
     let mut c = motors();
     // A wire ending partway along another (a T) gets a dot; a bend inside one wire doesn't.
     assert!(dot_at(&c, [90.0, 106.0]));
-    assert!(!dot_at(&c, [0.0, 106.0]));
+    assert!(!dot_at(&c, [20.0, 2.0]));
     // n-p's trunk split at (40, 106), where FC1.In's branch meets it: three ends, one dot.
     let n_p = c.layout.wires.get_mut("n-p").unwrap();
-    n_p[0] = vec![[0.0, 110.0], [0.0, 106.0], [40.0, 106.0]].into();
+    n_p[0] = vec![[0.0, 106.0], [40.0, 106.0]].into();
     n_p.push(vec![[40.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into());
     assert!(dot_at(&c, [40.0, 106.0]));
     let dots = |c: &Circuit| {
@@ -1006,7 +1006,7 @@ fn junction_dots_mark_where_three_lines_meet() {
     // Two wires meeting end to end, as a corner: no dot.
     let mut c = motors();
     let n_t = c.layout.wires.get_mut("n-t").unwrap();
-    n_t[0] = vec![[20.0, 110.0], [20.0, 50.0]].into();
+    n_t[0] = vec![[20.0, 115.0], [20.0, 50.0]].into();
     n_t.push(vec![[20.0, 50.0], [20.0, 2.0], [230.0, 2.0], [230.0, 72.0]].into());
     assert!(!dot_at(&c, [20.0, 50.0]));
     assert_eq!(wire_problems(&c, &catalogue()), Vec::<String>::new());
@@ -1014,17 +1014,11 @@ fn junction_dots_mark_where_three_lines_meet() {
     let mut c = motors();
     let m = [255.0, 104.8];
     assert!(!dot_at(&c, m), "one wire ending at M1.M");
-    c.layout.wires.get_mut("n-p").unwrap()[0] = vec![
-        [0.0, 110.0],
-        [0.0, 106.0],
-        [255.0, 106.0],
-        [255.0, 100.0],
-        [265.0, 100.0],
-    ]
-    .into();
+    c.layout.wires.get_mut("n-p").unwrap()[0] =
+        vec![[0.0, 106.0], [255.0, 106.0], [255.0, 100.0], [265.0, 100.0]].into();
     assert!(dot_at(&c, m), "a wire passing over M1.M");
     let n_p = c.layout.wires.get_mut("n-p").unwrap();
-    n_p[0] = vec![[0.0, 110.0], [0.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into();
+    n_p[0] = vec![[0.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into();
     n_p.push(vec![[255.0, 104.8], [255.0, 100.0], [265.0, 100.0]].into());
     assert!(dot_at(&c, m), "two wire ends meeting at M1.M");
 }
@@ -1183,11 +1177,77 @@ fn a_wire_through_a_part_is_a_warning() {
         .unwrap()
         .push(vec![[30.0, 60.0], [100.0, 60.0]].into());
     // Through FC2 and through FC1, though the net has a port of FC1: not into that port.
+    let w = wire_warnings(&c, &catalogue);
+    for part in ["FC1", "FC2"] {
+        let through =
+            format!("a wire of net n-1 runs through {part}; check its route against the drawing");
+        assert!(w.contains(&through), "{w:?}");
+    }
+    // Into one of the part's own ports, but across the symbol to get there: FC1.Bypass from
+    // its left, not out along its line to the right.
+    let mut c = motors();
+    c.layout
+        .wires
+        .get_mut("n-t")
+        .unwrap()
+        .push(vec![[20.0, 63.0], [48.0, 63.0]].into());
+    assert_eq!(
+        wire_warnings(&c, &catalogue),
+        ["a wire of net n-t runs through FC1; check its route against the drawing"]
+    );
+}
+
+#[test]
+fn a_wire_along_an_untraced_nets_elbow_is_a_warning() {
+    let catalogue = catalogue();
+    let mut c = motors();
+    // n-1 untraced: its automatic line runs from FC1.Out straight up to HM1.A at x = 40.
+    c.layout.wires.remove("n-1");
+    c.layout
+        .wires
+        .get_mut("n-t")
+        .unwrap()
+        .push(vec![[20.0, 40.0], [40.0, 40.0], [40.0, 30.0], [62.0, 30.0]].into());
+    assert_eq!(wire_problems(&c, &catalogue), Vec::<String>::new());
     assert_eq!(
         wire_warnings(&c, &catalogue),
         [
-            "a wire of net n-1 runs through FC1; check its route against the drawing",
-            "a wire of net n-1 runs through FC2; check its route against the drawing",
+            "wire 9 of net n-t and the automatic line of net n-1, which has no wires, touch at \
+             40, 40; trace net n-1 as the drawing routes it, or move the wire"
+        ]
+    );
+    // Crossing it is fine, as between traced nets.
+    let n_t = c.layout.wires.get_mut("n-t").unwrap();
+    n_t[8] = vec![[20.0, 40.0], [62.0, 40.0]].into();
+    assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new());
+}
+
+#[test]
+fn a_wire_along_the_outline_or_across_a_label_is_a_warning() {
+    let catalogue = catalogue();
+    // P at the outline's bottom left corner, its wire running 4 mm up the left edge.
+    let mut c = motors();
+    c.layout.components.get_mut("P").unwrap().y = 110.0;
+    c.layout.wires.get_mut("n-p").unwrap()[0] =
+        vec![[0.0, 110.0], [0.0, 106.0], [255.0, 106.0], [255.0, 104.8]].into();
+    assert_eq!(
+        wire_warnings(&c, &catalogue),
+        [
+            "wire 1 of net n-p runs along the block outline from 0, 106 to 0, 110, so it reads \
+             as the outline; move the wire, or the block port it leaves, so it only crosses the \
+             outline"
+        ]
+    );
+    // T inside the block, so its label is above it, where its own wire leaves.
+    let mut c = motors();
+    c.layout.components.get_mut("T").unwrap().y = 110.0;
+    c.layout.wires.get_mut("n-t").unwrap()[0] =
+        vec![[20.0, 110.0], [20.0, 2.0], [230.0, 2.0], [230.0, 72.0]].into();
+    assert_eq!(
+        wire_warnings(&c, &catalogue),
+        [
+            "wire 1 of net n-t crosses the label \"T\" of T; move the wire or T so the label is \
+             clear"
         ]
     );
 }
