@@ -622,3 +622,32 @@ fn bad_blocks_are_problems() {
         );
     }
 }
+
+#[test]
+fn an_issue_names_the_part_it_is_about_by_its_id() {
+    // Designators that are bare numbers, as cavity numbers are.
+    let mut c = circuit();
+    c.components.push(valve("1", "vt-unknown@1"));
+    c.components.push(port("2"));
+    let issues = c.validate(&catalogue());
+    let about = |id: &str| issues.iter().filter(|i| i.component() == Some(id)).count();
+    assert!(about("1") >= 1, "{issues:?}");
+    assert!(about("2") >= 1, "{issues:?}");
+    let port = Issue::Unconnected(pr("2", "port"));
+    assert_eq!(port.component(), Some("2"));
+    let face = Issue::FaceTaken {
+        face: "1".into(),
+        components: ["3".into(), "4".into()],
+    };
+    assert_eq!(face.component(), Some("3"));
+    assert_eq!(Issue::NothingInBlock.component(), None);
+    assert_eq!(Issue::InBlockUnknown("1".into()).component(), None);
+    assert_eq!(
+        Issue::UnknownComponent {
+            net: "1".into(),
+            component: "9".into()
+        }
+        .component(),
+        None
+    );
+}

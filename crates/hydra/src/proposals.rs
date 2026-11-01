@@ -267,54 +267,38 @@ impl ProposalsPanel {
 
     /// The review queue: its header, the Waiting/All switch and one row per proposal.
     fn queue_ui(&mut self, ui: &mut egui::Ui, shared: &Shared) {
-        let header = egui::Frame::new()
-            .inner_margin(egui::Margin::same(12))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("REVIEW QUEUE").text_style(theme::overline()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let refresh = ui
-                            .add_enabled(!self.busy, egui::Button::new("Refresh"))
-                            .on_hover_text("Fetch the queue again.")
-                            .on_disabled_hover_text("Waiting for the database.");
-                        if refresh.clicked() {
-                            self.refresh(shared);
-                        }
-                        if self.busy {
-                            ui.spinner();
-                        }
-                    });
+        theme::section(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("REVIEW QUEUE").text_style(theme::overline()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let refresh = ui
+                        .add_enabled(!self.busy, egui::Button::new("Refresh"))
+                        .on_hover_text("Fetch the queue again.")
+                        .on_disabled_hover_text("Waiting for the database.");
+                    if refresh.clicked() {
+                        self.refresh(shared);
+                    }
+                    if self.busy {
+                        ui.spinner();
+                    }
                 });
-                // Two joined segments: waiting proposals only, or every proposal.
-                egui::Frame::new()
-                    .fill(LIGHT.surface)
-                    .stroke(Stroke::new(1.0, LIGHT.border_strong))
-                    .corner_radius(theme::RADIUS)
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.horizontal(|ui| {
-                            let half = Vec2::new(ui.available_width() / 2.0, 28.0);
-                            for (all, word) in [(false, "Waiting"), (true, "All")] {
-                                let selected = self.show_reviewed == all;
-                                let segment = ui.add_enabled(
-                                    !self.busy,
-                                    egui::Button::selectable(selected, word)
-                                        .corner_radius(0)
-                                        .min_size(half),
-                                );
-                                if segment.clicked() && !selected {
-                                    self.show_reviewed = all;
-                                    self.refresh(shared);
-                                }
-                            }
-                        });
-                    });
             });
-        ui.painter().hline(
-            ui.max_rect().x_range(),
-            header.response.rect.bottom(),
-            Stroke::new(1.0, LIGHT.border),
-        );
+            // Two joined segments: waiting proposals only, or every proposal.
+            theme::group(ui, |ui| {
+                let half = Vec2::new((ui.available_width() - 1.0) / 2.0, 28.0);
+                for (all, word) in [(false, "Waiting"), (true, "All")] {
+                    let selected = self.show_reviewed == all;
+                    let segment = ui.add_enabled(
+                        !self.busy,
+                        egui::Button::new(word).selected(selected).min_size(half),
+                    );
+                    if segment.clicked() && !selected {
+                        self.show_reviewed = all;
+                        self.refresh(shared);
+                    }
+                }
+            });
+        });
 
         let Some(list) = &self.list else {
             return;
@@ -399,73 +383,38 @@ fn queue_row(
 ) -> egui::Response {
     let v = &p.proposal.valve_type;
     let name = format!("{} {}", v.series, v.code);
-    let row = ui
-        .scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
-            // Clicks on the row's text select the row.
-            ui.style_mut().interaction.selectable_labels = false;
-            let last = ui.response();
-            let fill = if selected {
-                LIGHT.accent_tint
-            } else if last.hovered() {
-                LIGHT.hover
-            } else {
-                Color32::TRANSPARENT
-            };
-            let edge = if selected || last.has_focus() {
-                LIGHT.accent
-            } else {
-                Color32::TRANSPARENT
-            };
-            let row = egui::Frame::new()
-                .fill(fill)
-                .stroke(Stroke::new(1.0, edge))
-                .inner_margin(egui::Margin::same(12))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    ui.horizontal(|ui| {
-                        let code = RichText::new(&name)
-                            .family(FontFamily::Name(theme::MONO_SEMIBOLD.into()));
-                        ui.label(code);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(&p.created_at).small().color(LIGHT.secondary));
-                        });
-                    });
-                    ui.monospace(p.proposal.target().to_string());
-                    ui.label(
-                        RichText::new(format!(
-                            "{} · by {}",
-                            manufacturer_name(catalogue, &v.manufacturer),
-                            p.created_by
-                        ))
-                        .small()
-                        .color(LIGHT.secondary),
-                    );
-                    match check {
-                        Some((mark, text)) => {
-                            let text = RichText::new(text)
-                                .small()
-                                .family(FontFamily::Name(theme::SEMIBOLD.into()));
-                            theme::marked(ui, *mark, text);
-                        }
-                        None => {
-                            let (mark, word) = status_chip(p.status);
-                            theme::chip(ui, mark, word);
-                        }
-                    }
-                });
-            let rect = row.response.rect;
-            ui.painter().hline(
-                rect.x_range(),
-                rect.bottom(),
-                Stroke::new(1.0, LIGHT.divider),
-            );
-        })
-        .response;
-    row.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name)
-    });
-    row
+    theme::list_row(ui, selected, &name, |ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.horizontal(|ui| {
+            let code = RichText::new(&name).family(FontFamily::Name(theme::MONO_SEMIBOLD.into()));
+            ui.label(code);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(&p.created_at).small().color(LIGHT.secondary));
+            });
+        });
+        ui.monospace(p.proposal.target().to_string());
+        ui.label(
+            RichText::new(format!(
+                "{} · by {}",
+                manufacturer_name(catalogue, &v.manufacturer),
+                p.created_by
+            ))
+            .small()
+            .color(LIGHT.secondary),
+        );
+        match check {
+            Some((mark, text)) => {
+                let text = RichText::new(text)
+                    .small()
+                    .family(FontFamily::Name(theme::SEMIBOLD.into()));
+                theme::marked(ui, *mark, text);
+            }
+            None => {
+                let (mark, word) = status_chip(p.status);
+                theme::chip(ui, mark, word);
+            }
+        }
+    })
 }
 
 /// A heading over a section of the detail view, with space above it.
@@ -622,6 +571,7 @@ fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -
                                 b.reference()
                             ),
                             "Check every change.",
+                            |_| (),
                         );
                     }
 

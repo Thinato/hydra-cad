@@ -649,4 +649,35 @@ impl Issue {
             _ => Severity::Error,
         }
     }
+
+    /// The part of the circuit the issue is about, so the editor can select it. `None` when it
+    /// is about no part, or names one that isn't in the circuit. Every variant is listed, so a
+    /// new one has to say.
+    pub fn component(&self) -> Option<&str> {
+        match self {
+            Issue::DuplicateComponent(id)
+            | Issue::NoDisplaySymbol(id)
+            | Issue::MountedPort(id)
+            | Issue::Unmounted(id)
+            | Issue::MountedOutsideBlock(id)
+            | Issue::DrawnInsideBlock(id)
+            | Issue::UnknownValveType { component: id, .. }
+            | Issue::MissingSymbol { component: id, .. }
+            | Issue::UnknownFace { component: id, .. }
+            | Issue::PatternMismatch { component: id, .. }
+            | Issue::ValveMissing { component: id, .. }
+            | Issue::PartNotListed { component: id, .. }
+            | Issue::StandIn { component: id, .. }
+            | Issue::RequestedNowAvailable { component: id, .. } => Some(id),
+            Issue::UnknownPort { port, .. }
+            | Issue::PortOnTwoNets { port, .. }
+            | Issue::Unconnected(port) => Some(&port.component),
+            Issue::FaceTaken { components, .. } => Some(&components[0]),
+            // Named, but not in the circuit: there is nothing to select.
+            Issue::UnknownComponent { .. }
+            | Issue::MountedUnknownComponent { .. }
+            | Issue::InBlockUnknown(_) => None,
+            Issue::DuplicateNet(_) | Issue::UnknownBlock(_) | Issue::NothingInBlock => None,
+        }
+    }
 }

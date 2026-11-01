@@ -134,7 +134,6 @@ pub enum Mark {
     /// ■ missing, or an error.
     Error,
     /// ⇄ stand-in.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by the Schematic restyle"))]
     StandIn,
     /// ✓ approved or checked.
     Check,
@@ -322,8 +321,15 @@ fn button(
     }
 }
 
-/// A full-width banner in the mark's tone: the mark, the bold `first` sentence, then `rest`.
-pub fn banner(ui: &mut Ui, mark: Mark, first: &str, rest: &str) -> Response {
+/// A full-width banner in the mark's tone: the mark, the bold `first` sentence, then `rest`, and
+/// after it whatever `action` adds: the board allows one button, or nothing.
+pub fn banner<R>(
+    ui: &mut Ui,
+    mark: Mark,
+    first: &str,
+    rest: &str,
+    action: impl FnOnce(&mut Ui) -> R,
+) -> R {
     let tone = mark.tone();
     Frame::new()
         .fill(tone.tint)
@@ -340,15 +346,102 @@ pub fn banner(ui: &mut Ui, mark: Mark, first: &str, rest: &str) -> Response {
                 0.0,
                 TextFormat::simple(body, LIGHT.ink),
             );
-            ui.horizontal_top(|ui| {
+            // The action follows the text, as it is read, and wraps with it.
+            ui.horizontal_wrapped(|ui| {
                 let side = ui.text_style_height(&TextStyle::Body);
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
                 mark.paint(ui.painter(), rect.shrink(side * 0.15), tone.text);
-                ui.add(Label::new(job).wrap())
+                ui.add(Label::new(job).wrap());
+                action(ui)
             })
             .inner
         })
         .inner
+}
+
+/// Controls joined edge to edge in one `border_strong` frame, square inside and split by 1 px
+/// `border` lines: a toolbar group or a segmented control. Give a segment
+/// `Button::selected` to show which one is on.
+pub fn group<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let joined = ui.scope(|ui| {
+        // Neighbours overlap by their 1 px edge, which is the divider between them.
+        ui.spacing_mut().item_spacing.x = -1.0;
+        let w = &mut ui.visuals_mut().widgets;
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+            state.corner_radius = CornerRadius::ZERO;
+            state.bg_stroke = Stroke::new(1.0, LIGHT.border);
+        }
+        ui.horizontal(add).inner
+    });
+    // The group's edge, over its controls' outer edges. Each control fills itself, so a
+    // disabled one fades to the surface, not to the divider colour.
+    ui.painter().rect_stroke(
+        joined.response.rect,
+        RADIUS,
+        Stroke::new(1.0, LIGHT.border_strong),
+        StrokeKind::Inside,
+    );
+    joined.inner
+}
+
+/// A strip of a side panel, as wide as the panel: `add` in 12 × 10 px padding over a `border`
+/// line. A panel's header, or a section of the inspector.
+pub fn section<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let strip = Frame::new()
+        .inner_margin(Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add(ui)
+        });
+    let rect = strip.response.rect;
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom(),
+        Stroke::new(1.0, LIGHT.border),
+    );
+    strip.inner
+}
+
+/// A clickable list row: `add` in 12 × 8 px padding over a `divider` line. The selected row is
+/// `accent_tint` with a 1 px `accent` edge all round, and a focused row gets the edge. Screen
+/// readers and kittests read it as a selectable `name`.
+pub fn list_row(ui: &mut Ui, selected: bool, name: &str, add: impl FnOnce(&mut Ui)) -> Response {
+    let row = ui
+        .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
+            // Clicks on the row's text select the row.
+            ui.style_mut().interaction.selectable_labels = false;
+            let last = ui.response();
+            let fill = if selected {
+                LIGHT.accent_tint
+            } else if last.hovered() {
+                LIGHT.hover
+            } else {
+                Color32::TRANSPARENT
+            };
+            let edge = if selected || last.has_focus() {
+                LIGHT.accent
+            } else {
+                Color32::TRANSPARENT
+            };
+            let row = Frame::new()
+                .fill(fill)
+                .stroke(Stroke::new(1.0, edge))
+                .inner_margin(Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    add(ui);
+                });
+            let rect = row.response.rect;
+            ui.painter().hline(
+                rect.x_range(),
+                rect.bottom(),
+                Stroke::new(1.0, LIGHT.divider),
+            );
+        })
+        .response;
+    let enabled = ui.is_enabled();
+    row.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, enabled, selected, name));
+    row
 }
 
 /// Install the fonts and the palette's style, and keep the app in light mode whatever the
@@ -764,7 +857,7 @@ mod tests {
             assert_eq!(frame.stroke.color, tone.strong, "{mark:?}");
             assert_eq!(frame.rect.height(), 24.0, "{mark:?}");
             let banner = shapes(|ui| {
-                banner(ui, mark, "First.", "Rest.");
+                banner(ui, mark, "First.", "Rest.", |_| ());
             });
             assert!(
                 rects(&banner)
@@ -772,6 +865,83 @@ mod tests {
                     .any(|r| r.fill == tone.tint && r.stroke.color == tone.strong),
                 "{mark:?}: no banner on its tint"
             );
+        }
+    }
+
+    #[test]
+    fn a_banner_holds_its_action_beside_the_text() {
+        let mut button = Rect::NOTHING;
+        let mut text_right = 0.0;
+        shapes(|ui| {
+            banner(ui, Mark::Warning, "Imported.", "Check it.", |ui| {
+                button = ui.button("Mark checked").rect;
+            });
+        });
+        let painted = shapes(|ui| {
+            banner(ui, Mark::Warning, "Imported.", "Check it.", |_| ());
+        });
+        for shape in &painted {
+            if let Shape::Text(t) = shape {
+                text_right = t.visual_bounding_rect().right();
+            }
+        }
+        assert!(button.is_positive(), "the action is laid out");
+        assert!(text_right < button.left(), "{text_right} vs {button:?}");
+    }
+
+    #[test]
+    fn groups_join_their_controls_in_one_strong_frame() {
+        let mut buttons = vec![];
+        let painted = shapes(|ui| {
+            group(ui, |ui| {
+                buttons.push(ui.button("New").rect);
+                buttons.push(ui.add_enabled(false, Button::new("Open")).rect);
+            });
+        });
+        let edge = rects(&painted)
+            .into_iter()
+            .find(|r| r.stroke == Stroke::new(1.0, LIGHT.border_strong))
+            .expect("the group's strong edge");
+        assert!(edge.rect.contains_rect(buttons[0].union(buttons[1])));
+        // Joined: they share their 1 px edge, the divider, and are square inside.
+        assert_eq!(buttons[1].left() - buttons[0].right(), -1.0);
+        let inner: Vec<_> = rects(&painted)
+            .into_iter()
+            .filter(|r| r.stroke.width == 1.0 && r.stroke.color != LIGHT.border_strong)
+            .collect();
+        assert_eq!(inner.len(), 2);
+        assert!(inner.iter().all(|r| r.corner_radius == CornerRadius::ZERO));
+        assert_eq!(inner[0].stroke.color, LIGHT.border);
+        // Nothing behind the controls tints a disabled one.
+        assert!(rects(&painted).iter().all(|r| r.fill != LIGHT.border));
+    }
+
+    #[test]
+    fn sections_and_list_rows_draw_their_lines_and_the_selected_row_its_tint() {
+        let lines = |shapes: &[Shape]| {
+            shapes
+                .iter()
+                .filter_map(|s| match s {
+                    Shape::LineSegment { stroke, .. } => Some(stroke.color),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let painted = shapes(|ui| {
+            section(ui, |ui| ui.label("PARTS"));
+        });
+        assert_eq!(lines(&painted), [LIGHT.border]);
+        for selected in [false, true] {
+            let painted = shapes(|ui| {
+                list_row(ui, selected, "V1", |ui| {
+                    ui.label("V1");
+                });
+            });
+            assert_eq!(lines(&painted), [LIGHT.divider]);
+            let tinted = rects(&painted)
+                .into_iter()
+                .any(|r| r.fill == LIGHT.accent_tint && r.stroke == Stroke::new(1.0, LIGHT.accent));
+            assert_eq!(tinted, selected, "selected: {selected}");
         }
     }
 
