@@ -9,6 +9,8 @@ use eframe::egui_wgpu::{self, wgpu, wgpu::util::DeviceExt};
 use glam::{Mat4, Vec3};
 use hydra_mesh::Mesh;
 
+use crate::theme::LIGHT;
+
 /// Set `NativeOptions::depth_buffer` to this; egui-wgpu maps 32 bits to
 /// `Depth32Float` (`egui_wgpu::depth_format_from_bits`), which the pipeline must match.
 pub const DEPTH_BUFFER_BITS: u8 = 32;
@@ -57,13 +59,26 @@ struct Uniforms {
     color: [f32; 4],
 }
 
+impl Uniforms {
+    /// `instance`'s draw: its placement and its palette colour as the shader's 0..1 values.
+    fn new(instance: &Instance, view_proj: [[f32; 4]; 4], light_dir: [f32; 4]) -> Self {
+        Self {
+            view_proj,
+            model: instance.transform.to_cols_array_2d(),
+            light_dir,
+            color: instance.color.to_normalized_gamma_f32(),
+        }
+    }
+}
+
 /// One mesh to draw, placed in the scene. `key` names the mesh for the GPU cache, e.g. its hash.
 #[derive(Clone)]
 pub struct Instance {
     pub key: String,
     pub mesh: Arc<Mesh>,
     pub transform: Mat4,
-    pub color: [f32; 3],
+    /// Shaded from this colour, a palette token.
+    pub color: egui::Color32,
 }
 
 struct GpuMesh {
@@ -206,7 +221,12 @@ impl Viewer3d {
             capacity,
             bind_group,
         });
-        Ok(Self {
+        Ok(Self::unfitted())
+    }
+
+    /// The camera before it has seen a scene.
+    pub(crate) fn unfitted() -> Self {
+        Self {
             center: Vec3::ZERO,
             radius: 1.0,
             // Seen from the front left, above: Hydra's model space is Z up.
@@ -214,7 +234,7 @@ impl Viewer3d {
             pitch: 0.5,
             zoom: 1.0,
             fitted: Vec::new(),
-        })
+        }
     }
 
     /// Fit the camera to the scene's bounding box when the scene changed.
@@ -285,8 +305,7 @@ impl Viewer3d {
         let right = Vec3::Z.cross(dir).normalize_or_zero();
         let light = (dir + Vec3::Z * 0.4 + right * 0.3).normalize();
 
-        ui.painter()
-            .rect_filled(rect, 0.0, egui::Color32::from_gray(40));
+        ui.painter().rect_filled(rect, 0.0, LIGHT.viewport);
         let view_proj = (proj * view).to_cols_array_2d();
         let light_dir = light.extend(0.0).to_array();
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
@@ -295,12 +314,7 @@ impl Viewer3d {
                 scene
                     .iter()
                     .map(|i| {
-                        let uniforms = Uniforms {
-                            view_proj,
-                            model: i.transform.to_cols_array_2d(),
-                            light_dir,
-                            color: [i.color[0], i.color[1], i.color[2], 1.0],
-                        };
+                        let uniforms = Uniforms::new(i, view_proj, light_dir);
                         (i.key.clone(), i.mesh.clone(), uniforms)
                     })
                     .collect(),
@@ -383,5 +397,36 @@ fn upload(device: &wgpu::Device, mesh: &Mesh) -> GpuMesh {
             usage: wgpu::BufferUsages::INDEX,
         }),
         index_count: mesh.indices.len() as u32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_view_is_drawn_on_the_viewport_colour() {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(Default::default(), |ui| Viewer3d::unfitted().ui(ui, &[]));
+        out.textures_delta.clear();
+        let ground = out.shapes.iter().find_map(|c| match &c.shape {
+            egui::Shape::Rect(r) => Some(r.fill),
+            _ => None,
+        });
+        assert_eq!(ground, Some(LIGHT.viewport));
+    }
+
+    #[test]
+    fn a_models_palette_colour_reaches_the_shader() {
+        let instance = Instance {
+            key: "m".into(),
+            mesh: Arc::new(Mesh::default()),
+            transform: Mat4::IDENTITY,
+            color: LIGHT.accent,
+        };
+        let u = Uniforms::new(&instance, Mat4::IDENTITY.to_cols_array_2d(), [0.0; 4]);
+        // #1F5FAD, opaque.
+        let expected = [0x1F_u8, 0x5F, 0xAD, 0xFF].map(|v| f32::from(v) / 255.0);
+        assert_eq!(u.color, expected);
     }
 }

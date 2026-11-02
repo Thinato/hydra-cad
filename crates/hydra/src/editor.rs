@@ -1028,7 +1028,7 @@ impl SchematicEditor {
     }
 
     /// Select a part, as clicking it on the sheet does; this stops drawing wires.
-    fn select(&mut self, id: String) {
+    pub(crate) fn select(&mut self, id: String) {
         self.selected = Some(id);
         self.wire = None;
         self.wiring = false;
