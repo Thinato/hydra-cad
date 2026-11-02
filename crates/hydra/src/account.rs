@@ -264,7 +264,7 @@ impl AccountPanel {
         if let Some(users) = &self.users {
             // Name takes the slack: the table's edges, the rows' 12 px margins and the gaps come
             // off. Below its narrowest the table scrolls sideways, so Actions stays reachable.
-            let [role, login, sessions, actions] = [100.0, 92.0, 64.0, 72.0];
+            let [role, login, sessions, actions] = [96.0, 88.0, 56.0, 72.0];
             let fixed = 2.0 + 24.0 + 4.0 * 12.0 + role + login + sessions + actions;
             let room = ui.available_width();
             let width = room.max(fixed + NAME_MIN);
@@ -864,9 +864,11 @@ mod tests {
             .users(vec![user(long, false, 0), user("boss", true, 0)]);
         h.run_steps(4);
         let actions = h.query_all_by_label("Actions").next().unwrap().rect();
+        // Inside the section, whose right edge Refresh marks: on screen and not clipped.
+        let refresh = h.get_by_label("Refresh").rect();
         assert!(
-            actions.right() <= 500.0,
-            "Actions is off-screen: {actions:?}"
+            actions.right() <= refresh.right(),
+            "Actions {actions:?} is past the section's edge {refresh:?}"
         );
         // The name is cut short, not pushing the row past its headers.
         let name = h.get_by_label(long).rect();
