@@ -54,6 +54,8 @@ struct Panels {
     account: account::AccountPanel,
     /// Set when the database comes from hydra.ini, so each user signs in.
     signin: Option<SignIn>,
+    /// Where egui_dock drew each tab this frame, for the active tabs' accent edge.
+    tab_rects: Vec<(Tab, egui::Rect)>,
 }
 
 impl TabViewer for Panels {
@@ -67,7 +69,11 @@ impl TabViewer for Panels {
         match tab {
             Tab::Schematic => "Schematic".into(),
             Tab::Catalogue => "Catalogue".into(),
-            Tab::Proposals => "Proposals".into(),
+            // The waiting count the Proposals tab loaded, never a guess: none before it has.
+            Tab::Proposals => match self.shared.db.as_ref().and(self.proposals.waiting()) {
+                Some(n) => theme::counted("Proposals", n),
+                None => "Proposals".into(),
+            },
             Tab::Account => "Account".into(),
             Tab::View3d => "3D".into(),
         }
@@ -85,6 +91,43 @@ impl TabViewer for Panels {
 
     fn is_closeable(&self, _tab: &Tab) -> bool {
         false
+    }
+
+    // ponytail: no floating windows, so the accent edge is only painted on the main surface's
+    // layer; record each tab's layer if windows are ever wanted.
+    fn allowed_in_windows(&self, _tab: &mut Tab) -> bool {
+        false
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
+        // Clipped to what shows of a strip that scrolls.
+        self.tab_rects.push((*tab, response.interact_rect));
+    }
+}
+
+/// The tabs in the theme's dock style, each strip's active tab with its 3 px accent top edge.
+fn show_dock(ui: &mut egui::Ui, dock: &mut DockState<Tab>, panels: &mut Panels) {
+    panels.tab_rects.clear();
+    DockArea::new(dock)
+        .style(theme::dock_style(ui.style()))
+        .show_close_buttons(false)
+        .show_leaf_close_all_buttons(false)
+        .show_leaf_collapse_buttons(false)
+        .show_inside(ui, panels);
+    // egui_dock shows this cursor only while a tab is dragged; its edge would stay behind.
+    if ui
+        .ctx()
+        .output(|o| o.cursor_icon == egui::CursorIcon::Grabbing)
+    {
+        return;
+    }
+    for (_, leaf) in dock.iter_leaves() {
+        let active = leaf.tabs.get(leaf.active.0);
+        for (_, rect) in panels.tab_rects.iter().filter(|(t, _)| Some(t) == active) {
+            if rect.is_positive() {
+                theme::active_tab_edge(ui.painter(), *rect);
+            }
+        }
     }
 }
 
@@ -115,6 +158,15 @@ impl Panels {
                 Reply::WrongLogin | Reply::ConnectFailed(_) if retired => {}
                 // An old sign-in's account and users must not show under the current one.
                 Reply::Account(_) | Reply::Users(_) | Reply::UserFailed(_) if retired => {}
+                // Nor its proposals, which the Proposals tab counts: the current worker is
+                // asked instead, so the tab doesn't wait forever.
+                // ponytail: replies aren't tagged with the request they answer, so a stuck
+                // request from before a sign-in can make this ask twice (a duplicate list
+                // query), and a stray list reply can end the wait during an Approve (a second
+                // Approve is refused as already reviewed). Tag requests by worker if it matters.
+                Reply::Proposals(_) | Reply::ProposalFailed(_) if retired => {
+                    self.proposals.refresh(&self.shared)
+                }
                 Reply::PasswordChanged if retired => {
                     self.shared.notice = Some("Your password was changed.".into())
                 }
@@ -131,6 +183,8 @@ impl Panels {
                     self.shared.block_models = loaded.block_models;
                     self.models.retry_failed();
                     self.shared.error = None;
+                    // Connected: the waiting count shows before the Proposals tab is opened.
+                    self.proposals.load(&self.shared);
                     if let Some(s) = &mut self.signin {
                         s.connected();
                     }
@@ -231,6 +285,7 @@ impl Panels {
         }
         if self.shared.db.is_none() {
             self.account.forget();
+            self.proposals = proposals::ProposalsPanel::default();
         }
     }
 }
@@ -263,11 +318,7 @@ impl eframe::App for HydraApp {
             panels.signin.as_mut(),
             self.update.as_ref(),
         );
-        DockArea::new(&mut self.dock)
-            .show_close_buttons(false)
-            .show_leaf_close_all_buttons(false)
-            .show_leaf_collapse_buttons(false)
-            .show_inside(ui, &mut self.panels);
+        show_dock(ui, &mut self.dock, &mut self.panels);
         if let Some(s) = &mut self.panels.signin {
             s.ui(ui.ctx(), &mut self.panels.shared);
         }
@@ -459,6 +510,7 @@ fn main() -> eframe::Result {
                             .ok(),
                     ),
                     signin,
+                    tab_rects: Vec::new(),
                 },
                 updates,
                 update: None,
@@ -489,6 +541,7 @@ mod tests {
             proposals: proposals::ProposalsPanel::default(),
             account: account::AccountPanel::default(),
             signin: None,
+            tab_rects: Vec::new(),
         };
         // Signing out retires the worker: it gets no more requests, so it exits once done.
         let db = panels.shared.db.take().unwrap();
@@ -541,6 +594,7 @@ mod tests {
             proposals: proposals::ProposalsPanel::default(),
             account: account::AccountPanel::default(),
             signin: None,
+            tab_rects: Vec::new(),
         };
         let boss = hydra_db::Account {
             user: "boss".into(),
@@ -598,6 +652,7 @@ mod tests {
             proposals: proposals::ProposalsPanel::default(),
             account: account::AccountPanel::default(),
             signin,
+            tab_rects: Vec::new(),
         };
         (panels, inbox, outbox)
     }
@@ -641,6 +696,190 @@ mod tests {
                 .unwrap()
                 .contains("still holds the old one")
         );
+    }
+
+    #[test]
+    fn the_proposals_tab_counts_what_waits_for_review() {
+        use hydra_db::ProposalStatus::{Approved, Pending};
+        let record = proposals::tests::record;
+        let ctx = egui::Context::default();
+        let (mut panels, inbox, outbox) = panels_with_db(None);
+        let title = |p: &mut Panels| p.title(&mut Tab::Proposals).text().to_string();
+        // Not loaded yet: no count, not a guess.
+        assert_eq!(title(&mut panels), "Proposals");
+        outbox
+            .send(Reply::Proposals(vec![
+                record(Pending),
+                record(Approved),
+                record(Pending),
+            ]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(title(&mut panels), "Proposals 2 ");
+        let egui::WidgetText::LayoutJob(job) = panels.title(&mut Tab::Proposals) else {
+            panic!("a title with a badge")
+        };
+        assert_eq!(job.sections[1].format.background, theme::LIGHT.agent.strong);
+        // A review fetches the list again, and the count follows it.
+        outbox.send(Reply::ProposalRejected).unwrap();
+        outbox
+            .send(Reply::Proposals(vec![record(Pending)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(title(&mut panels), "Proposals 1 ");
+        outbox
+            .send(Reply::Proposals(vec![record(Approved)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(title(&mut panels), "Proposals");
+        // Signed out, an old sign-in's count doesn't show.
+        outbox
+            .send(Reply::Proposals(vec![record(Pending)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        let old = panels.shared.db.take().unwrap();
+        panels.shared.retired.push(old.retire());
+        panels.poll_db(&ctx);
+        assert_eq!(title(&mut panels), "Proposals");
+        // The old worker's late list changes nothing once someone signs in again.
+        outbox
+            .send(Reply::Proposals(vec![record(Pending), record(Pending)]))
+            .unwrap();
+        let (requests, new_inbox) = channel();
+        let (new_outbox, replies) = channel();
+        panels.shared.db = Some(Db::new(requests, replies));
+        panels.poll_db(&ctx);
+        assert_eq!(title(&mut panels), "Proposals");
+        drop(inbox);
+        // Connected: the count loads without opening the Proposals tab, once.
+        new_outbox
+            .send(Reply::Catalogue(Default::default()))
+            .unwrap();
+        panels.poll_db(&ctx);
+        let asked = |inbox: &Receiver<Request>| {
+            inbox
+                .try_iter()
+                .filter(|r| matches!(r, Request::ListProposals { pending_only: true }))
+                .count()
+        };
+        assert_eq!(asked(&new_inbox), 1);
+        new_outbox
+            .send(Reply::Proposals(vec![record(Pending)]))
+            .unwrap();
+        new_outbox
+            .send(Reply::Catalogue(Default::default()))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(title(&mut panels), "Proposals 1 ");
+        assert_eq!(asked(&new_inbox), 0, "loaded once, not on every catalogue");
+    }
+
+    #[test]
+    fn the_active_tab_has_the_accent_edge_and_the_panel_colour() {
+        type Dock = (DockState<Tab>, Panels);
+        let dock = DockState::new(vec![Tab::Schematic, Tab::Catalogue, Tab::Account]);
+        let mut h = theme::harness(
+            egui::vec2(900.0, 500.0),
+            |ui, (dock, panels): &mut Dock| show_dock(ui, dock, panels),
+            (dock, panels_with_db(None).0),
+        );
+        h.run();
+        let check = |h: &egui_kittest::Harness<Dock>, active: Tab| {
+            let rects = &h.state().1.tab_rects;
+            assert_eq!(rects.len(), 3, "every tab was drawn");
+            let shapes: Vec<_> = (h.output().shapes.iter())
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Rect(r) => Some((r.rect, r.fill)),
+                    _ => None,
+                })
+                .collect();
+            for (tab, rect) in rects {
+                let edge = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 3.0));
+                let edged = shapes.contains(&(edge, theme::LIGHT.accent));
+                assert_eq!(edged, *tab == active, "accent edge on {}", *tab as u8);
+                let fill = if *tab == active {
+                    theme::LIGHT.panel
+                } else {
+                    theme::LIGHT.chrome
+                };
+                assert!(
+                    shapes.contains(&(*rect, fill)),
+                    "tab {} on {fill:?}",
+                    *tab as u8
+                );
+            }
+        };
+        check(&h, Tab::Schematic);
+        let (dock, _) = h.state_mut();
+        let found = dock.find_tab(&Tab::Account).unwrap();
+        dock.set_active_tab(found).unwrap();
+        h.run();
+        check(&h, Tab::Account);
+
+        // While a tab is dragged, no edge is left at its old place.
+        let tab = h.state().1.tab_rects[2].1;
+        h.drag_at(tab.center());
+        h.run();
+        h.hover_at(tab.center() + egui::vec2(200.0, 150.0));
+        h.run();
+        let edges = (h.output().shapes.iter())
+            .filter(|c| matches!(&c.shape, egui::Shape::Rect(r) if r.fill == theme::LIGHT.accent && r.rect.height() == 3.0))
+            .count();
+        assert_eq!(edges, 0, "an edge while a tab is dragged");
+        h.drop_at(tab.center());
+        h.run();
+        // Tabs stay on the main surface, where the edge is painted.
+        assert!(!h.state_mut().1.allowed_in_windows(&mut Tab::View3d));
+    }
+
+    #[test]
+    fn a_proposals_request_the_old_worker_answers_is_asked_again() {
+        use hydra_db::ProposalStatus::Pending;
+        let record = proposals::tests::record;
+        let ctx = egui::Context::default();
+        let (mut panels, inbox, old_outbox) = panels_with_db(None);
+        panels.proposals.load(&panels.shared);
+        assert!(matches!(
+            inbox.try_recv(),
+            Ok(Request::ListProposals { .. })
+        ));
+        // A new password swaps in a new worker while the list is on its way.
+        let swap = |panels: &mut Panels| {
+            let old = panels.shared.db.take().unwrap();
+            panels.shared.retired.push(old.retire());
+            let (requests, inbox) = channel();
+            let (outbox, replies) = channel();
+            panels.shared.db = Some(Db::new(requests, replies));
+            (inbox, outbox)
+        };
+        let (new_inbox, new_outbox) = swap(&mut panels);
+        old_outbox
+            .send(Reply::Proposals(vec![record(Pending)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert!(
+            matches!(new_inbox.try_recv(), Ok(Request::ListProposals { .. })),
+            "asked again of the current worker"
+        );
+        new_outbox
+            .send(Reply::Proposals(vec![record(Pending), record(Pending)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(panels.title(&mut Tab::Proposals).text(), "Proposals 2 ");
+
+        // A failure from the old worker is asked again too.
+        panels.proposals = proposals::ProposalsPanel::default();
+        panels.proposals.load(&panels.shared);
+        assert!(new_inbox.try_recv().is_ok());
+        let (newest_inbox, _newest_outbox) = swap(&mut panels);
+        new_outbox
+            .send(Reply::ProposalFailed("connection lost".into()))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert!(matches!(
+            newest_inbox.try_recv(),
+            Ok(Request::ListProposals { .. })
+        ));
     }
 
     type Strip = (Shared, Option<SignIn>, Option<Update>);

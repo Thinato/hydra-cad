@@ -2,7 +2,7 @@
 
 How Hydra looks, and why. Every tab is built from what is here, so a new feature looks like the rest of the app without a design pass of its own.
 
-- **In code:** `crates/hydra/src/theme.rs` holds the colours, fonts, type scale and spacing, and `theme::apply` installs them at start-up. Tabs take colours from `theme::LIGHT` and text styles from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. New code never writes a literal `Color32` or font size; the older literals left are listed under "Not built yet". Kittests build their harness with `theme::harness(size, app, state)`, which installs the theme and skips kittest's first frame, drawn before the theme exists. Older tests wrap a harness in `theme::themed`.
+- **In code:** `crates/hydra/src/theme.rs` holds the colours, fonts, type scale and spacing, and `theme::apply` installs them at start-up. Tabs take colours from `theme::LIGHT` and text styles from egui's `TextStyle`s or `theme::heading()`, `label()` and `overline()`. No tab writes a literal `Color32` or font size; the 3D view's ground and its models are palette tokens too. Kittests build their harness with `theme::harness(size, app, state)`, which installs the theme and skips kittest's first frame, drawn before the theme exists. Older tests wrap a harness in `theme::themed`.
 - **The boards:** the design canvas at <https://claude.ai/artifact/2kf45qw3E7AqKkBPAcYSzZ> (private to its owner) shows the foundations, the components, and the Schematic and Proposals tabs redrawn in the system. Its source is kept in [`docs/design/`](design/), so the boards can be rebuilt if the canvas is ever lost. Each `.dc.html` file is one board, and `canvas.json` lays them out. The files open in the claude.ai Design canvas, not in a plain browser.
 
 ## Who it is for
@@ -26,6 +26,7 @@ Light is the only theme. Token names match the fields of `theme::Palette`.
 | `sheet` | `#FFFFFF` | The drawing paper |
 | `grid`, `grid_major` | `#E4E8ED`, `#CFD5DC` | Sheet grid lines every 5 mm and every 25 mm |
 | `desk` | `#CDD3DA` | Around the sheet |
+| `viewport` | `#2B3139` | The 3D view's ground, dark so the shaded grey models stand out. No text is drawn on it, so it has no contrast pair |
 | `ink` | `#14181F` | Text and drawing lines |
 | `secondary` | `#4A5361` | Labels, meta, hints |
 | `border` | `#C3C9D1` | Card edges and panel dividers |
@@ -104,14 +105,14 @@ The Components board shows each one. How they map to egui, with the `theme` help
   - Both helpers return an `impl Widget` around an egui `Button`, 32 px high, so `add_enabled` and the hover texts work as usual. Under the pointer or pressed, primary turns `accent_hover` and danger takes the `missing` tint and strong edge. With keyboard focus both get the 2 px accent ring. A disabled primary button is the accent faded by egui.
   - A disabled button always says why in its tooltip (`on_disabled_hover_text`).
 - **Toolbar groups:** buttons grouped by job with joined edges (file, edit, place, export), built with `theme::group(ui, add)`: one `border_strong` edge, square controls inside that share their 1 px `border` edges as dividers. Each control fills itself, so a disabled one fades to the surface. A toggle is a `Button::selected` with its key as `right_text` (`Draw wires W`) and turns `accent_tint` while on. The Schematic toolbar's controls are 32 px, the primary Save button's height, so a group's joined edges line up.
-- **Tabs:** the active tab has a 3 px `accent` top edge and the panel colour. Proposals carries a count of waiting proposals in the `agent` tone.
+- **Tabs:** egui_dock's strip, styled by `theme::dock_style(style)` in one place: square 32 px tabs on `chrome`, inactive ones in `secondary` with no edge, the active one `ink` on `panel` with a `border` edge, and keyboard focus as an `accent` edge. egui_dock can't draw the active tab's 3 px `accent` top edge, so `theme::active_tab_edge(painter, rect)` paints it over the tab once the dock is drawn, from the rect egui_dock reports in `TabViewer::on_tab_button`, and not while a tab is dragged. Tabs can't float out into windows (`allowed_in_windows` is false), so every strip is on the main surface. Proposals carries the number of proposals waiting for review as a badge, `theme::counted(title, n)`: the count in Plex Mono SemiBold 12 in `on_accent` on the `agent` tone's strong colour, square, as chips are not pills. It counts the Proposals tab's list, which loads once on connecting or signing in (and again after each review), so it shows nothing before that list arrives, with none waiting, or signed out; signing out forgets it.
 - **Fields:** a label above, 32 px high: `theme::field(ui, name, edit)` puts `name` in label type over the `TextEdit` and labels the edit with it. In a table (the Proposals fields) the label is the first column instead.
   - Codes and refs are in Data type.
   - A changed field gets an `unlisted` edge, a CHANGED tag and "Was …" under it. In a table, the row is tinted `unlisted`, the label gets a ▲ Changed chip, and "was …" sits in its own column.
   - A field with an error gets a `missing` edge and the fix in plain words under it.
 - **Status chips:** `theme::chip(ui, mark, word)`: the mark, then the word, in the tone's text on its tint with a `strong` edge, 24 px high. Kittests and screen readers read the word as a label. The mark picks the tone (`Mark::tone`): ▲ `unlisted`, ■ `missing`, ⇄ `stand_in`, ✓ `ok`, ◆ `agent`, ● the accent (waiting for a person), ✕ grey (rejected). Valve status is about the catalogue. Review status (waiting, approved, rejected, checked) is about a person's decision.
 - **Marked text:** `theme::marked(ui, mark, text)`: the mark, as tall as the text, then the text, both in the mark's tone and always left to right. Used for a problem line, a queue row's check or a "No symbol" note.
-- **Banners:** `theme::banner(ui, mark, first, rest, action)`: a full-width strip in the mark's tint with a `strong` edge: the mark, the bold first sentence, then the fix, and after it what `action` adds, so it is read in that order. The board allows at most one button: an unchecked import offers "Mark checked". Pass `|_| ()` for none.
+- **Banners:** `theme::banner(ui, mark, first, rest, action)`: a full-width strip in the mark's tint with a `strong` edge: the mark, centred on the first line, the bold first sentence, then the fix, and after it what `action` adds, so it is read in that order. The board allows at most one button: an unchecked import offers "Mark checked". Pass `|_| ()` for none.
 - **Tables:** square, a `border` edge, `divider` lines between rows, a `panel`-coloured header row in Overline type and `secondary` colour, and 12 px cell padding. `theme::table(ui, width, rows)` draws the frame (`width` includes its edge, so `ui.available_width()` fits without growing a resizable panel or window), `theme::table_row(ui, fill, cells)` one row (`panel` fill for the header), `theme::cell(ui, width, add)` a column and `theme::column_title(ui, title)` a header. The Proposals fields and parts and the Catalogue's parts and editor use them. The Catalogue's valve-type list is a table whose body rows are `list_row`s, so they select like the review queue.
 - **Symbol preview:** `schematic::symbol_preview(ui, size, symbol, caption, right)`: the symbol fitted on the `sheet` colour over a `panel` caption strip (`size` includes the edge, as with tables), the caption at its left and the symbol's reference (or ■/▲ No symbol) at its right. The Proposals detail and the Catalogue detail and editor show symbols this way.
 - **Panel sections:** `theme::section(ui, add)`: a strip as wide as the side panel, 12 × 10 px padding over a `border` line. A panel's header (an overline title such as PARTS, and a count or buttons) and each section of the inspector (CATALOGUE, USE INSTEAD, PLACEMENT, titled in overline type in `secondary`) are sections.
@@ -164,26 +165,30 @@ The Account tab has no board either; it is a column of sections, each titled in 
 - USERS, for administrators: Refresh, the users as a table (NAME, ROLE, SIGNING IN, SESSIONS and an Actions menu per row) where only what is wrong is marked (✕ Disabled), then the New user fields and Add user (primary). On your own row the actions the rules forbid are off and say why;
 - ABOUT: the Hydra version in Data type and the font licence.
 
+The 3D tab has no board; it is built from the same parts:
+- a toolbar with Preview a model file… (secondary: nothing in the tab commits, so it has no primary button); while a file is previewed, Close preview, the file's name and its size in Data type;
+- the side panel on the left, in sections: BLOCK with the block picker and its `key@version` in Data type; FACES as a table (FACE with the face name in Data type over its pattern, VALVE with a picker offering only valves whose mounting fits); SELECTED, for a valve selected in the schematic, with its designator, series and code, its ref and the face it is on; then what the view can't show as marked lines: ■ errors (a mount that doesn't fit, a valve missing from the catalogue, a model that failed to load), ▲ warnings (a valve not on the block, a part on the block but drawn outside it, a block or valve with no 3D model), and offline the `secondary` hint that models come from the shared database;
+- the view on the `viewport` ground, the block shaded from `border`, valves from `border_strong` and the valve selected in the schematic from `accent`, as selection is everywhere; above it, in `secondary`, "3D needs the wgpu renderer." when it is missing, else "Loading N model(s)…", or, with no block, nothing noted and nothing to show, how to see something;
+- the status bar on `chrome` with how to move round the view.
+
 The strip above the tabs shows only when there is something to show: a database error as a `missing` banner, its first sentence in bold; then the latest notice in `secondary` and the update link at the left, and at the right, as in the boards' app bar, the database's name in Data type (the server in its hover), "Signed in as …", Retry after a failed connection, and Sign out.
 
 ## Not built yet
 
-The boards show the target. `theme.rs` is in place, but these parts are still to come in the restyle PRs (see TODO.md):
+The boards show the target. Every tab is on the theme, but these parts are still to come (see TODO.md):
 - **The sheet:** the title block's date and who drew or checked it, which need the revision's author and time from the database (the editor doesn't get them today); designators in Plex Mono SemiBold on the sheet, as the boards letter them (the sheet letters everything in Plex Sans).
 - **The tabs:**
-  - the tab strip's 3 px accent edge and the Proposals count;
-  - toolbar groups, side panels and the status bar on the 3D tab;
   - the app bar itself: the tabs are egui_dock's strip, so the database and user sit in the strip above it rather than beside the tabs, and the database has no connection dot;
+  - screen readers don't read the tab titles: egui_dock gives its tabs no accessible name;
+  - the active tab's title in SemiBold, and tab titles at 14 px: egui_dock tells `TabViewer::title` nothing of which tab is active, so every title is in button type (Plex Sans Medium 13);
   - icons on the Undo and Redo buttons, which are words today;
   - on the Proposals tab: the assistant's step list, the datasheet page beside the symbol, each field's source page and the activity feed, which need new data from hydra-mcp;
-  - primary buttons and chips in the 3D tab;
   - the Catalogue's new-version editor and the Schematic's dialogs are still egui windows with their buttons on the left, not `theme::dialog`.
-- **Older literals:** `viewer3d.rs` still writes literal colours and sizes. It moves to the palette when the 3D tab is restyled.
 
 ## Adding a theme
 
 1. Add a `Palette` constant beside `LIGHT` in `theme.rs`, with every token chosen for the new ground.
 2. Add it to `PALETTES` in the theme tests, so its contrast is checked.
 3. Pass it to `theme::apply`. `apply` always selects egui's light theme today (`set_theme(Theme::Light)` and the style set on `Theme::Light`). A dark palette also needs `apply` to select `Theme::Dark` and set its style there, or egui will report `dark_mode` as false and pick light defaults.
-4. Tabs read `theme::LIGHT` directly today. With a second theme, `theme` gains a function returning the palette in use (kept in egui's memory by `apply`), and each `theme::LIGHT` becomes a call to it: a mechanical replace, once the older literals listed above have moved to the palette.
+4. Tabs read `theme::LIGHT` directly today. With a second theme, `theme` gains a function returning the palette in use (kept in egui's memory by `apply`), and each `theme::LIGHT` becomes a call to it: a mechanical replace.
 5. Add its column to the colour tables above.

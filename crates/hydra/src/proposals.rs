@@ -192,6 +192,25 @@ impl ProposalsPanel {
         self.row_checks = None;
     }
 
+    /// How many proposals in the loaded list wait for review: `None` before a list has
+    /// arrived, or with none waiting.
+    pub fn waiting(&self) -> Option<usize> {
+        let list = self.list.as_ref()?;
+        let n = list
+            .iter()
+            .filter(|p| p.status == ProposalStatus::Pending)
+            .count();
+        (n > 0).then_some(n)
+    }
+
+    /// Fetch the queue unless it is loaded or on its way: on connecting, for the tab's count,
+    /// and on the tab's first view. After a failure, Refresh retries.
+    pub fn load(&mut self, shared: &Shared) {
+        if self.list.is_none() && !self.busy && self.error.is_none() {
+            self.refresh(shared);
+        }
+    }
+
     /// An approve or reject went through; the list is fetched again.
     pub fn reviewed(&mut self, shared: &Shared) {
         self.busy = false;
@@ -203,7 +222,8 @@ impl ProposalsPanel {
         self.error = Some(message);
     }
 
-    fn refresh(&mut self, shared: &Shared) {
+    /// Ask the current worker for the queue; the panel is busy until it answers.
+    pub fn refresh(&mut self, shared: &Shared) {
         if let Some(db) = &shared.db {
             db.send(Request::ListProposals {
                 pending_only: !self.show_reviewed,
@@ -217,10 +237,7 @@ impl ProposalsPanel {
             ui.weak("Proposals need the shared database.");
             return;
         }
-        // Load once on first view; after a failure, Refresh retries.
-        if self.list.is_none() && !self.busy && self.error.is_none() {
-            self.refresh(shared);
-        }
+        self.load(shared);
         egui::Panel::left("proposal-list")
             .default_size(300.0)
             .min_size(220.0)
@@ -805,7 +822,7 @@ fn actions(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::mpsc::{Receiver, channel};
 
     use eframe::egui::accesskit::{Role, Toggled};
@@ -820,7 +837,7 @@ mod tests {
         Shared::new(serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap())
     }
 
-    fn record(status: ProposalStatus) -> ProposalRecord {
+    pub(crate) fn record(status: ProposalStatus) -> ProposalRecord {
         let proposal: Proposal = serde_json::from_value(serde_json::json!({
             "valve_type": {
                 "key": "vt-demo-new", "version": 0, "manufacturer": "demo",
