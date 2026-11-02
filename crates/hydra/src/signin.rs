@@ -1,12 +1,15 @@
 //! Signing in to the shared database with the user's own Postgres role, so revisions record
 //! who made them. A remembered password lives in the OS keychain, one entry per database.
 
-use eframe::egui;
+use std::cell::Cell;
+
+use eframe::egui::{self, RichText};
 use hydra_db::PgConnectOptions;
 
 use crate::catalogue::Shared;
 use crate::config::FILE;
 use crate::db::{Db, WRONG_LOGIN};
+use crate::theme::{self, LIGHT, Mark};
 
 pub struct Credentials {
     user: String,
@@ -173,19 +176,23 @@ impl SignIn {
         )
     }
 
-    /// "Signed in as …" and a Sign out button, for the status line, plus Retry after a
-    /// connection failure.
+    /// The database's name, "Signed in as …" and a Sign out button, for the status line, plus
+    /// Retry after a connection failure. Laid out right to left, as at the right of the strip:
+    /// the rightmost first.
     pub fn status(&mut self, ui: &mut egui::Ui, shared: &mut Shared) {
         let Some(c) = &self.signed_in else {
             return;
         };
-        ui.weak(format!("Signed in as {}", c.user));
-        if ui.small_button("Sign out").clicked() {
+        let who = format!("Signed in as {}", c.user);
+        let sign_out = ui.button("Sign out").clicked();
+        let retry = self.connect_failed && ui.button("Retry").clicked();
+        ui.label(RichText::new(who).color(LIGHT.secondary));
+        let database = self.options.get_database().unwrap_or("hydra");
+        ui.label(RichText::new(database).monospace().color(LIGHT.secondary))
+            .on_hover_text(self.server());
+        if sign_out {
             self.sign_out(shared);
-        } else if self.connect_failed
-            && ui.small_button("Retry").clicked()
-            && let Some(c) = self.signed_in.take()
-        {
+        } else if retry && let Some(c) = self.signed_in.take() {
             self.connect(c, self.to_remember, shared, ui.ctx());
         }
     }
@@ -203,34 +210,41 @@ impl SignIn {
             return None;
         }
         let mut submit = false;
-        egui::Modal::new(egui::Id::new("sign-in")).show(ctx, |ui| {
-            ui.heading("Sign in to Hydra");
-            ui.weak(self.server());
-            ui.add_space(4.0);
-            egui::Grid::new("sign-in-fields")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    let label = ui.label("User name");
-                    ui.add(egui::TextEdit::singleline(&mut self.user))
-                        .labelled_by(label.id);
-                    ui.end_row();
-                    let label = ui.label("Password");
-                    let password = ui
-                        .add(egui::TextEdit::singleline(&mut self.password).password(true))
-                        .labelled_by(label.id);
-                    submit = password.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    ui.end_row();
-                });
-            ui.checkbox(&mut self.remember, "Remember me on this computer");
-            if self.wrong_login {
-                ui.colored_label(ui.visuals().error_fg_color, WRONG_LOGIN);
-            }
-            let ready = !self.user.trim().is_empty();
-            let clicked = ui
-                .add_enabled(ready, egui::Button::new("Sign in"))
-                .clicked();
-            submit = ready && (submit || clicked);
-        });
+        let ready = Cell::new(false);
+        let server = self.server();
+        let clicked = theme::dialog(
+            ctx,
+            "sign-in",
+            "Sign in to Hydra",
+            |ui| {
+                ui.label(
+                    RichText::new(
+                        "Sign in with your own Hydra user, so the revisions you save carry \
+                         your name.",
+                    )
+                    .color(LIGHT.secondary),
+                );
+                ui.label(RichText::new(server).monospace().color(LIGHT.secondary));
+                ui.add_space(4.0);
+                let user = egui::TextEdit::singleline(&mut self.user);
+                theme::field(ui, "User name", user.desired_width(f32::INFINITY));
+                let password = egui::TextEdit::singleline(&mut self.password).password(true);
+                let password = theme::field(ui, "Password", password.desired_width(f32::INFINITY));
+                submit = password.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                ui.checkbox(&mut self.remember, "Remember me on this computer");
+                if self.wrong_login {
+                    theme::marked(ui, Mark::Error, WRONG_LOGIN);
+                }
+                ready.set(!self.user.trim().is_empty());
+            },
+            |ui| {
+                ui.add_enabled(ready.get(), theme::primary("Sign in"))
+                    .on_disabled_hover_text("Enter your user name first.")
+                    .clicked()
+            },
+        )
+        .inner;
+        submit = ready.get() && (submit || clicked);
         submit.then(|| {
             let c = Credentials {
                 user: self.user.trim().to_string(),
@@ -319,17 +333,14 @@ mod tests {
         let signin =
             SignIn::new("postgres://hydra-db.office.local:5433/hydra?sslmode=require".into())
                 .unwrap();
-        let mut h = crate::theme::themed(
-            Harness::builder()
-                .with_size(egui::vec2(600.0, 400.0))
-                .build_ui_state(
-                    |ui, (s, submitted): &mut State| {
-                        if let Some((c, remember)) = s.window(ui.ctx()) {
-                            *submitted = Some((c.user, c.password, remember));
-                        }
-                    },
-                    (signin, None),
-                ),
+        let mut h = theme::harness(
+            egui::vec2(600.0, 560.0),
+            |ui, (s, submitted): &mut State| {
+                if let Some((c, remember)) = s.window(ui.ctx()) {
+                    *submitted = Some((c.user, c.password, remember));
+                }
+            },
+            (signin, None),
         );
         h.run();
         h
@@ -360,6 +371,35 @@ mod tests {
     }
 
     #[test]
+    fn enter_in_the_password_field_signs_in() {
+        let mut h = harness();
+        h.state_mut().0.remember = false;
+        h.state_mut().0.user = "anna".into();
+        h.run();
+        h.get_by_role_and_label(Role::PasswordInput, "Password")
+            .click();
+        h.run();
+        h.get_by_role_and_label(Role::PasswordInput, "Password")
+            .type_text("pw");
+        h.run();
+        assert_eq!(h.state().1, None, "typing alone doesn't sign in");
+        h.key_press(egui::Key::Enter);
+        h.run();
+        assert_eq!(h.state().1, Some(("anna".into(), "pw".into(), false)));
+    }
+
+    #[test]
+    fn enter_without_a_user_name_does_nothing() {
+        let mut h = harness();
+        h.get_by_role_and_label(Role::PasswordInput, "Password")
+            .click();
+        h.run();
+        h.key_press(egui::Key::Enter);
+        h.run();
+        assert_eq!(h.state().1, None);
+    }
+
+    #[test]
     fn says_when_the_password_was_wrong() {
         let mut h = harness();
         h.state_mut().0.wrong_login = true;
@@ -377,16 +417,15 @@ mod tests {
         let mut shared = Shared::new(hydra_core::Catalogue::default());
         let (requests, _inbox) = std::sync::mpsc::channel();
         shared.db = Some(Db::new(requests, std::sync::mpsc::channel().1));
-        let mut h = crate::theme::themed(
-            Harness::builder()
-                .with_size(egui::vec2(600.0, 100.0))
-                .build_ui_state(
-                    |ui, (s, shared): &mut (SignIn, Shared)| s.status(ui, shared),
-                    (signin, shared),
-                ),
+        let mut h = theme::harness(
+            egui::vec2(600.0, 100.0),
+            |ui, (s, shared): &mut (SignIn, Shared)| s.status(ui, shared),
+            (signin, shared),
         );
         h.run();
         h.get_by_label("Signed in as anna");
+        // The database's name, as in the app bar, with the server in its hover.
+        h.get_by_label("none");
         assert!(h.query_by_label("Retry").is_none());
 
         h.state_mut().0.connect_failed();

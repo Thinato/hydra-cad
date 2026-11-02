@@ -494,6 +494,63 @@ pub fn column_title(ui: &mut Ui, title: &str) -> Response {
     )
 }
 
+/// A form field: `name` in label type above `edit`, which is 32 px high and labelled by it.
+pub fn field(ui: &mut Ui, name: &str, edit: egui::TextEdit<'_>) -> Response {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        let name = ui.label(RichText::new(name).text_style(label()));
+        let edit = edit
+            .min_size(Vec2::new(0.0, 32.0))
+            .vertical_align(Align::Center);
+        ui.add(edit).labelled_by(name.id)
+    })
+    .inner
+}
+
+/// A modal dialog, 420 px wide: the `title` in heading type over `body` in 24 × 20 px padding,
+/// then the buttons right-aligned on a `panel` footer under a `divider` line. The footer is laid
+/// out right to left, so `footer` adds the primary button first.
+pub fn dialog<R>(
+    ctx: &egui::Context,
+    id: &str,
+    title: &str,
+    body: impl FnOnce(&mut Ui),
+    footer: impl FnOnce(&mut Ui) -> R,
+) -> egui::ModalResponse<R> {
+    let frame = Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO);
+    egui::Modal::new(egui::Id::new(id))
+        .frame(frame)
+        .show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            Frame::new()
+                .inner_margin(Margin::symmetric(24, 20))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    ui.label(RichText::new(title).text_style(heading()));
+                    body(ui);
+                });
+            let corners = CornerRadius {
+                sw: RADIUS,
+                se: RADIUS,
+                ..CornerRadius::ZERO
+            };
+            let strip = Frame::new()
+                .fill(LIGHT.panel)
+                .corner_radius(corners)
+                .inner_margin(Margin::symmetric(24, 12))
+                .show(ui, |ui| {
+                    let row = Vec2::new(ui.available_width(), 32.0);
+                    ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Center), footer)
+                        .inner
+                });
+            let rect = strip.response.rect;
+            ui.painter()
+                .hline(rect.x_range(), rect.top(), Stroke::new(1.0, LIGHT.divider));
+            strip.inner
+        })
+}
+
 /// Install the fonts and the palette's style, and keep the app in light mode whatever the
 /// system setting is.
 pub fn apply(ctx: &egui::Context, palette: &Palette) {
@@ -1026,6 +1083,73 @@ mod tests {
         });
         let title = title.expect("the column title");
         assert_eq!(title.galley.job.sections[0].format.color, LIGHT.secondary);
+    }
+
+    #[test]
+    fn a_field_is_labelled_above_and_32_px_high() {
+        use egui_kittest::kittest::Queryable;
+        let h = harness(
+            Vec2::new(400.0, 200.0),
+            |ui, text: &mut String| {
+                field(ui, "Series", egui::TextEdit::singleline(text));
+            },
+            String::new(),
+        );
+        let label = h
+            .get_by_role_and_label(egui::accesskit::Role::Label, "Series")
+            .rect();
+        let edit = h
+            .get_by_role_and_label(egui::accesskit::Role::TextInput, "Series")
+            .rect();
+        assert!(label.bottom() <= edit.top(), "{label:?} above {edit:?}");
+        assert!(edit.height() >= 32.0, "{edit:?}");
+    }
+
+    #[test]
+    fn a_dialog_puts_its_buttons_right_aligned_on_a_panel_footer() {
+        use egui_kittest::kittest::Queryable;
+        let mut h = harness(
+            Vec2::new(800.0, 600.0),
+            |ui, clicked: &mut bool| {
+                let modal = dialog(
+                    ui.ctx(),
+                    "test-dialog",
+                    "Delete anna?",
+                    |ui| {
+                        ui.label("They can no longer sign in.");
+                    },
+                    |ui| {
+                        let ok = ui.add(primary("Delete")).clicked();
+                        let _ = ui.button("Cancel");
+                        ok
+                    },
+                );
+                *clicked |= modal.inner;
+            },
+            false,
+        );
+        h.run();
+        let title = h.get_by_label("Delete anna?").rect();
+        let delete = h.get_by_label("Delete").rect();
+        let cancel = h.get_by_label("Cancel").rect();
+        // The primary is last, at the right; both sit under the body.
+        assert!(cancel.right() < delete.left());
+        assert!(title.bottom() < cancel.top());
+        let footer = h
+            .output()
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                Shape::Rect(r) if r.fill == LIGHT.panel && r.rect.contains_rect(delete) => {
+                    Some(r.rect)
+                }
+                _ => None,
+            })
+            .expect("a panel-coloured footer round the buttons");
+        assert!(footer.right() - 24.0 - delete.right() <= 1.0, "{footer:?}");
+        h.get_by_label("Delete").click();
+        h.run();
+        assert!(*h.state());
     }
 
     /// The shapes of a button after a few frames, with the pointer over it or keyboard focus.

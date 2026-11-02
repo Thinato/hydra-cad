@@ -18,13 +18,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use eframe::egui;
+use eframe::egui::{self, RichText};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use hydra_core::{Catalogue, Circuit};
 
 use catalogue::{CataloguePanel, Shared};
 use db::{Db, Reply, Request};
 use signin::SignIn;
+use theme::Mark;
 use update::Update;
 
 // ponytail: dev fixture paths baked in at compile time, used only where they exist, so an
@@ -256,31 +257,12 @@ impl eframe::App for HydraApp {
         panels
             .catalogue
             .handle_dropped_files(ui.ctx(), &mut panels.shared);
-        // Status line above the tabs, so database errors show whichever tab is open.
-        let shared = &panels.shared;
-        if shared.error.is_some()
-            || shared.notice.is_some()
-            || panels.signin.is_some()
-            || self.update.is_some()
-        {
-            ui.horizontal_wrapped(|ui| {
-                if let Some(s) = &mut panels.signin {
-                    s.status(ui, &mut panels.shared);
-                }
-                if let Some(e) = &panels.shared.error {
-                    ui.colored_label(ui.visuals().error_fg_color, e);
-                }
-                if let Some(n) = &panels.shared.notice {
-                    ui.weak(n);
-                }
-                if let Some(u) = &self.update {
-                    let link = ui.hyperlink_to(format!("Download Hydra {}", u.version), &u.url);
-                    if let Some(notes) = &u.notes {
-                        link.on_hover_text(notes);
-                    }
-                }
-            });
-        }
+        status_strip(
+            ui,
+            &mut panels.shared,
+            panels.signin.as_mut(),
+            self.update.as_ref(),
+        );
         DockArea::new(&mut self.dock)
             .show_close_buttons(false)
             .show_leaf_close_all_buttons(false)
@@ -290,6 +272,55 @@ impl eframe::App for HydraApp {
             s.ui(ui.ctx(), &mut self.panels.shared);
         }
     }
+}
+
+/// The strip above the tabs, so database errors show whichever tab is open: the error as a
+/// banner, then the latest notice and the update link at the left and who is signed in at the
+/// right. Shown only when there is something to show.
+fn status_strip(
+    ui: &mut egui::Ui,
+    shared: &mut Shared,
+    signin: Option<&mut SignIn>,
+    update: Option<&Update>,
+) {
+    let notice = shared.notice.clone();
+    // Signed out, the sign-in window asks; the strip has nothing to say about it.
+    let signin = signin.filter(|s| s.user().is_some());
+    if shared.error.is_none() && notice.is_none() && signin.is_none() && update.is_none() {
+        return;
+    }
+    theme::section(ui, |ui| {
+        if let Some(e) = &shared.error {
+            // The first sentence in bold, as banners read.
+            let (first, rest) = match e.split_once(". ") {
+                Some((first, rest)) => (format!("{first}."), rest),
+                None => (e.clone(), ""),
+            };
+            theme::banner(ui, Mark::Error, &first, rest, |_| ());
+        }
+        if notice.is_none() && signin.is_none() && update.is_none() {
+            return;
+        }
+        egui::Sides::new().shrink_left().wrap().show(
+            ui,
+            |ui| {
+                if let Some(n) = notice {
+                    ui.label(RichText::new(n).color(theme::LIGHT.secondary));
+                }
+                if let Some(u) = update {
+                    let link = ui.hyperlink_to(format!("Download Hydra {}", u.version), &u.url);
+                    if let Some(notes) = &u.notes {
+                        link.on_hover_text(notes);
+                    }
+                }
+            },
+            |ui| {
+                if let Some(s) = signin {
+                    s.status(ui, shared);
+                }
+            },
+        );
+    });
 }
 
 fn read(path: &Path) -> anyhow::Result<String> {
@@ -610,5 +641,77 @@ mod tests {
                 .unwrap()
                 .contains("still holds the old one")
         );
+    }
+
+    type Strip = (Shared, Option<SignIn>, Option<Update>);
+
+    fn strip(state: Strip) -> egui_kittest::Harness<'static, Strip> {
+        let mut h = theme::harness(
+            egui::vec2(900.0, 200.0),
+            |ui, (shared, signin, update): &mut Strip| {
+                status_strip(ui, shared, signin.as_mut(), update.as_ref());
+            },
+            state,
+        );
+        h.run();
+        h
+    }
+
+    #[test]
+    fn the_status_strip_shows_an_error_banner_the_notice_and_the_update_link() {
+        use egui_kittest::kittest::Queryable;
+        let mut shared = Shared::new(Catalogue::default());
+        shared.error = Some("Could not reach the database. Check the network.".into());
+        shared.notice = Some("Saved vt-a@2.".into());
+        let update = Update {
+            version: "0.2.0".into(),
+            url: "https://example.invalid/hydra".into(),
+            notes: None,
+        };
+        let h = strip((shared, Some(SignIn::test("anna", "pw")), Some(update)));
+        // The error as a banner in the missing tone, its first sentence first.
+        h.get_by_label("Could not reach the database. Check the network.");
+        let tone = theme::LIGHT.missing;
+        let banner = h.output().shapes.iter().any(|c| {
+            matches!(&c.shape, egui::Shape::Rect(r) if r.fill == tone.tint && r.stroke.color == tone.strong)
+        });
+        assert!(banner, "no banner in the missing tone");
+        h.get_by_label("Saved vt-a@2.");
+        // The update as a link, in the accent.
+        h.get_by_label("Download Hydra 0.2.0");
+        let accent = h.output().shapes.iter().any(|c| {
+            matches!(&c.shape, egui::Shape::Text(t) if t.galley.text() == "Download Hydra 0.2.0"
+                && [t.fallback_color, t.galley.job.sections[0].format.color]
+                    .contains(&theme::LIGHT.accent))
+        });
+        assert!(accent, "the update link is in the accent");
+        // At the right, as in the app bar: the database, who, then Sign out.
+        let x = |label: &str| h.get_by_label(label).rect().left();
+        assert!(x("hydra") < x("Signed in as anna"));
+        assert!(x("Signed in as anna") < x("Sign out"));
+        assert!(x("Download Hydra 0.2.0") < x("hydra"));
+    }
+
+    #[test]
+    fn the_status_strip_is_hidden_with_nothing_to_show() {
+        let lines = |h: &egui_kittest::Harness<Strip>| {
+            h.output()
+                .shapes
+                .iter()
+                .filter(|c| matches!(c.shape, egui::Shape::LineSegment { .. }))
+                .count()
+        };
+        let h = strip((Shared::new(Catalogue::default()), None, None));
+        assert_eq!(lines(&h), 0, "no strip, so no line under it");
+        // Signed out, the sign-in window asks: no empty strip above it.
+        let signed_out = SignIn::new("postgres://hydra-db.office.local:5433/hydra".into()).unwrap();
+        let h = strip((Shared::new(Catalogue::default()), Some(signed_out), None));
+        assert_eq!(lines(&h), 0, "no empty strip while signed out");
+        let h = strip((
+            Shared::new(Catalogue::default()),
+            Some(SignIn::test("anna", "pw")),
+            None,
+        ));
+        assert_eq!(lines(&h), 1, "signed in, the strip shows who");
     }
 }
