@@ -454,20 +454,13 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
 
 fn fonts() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
+    // Plex Sans, SemiBold and Condensed SemiBold come from hydra-symbols, which embeds them in
+    // exported PDFs, so the binary holds one copy.
     let files: [(&str, &'static [u8]); 6] = [
-        (
-            "plex-sans",
-            include_bytes!("../fonts/IBMPlexSans-Regular.ttf"),
-        ),
+        ("plex-sans", hydra_symbols::PLEX_SANS),
         (MEDIUM, include_bytes!("../fonts/IBMPlexSans-Medium.ttf")),
-        (
-            SEMIBOLD,
-            include_bytes!("../fonts/IBMPlexSans-SemiBold.ttf"),
-        ),
-        (
-            CONDENSED,
-            include_bytes!("../fonts/IBMPlexSansCondensed-SemiBold.ttf"),
-        ),
+        (SEMIBOLD, hydra_symbols::PLEX_SANS_SEMIBOLD),
+        (CONDENSED, hydra_symbols::PLEX_SANS_CONDENSED_SEMIBOLD),
         (
             "plex-mono",
             include_bytes!("../fonts/IBMPlexMono-Medium.ttf"),

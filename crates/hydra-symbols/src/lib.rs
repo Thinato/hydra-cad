@@ -11,7 +11,9 @@ use hydra_core::{
 
 mod route;
 mod svg;
-pub use svg::{sheet_pdf, sheet_svg, to_svg};
+pub use svg::{
+    PLEX_SANS, PLEX_SANS_CONDENSED_SEMIBOLD, PLEX_SANS_SEMIBOLD, sheet_pdf, sheet_svg, to_svg,
+};
 
 pub type Point = [f32; 2];
 
@@ -764,6 +766,9 @@ const SHEETS: [(&str, f32, f32); 5] = [
 ];
 /// Paper round the drawing, and between the title block and the sheet's edges.
 const SHEET_MARGIN: f32 = 10.0;
+/// Room a sheet keeps for its corner snapping to the 5 mm grid, which moves the drawing up to
+/// 2.5 mm off centre, so the margin is never less than [`SHEET_MARGIN`].
+const SNAP: f32 = 5.0;
 /// Room between the drawing and the title block under it.
 const TITLE_GAP: f32 = 5.0;
 /// Height of the title block's two rows.
@@ -791,28 +796,29 @@ pub struct Title {
     pub revision: Option<i32>,
     /// Changed since that revision was saved.
     pub edited: bool,
-    /// For a circuit the AI assistant imported: whether an engineer has checked it since.
-    /// `None` for a circuit drawn in Hydra, which has no check to wait for.
-    pub checked: Option<bool>,
+    /// The AI assistant imported the circuit from a drawing.
+    pub imported: bool,
+    /// An import nobody has checked against its drawing yet. Hydra records no check, so a
+    /// circuit that isn't waiting for one says nothing about being checked.
+    pub unchecked: bool,
 }
 
 impl Title {
     /// The second row's cells: label, value, and the value's lettering.
     pub fn fields(&self) -> [(&'static str, String, Font); 3] {
         let unknown = || "—".to_string();
-        let drawn_by = match self.checked {
-            Some(_) => "AI assistant".to_string(),
-            None => unknown(),
+        let drawn_by = match self.imported {
+            true => "AI assistant".to_string(),
+            false => unknown(),
         };
         let revision = match (self.revision, self.edited) {
             (None, _) => ("not saved".to_string(), Font::Warning),
             (Some(n), true) => (format!("{n}, edited"), Font::Warning),
             (Some(n), false) => (n.to_string(), Font::Sans),
         };
-        let checked = match self.checked {
-            Some(true) => ("yes".to_string(), Font::Sans),
-            Some(false) => ("not yet".to_string(), Font::Warning),
-            None => (unknown(), Font::Sans),
+        let checked = match self.unchecked {
+            true => ("not yet".to_string(), Font::Warning),
+            false => (unknown(), Font::Sans),
         };
         [
             ("DRAWN BY", drawn_by, Font::Sans),
@@ -823,8 +829,11 @@ impl Title {
 
     /// Width and height of the block: wide enough for the name and schema on its first row.
     fn size(&self) -> [f32; 2] {
-        let width = |s: &str, size: f32| s.chars().count() as f32 * size * 0.6;
-        let first = width(&self.name, 3.5) + width(&self.schema_text(), LABEL) + 3.0 * TITLE_PAD;
+        let width = |s: &str, em: f32| s.chars().count() as f32 * em;
+        // SemiBold capitals run wider than the 0.6 em the drawing's labels are estimated at.
+        let first = width(&self.name, 3.5 * 0.72)
+            + width(&self.schema_text(), LABEL * 0.6)
+            + 3.0 * TITLE_PAD;
         [first.max(TITLE_WIDTH), TITLE_ROWS[0] + TITLE_ROWS[1]]
     }
 
@@ -842,8 +851,8 @@ pub fn sheet(drawing: &[Primitive], title: Option<&Title>) -> Sheet {
     let [tw, th] = title.map_or([0.0; 2], Title::size);
     let strip = if title.is_some() { th + TITLE_GAP } else { 0.0 };
     let need = [
-        (hi[0] - lo[0]).max(tw) + 2.0 * SHEET_MARGIN,
-        hi[1] - lo[1] + strip + 2.0 * SHEET_MARGIN,
+        (hi[0] - lo[0]).max(tw) + 2.0 * SHEET_MARGIN + SNAP,
+        hi[1] - lo[1] + strip + 2.0 * SHEET_MARGIN + SNAP,
     ];
     let grid = |v: f32| (v / 5.0).round() * 5.0;
     // ponytail: past A0 the sheet is cut to the drawing, a size no printer takes; a drawing

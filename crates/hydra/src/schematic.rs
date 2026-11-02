@@ -51,7 +51,7 @@ pub fn paint_sheet(
             painter.rect_filled(rect, 0.0, LIGHT.desk);
             let paper = Rect::from_min_max(to_screen(sheet.min), to_screen(sheet.max));
             painter.rect_filled(paper, 0.0, LIGHT.sheet);
-            paint_grid(painter, paper.intersect(rect), paper.min, zoom);
+            paint_grid(painter, paper.intersect(rect), origin, zoom);
             painter.rect_stroke(
                 paper,
                 0.0,
@@ -66,32 +66,42 @@ pub fn paint_sheet(
     }
 }
 
-/// Grid lines every 5 mm from the sheet's corner `corner`, every fifth stronger, within
-/// `visible`; the 5 mm ones only while they are at least 4 px apart.
-fn paint_grid(painter: &egui::Painter, visible: Rect, corner: Pos2, zoom: f32) {
+/// The grid within `visible`, drawn from `origin`, the drawing's origin on screen. The sheet's
+/// corner is on the 5 mm grid, so its lines are the drawing's multiples of 5 mm.
+fn paint_grid(painter: &egui::Painter, visible: Rect, origin: Pos2, zoom: f32) {
     if !visible.is_positive() {
         return;
     }
-    let step = GRID * zoom;
-    let every = if step >= GRID_MIN_PX { 1 } else { MAJOR };
-    if step * (every as f32) < GRID_MIN_PX {
-        return;
-    }
-    // Only the lines on screen: their indices from the corner, along each axis.
-    let lines = |lo: f32, hi: f32, start: f32| {
-        let first = ((lo - start) / step).ceil().max(0.0) as usize;
-        let last = ((hi - start) / step).floor().max(0.0) as usize;
-        (first..=last)
-            .filter(move |i| i % every == 0)
-            .map(move |i| (start + i as f32 * step, i % MAJOR == 0))
-    };
     let colour = |major: bool| if major { LIGHT.grid_major } else { LIGHT.grid };
-    for (x, major) in lines(visible.min.x, visible.max.x, corner.x) {
+    let mm = |px: f32, at: f32| (px - at) / zoom;
+    let along = |lo: f32, hi: f32, at: f32| grid_lines(mm(lo, at), mm(hi, at), zoom);
+    for (x, major) in along(visible.min.x, visible.max.x, origin.x) {
+        let x = origin.x + x * zoom;
         painter.vline(x, visible.y_range(), Stroke::new(1.0, colour(major)));
     }
-    for (y, major) in lines(visible.min.y, visible.max.y, corner.y) {
+    for (y, major) in along(visible.min.y, visible.max.y, origin.y) {
+        let y = origin.y + y * zoom;
         painter.hline(visible.x_range(), y, Stroke::new(1.0, colour(major)));
     }
+}
+
+/// Grid lines from `lo` to `hi` mm along one axis at `zoom` px per mm: each multiple of 5 mm,
+/// and whether it is a multiple of 25 mm. The 5 mm lines are left out while closer than 4 px,
+/// and every line while the 25 mm ones would be.
+fn grid_lines(lo: f32, hi: f32, zoom: f32) -> Vec<(f32, bool)> {
+    let every = if GRID * zoom >= GRID_MIN_PX {
+        1
+    } else {
+        MAJOR as i64
+    };
+    if GRID * zoom * (every as f32) < GRID_MIN_PX {
+        return Vec::new();
+    }
+    let (first, last) = ((lo / GRID).ceil() as i64, (hi / GRID).floor() as i64);
+    (first..=last)
+        .filter(|k| k.rem_euclid(every) == 0)
+        .map(|k| (k as f32 * GRID, k.rem_euclid(MAJOR as i64) == 0))
+        .collect()
 }
 
 fn paint(painter: &egui::Painter, prim: &Primitive, to_screen: &impl Fn(Point) -> Pos2, zoom: f32) {
@@ -161,5 +171,46 @@ fn paint(painter: &egui::Painter, prim: &Primitive, to_screen: &impl Fn(Point) -
             let font = FontId::new(size * zoom, family);
             painter.text(to_screen(*at), anchor, text, font, colour);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grid_lines;
+
+    #[test]
+    fn grid_lines_fall_on_multiples_of_5_mm_with_25_mm_majors_and_thin_out() {
+        // 4 px apart: every 5 mm line, the 25 mm multiples major, wherever the view starts.
+        assert_eq!(
+            grid_lines(-27.0, 7.0, 0.8),
+            [
+                (-25.0, true),
+                (-20.0, false),
+                (-15.0, false),
+                (-10.0, false),
+                (-5.0, false),
+                (0.0, true),
+                (5.0, false)
+            ]
+        );
+        // Majors are the drawing's multiples of 25 mm, not every fifth line from the view's edge.
+        assert_eq!(
+            grid_lines(-17.0, 12.0, 0.8),
+            [
+                (-15.0, false),
+                (-10.0, false),
+                (-5.0, false),
+                (0.0, true),
+                (5.0, false),
+                (10.0, false)
+            ]
+        );
+        // Closer than 4 px: only the 25 mm lines, until they too would be.
+        assert_eq!(
+            grid_lines(-27.0, 60.0, 0.79),
+            [(-25.0, true), (0.0, true), (25.0, true), (50.0, true)]
+        );
+        assert_eq!(grid_lines(-27.0, 60.0, 0.17).len(), 4);
+        assert!(grid_lines(-27.0, 60.0, 0.15).is_empty());
     }
 }

@@ -83,7 +83,8 @@ fn golden_circuits_load_validate_round_trip_and_render() {
             schema: circuit.schema,
             revision: Some(3),
             edited: false,
-            checked: circuit.import.as_ref().map(|_| true),
+            imported: circuit.import.is_some(),
+            unchecked: false,
         };
         let paper = sheet(&drawing.primitives, Some(&title));
         let mut primitives = drawing.primitives.clone();
@@ -2237,26 +2238,56 @@ fn sized(w: f32, h: f32) -> Vec<Primitive> {
 fn a_drawing_goes_on_the_smallest_landscape_a_sheet_that_holds_it() {
     let size = |w, h, title: Option<&Title>| sheet(&sized(w, h), title).size;
     // 10 mm of paper all round.
+    // 10 mm of paper all round, and 5 mm for the corner snapping to the grid.
     for (w, h, expected) in [
-        (277.0, 190.0, "A4"),
-        (278.0, 190.0, "A3"),
-        (277.0, 191.0, "A3"),
-        (400.0, 277.0, "A3"),
-        (401.0, 277.0, "A2"),
-        (574.0, 400.0, "A2"),
-        (821.0, 574.0, "A1"),
-        (821.0, 575.0, "A0"),
-        (1169.0, 821.0, "A0"),
+        (272.0, 185.0, "A4"),
+        (273.0, 185.0, "A3"),
+        (272.0, 186.0, "A3"),
+        (395.0, 272.0, "A3"),
+        (396.0, 272.0, "A2"),
+        (569.0, 395.0, "A2"),
+        (816.0, 569.0, "A1"),
+        (816.0, 570.0, "A0"),
+        (1164.0, 816.0, "A0"),
     ] {
         assert_eq!(size(w, h, None), Some(expected), "{w} x {h}");
     }
     // A title block takes 18 mm under the drawing, and 5 mm between them.
     let title = Title::default();
-    assert_eq!(size(277.0, 167.0, Some(&title)), Some("A4"));
-    assert_eq!(size(277.0, 168.0, Some(&title)), Some("A3"));
+    assert_eq!(size(272.0, 162.0, Some(&title)), Some("A4"));
+    assert_eq!(size(272.0, 163.0, Some(&title)), Some("A3"));
+    // Wherever the drawing lies, snapping keeps the 10 mm margin, and 5 mm above the block.
+    for (w, h) in [
+        (272.0, 162.0),
+        (100.0, 50.0),
+        (395.0, 249.0),
+        (1300.0, 40.0),
+    ] {
+        for off in [0.0, 1.3, 2.5, 3.7, -2.4] {
+            let mut drawing = sized(w, h);
+            if let Primitive::Polyline { points, .. } = &mut drawing[0] {
+                points
+                    .iter_mut()
+                    .for_each(|p| *p = [p[0] + off, p[1] - off]);
+            }
+            let (lo, hi) = bounds(&drawing).unwrap();
+            let paper = sheet(&drawing, Some(&title));
+            let (block, _) = bounds(&title_block(&paper, &title)).unwrap();
+            let margins = [
+                lo[0] - paper.min[0],
+                lo[1] - paper.min[1],
+                paper.max[0] - hi[0],
+                block[1] - hi[1] + 5.0,
+            ];
+            assert!(
+                margins.iter().all(|&m| m >= 10.0 - 1e-3),
+                "{w}x{h}+{off}: {margins:?}"
+            );
+        }
+    }
     // A long name widens the block, and the sheet with it.
     let long = Title {
-        name: "N".repeat(150),
+        name: "N".repeat(100),
         ..Title::default()
     };
     assert_eq!(size(10.0, 10.0, Some(&long)), Some("A3"));
@@ -2268,7 +2299,7 @@ fn a_drawing_goes_on_the_smallest_landscape_a_sheet_that_holds_it() {
     let paper = sheet(&sized(1170.0, 100.0), Some(&title));
     assert_eq!(paper.size, None);
     let [w, h] = [paper.max[0] - paper.min[0], paper.max[1] - paper.min[1]];
-    assert!(w >= 1190.0 && h >= 100.0 + 23.0 + 20.0, "{w} x {h}");
+    assert!(w >= 1195.0 && h >= 100.0 + 23.0 + 25.0, "{w} x {h}");
     assert!(paper.min[0] <= -10.0 && paper.max[0] >= 1180.0, "{paper:?}");
 }
 
@@ -2410,21 +2441,35 @@ fn the_title_block_says_only_what_hydra_knows() {
     );
 
     let edited = Title {
-        revision: Some(4),
+        revision: Some(1),
         edited: true,
-        checked: Some(false),
+        imported: true,
+        unchecked: true,
         ..unsaved.clone()
     };
     let words = lettering(&title_block(&paper, &edited));
     assert_eq!(words[3], text("AI assistant", Font::Sans));
-    assert_eq!(words[5], text("4, edited", Font::Warning));
+    assert_eq!(words[5], text("1, edited", Font::Warning));
     assert_eq!(words[7], text("not yet", Font::Warning));
-    let checked = Title {
+    // Hydra records no check, so an import past waiting for one claims none.
+    let later = Title {
+        revision: Some(4),
         edited: false,
-        checked: Some(true),
+        unchecked: false,
         ..edited
     };
-    let words = lettering(&title_block(&paper, &checked));
+    let words = lettering(&title_block(&paper, &later));
     assert_eq!(words[5], text("4", Font::Sans));
-    assert_eq!(words[7], text("yes", Font::Sans));
+    assert_eq!(words[7], text("—", Font::Sans));
+    assert!(!words.iter().any(|(w, _)| w == "yes"));
+
+    // A long name in SemiBold capitals widens the block clear of "schema 5".
+    let caps = Title {
+        name: "W".repeat(40),
+        ..unsaved
+    };
+    let block = title_block(&sheet(&drawing, Some(&caps)), &caps);
+    let (lo, hi) = bounds(&block[..1]).unwrap();
+    // At 0.72 em: 40 × 3.5 × 0.72 mm of name, "schema 5" at 0.6 em, and the padding.
+    assert!(hi[0] - lo[0] >= 40.0 * 3.5 * 0.72 + 8.0 * 2.5 * 0.6 + 9.0 - 0.01);
 }

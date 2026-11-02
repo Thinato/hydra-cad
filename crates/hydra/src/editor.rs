@@ -333,16 +333,16 @@ impl SchematicEditor {
         self.doc.circuit.import.is_some() && self.saved.as_ref().is_some_and(|s| s.revision == 1)
     }
 
-    /// What the title block says about the circuit as it is now. An import counts as checked
-    /// once an engineer has saved a revision after the assistant's.
+    /// What the title block says about the circuit as it is now. Nothing records a check yet,
+    /// so it says only that an import at its first revision is waiting for one.
     fn title(&self) -> Title {
-        let revision = self.saved.as_ref().map(|s| s.revision);
         Title {
             name: self.doc.circuit.name.clone(),
             schema: self.doc.circuit.schema,
-            revision,
+            revision: self.saved.as_ref().map(|s| s.revision),
             edited: self.doc.is_dirty(),
-            checked: (self.doc.circuit.import.as_ref()).map(|_| revision.is_some_and(|r| r > 1)),
+            imported: self.doc.circuit.import.is_some(),
+            unchecked: self.unchecked(),
         }
     }
 
@@ -1783,7 +1783,8 @@ impl SchematicEditor {
         let rendered = self.rendered_shown(&shown, shared);
         let (drawing, parts) = (&rendered.drawing, &rendered.parts);
         let title = self.title();
-        let paper = sheet(&drawing.primitives, Some(&title));
+        // The document's sheet, not the dragged drawing's, so the sheet holds still under a drag.
+        let paper = sheet(&self.rendered(shared).drawing.primitives, Some(&title));
         // The title block, also read out for screen readers, as it is only painted.
         let read = (title.fields().iter())
             .map(|(label, value, _)| format!("{}: {value}", label.to_lowercase()))
@@ -3480,7 +3481,8 @@ mod tests {
             schema: circuit.schema,
             revision: Some(4),
             edited: true,
-            checked: None,
+            imported: false,
+            unchecked: false,
         };
         let export = |kind| export_bytes(kind, &circuit, &title, &catalogue).unwrap();
 
@@ -4996,8 +4998,9 @@ mod tests {
             sheet(&h)
         );
         assert!(sheet(&h).contains("checked: not yet"), "{}", sheet(&h));
+        // Saving records no check, so a later revision doesn't claim one.
         let h = import_harness(Some(2), false);
-        assert!(sheet(&h).contains("checked: yes"), "{}", sheet(&h));
+        assert!(sheet(&h).contains("checked: —"), "{}", sheet(&h));
     }
 
     #[test]
@@ -5021,5 +5024,36 @@ mod tests {
         );
         let filled = (on_screen.width() / e.view.width()).max(on_screen.height() / e.view.height());
         assert!((filled - 0.9).abs() < 0.01, "{filled}");
+    }
+
+    #[test]
+    fn the_sheet_holds_still_while_a_part_is_dragged_off_it() {
+        let sheet = |h: &Harness<State>| {
+            h.get_by_label_contains(" sheet, ")
+                .accesskit_node()
+                .label()
+                .unwrap()
+        };
+        let mut h = import_harness(Some(1), false);
+        let e = &mut h.state_mut().0;
+        (e.zoom, e.pan, e.fitted_to) = (2.0, Vec2::new(-100.0, 50.0), None);
+        h.run_steps(2);
+        assert!(sheet(&h).starts_with("A3 sheet"), "{}", sheet(&h));
+        // Valve 4.1, at (175, 30), dragged 250 mm to the right by its body, clear of its ports.
+        let from = h.state().0.to_screen([165.0, 30.0]);
+        let to = from + Vec2::new(500.0, 0.0);
+        h.hover_at(from);
+        h.drag_at(from);
+        h.run_steps(2);
+        for t in [0.5, 1.0] {
+            h.hover_at(from + (to - from) * t);
+            h.run_steps(2);
+        }
+        assert!(matches!(h.state().0.drag, Some(Drag::Move { .. })));
+        assert!(sheet(&h).starts_with("A3 sheet"), "{}", sheet(&h));
+        // Dropped, the circuit needs a bigger sheet.
+        h.drop_at(to);
+        h.run_steps(2);
+        assert!(!sheet(&h).starts_with("A3 sheet"), "{}", sheet(&h));
     }
 }

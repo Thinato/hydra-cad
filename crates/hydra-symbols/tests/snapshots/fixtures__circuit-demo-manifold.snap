@@ -259,17 +259,17 @@ expression: svg
 <polyline points="0.00,13.90 0.00,9.90"/>
 <polyline points="0.00,8.90 0.00,8.60"/>
 <polyline points="0.00,7.60 0.00,4.00"/>
-<polygon points="49.50,132.00 207.00,132.00 207.00,150.00 49.50,150.00" stroke-width="0.5"/>
-<polyline points="49.50,140.00 207.00,140.00" stroke-width="0.25"/>
-<text x="52.50" y="136.00" font-size="3.5" font-family="'IBM Plex Sans', sans-serif" font-weight="600" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">Demo manifold (stand-in until the Germani transcription is added)</text>
+<polygon points="22.20,132.00 207.00,132.00 207.00,150.00 22.20,150.00" stroke-width="0.5"/>
+<polyline points="22.20,140.00 207.00,140.00" stroke-width="0.25"/>
+<text x="25.20" y="136.00" font-size="3.5" font-family="'IBM Plex Sans', sans-serif" font-weight="600" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">Demo manifold (stand-in until the Germani transcription is added)</text>
 <text x="204.00" y="136.00" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="end" dominant-baseline="central" fill="black" stroke="none">schema 5</text>
-<text x="52.50" y="142.80" font-size="1.8" font-family="'IBM Plex Sans Condensed', sans-serif" font-weight="600" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">DRAWN BY</text>
-<text x="52.50" y="146.80" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">—</text>
-<polyline points="128.25,140.00 128.25,150.00" stroke-width="0.25"/>
-<text x="131.25" y="142.80" font-size="1.8" font-family="'IBM Plex Sans Condensed', sans-serif" font-weight="600" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">REVISION</text>
-<text x="131.25" y="146.80" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">3</text>
-<polyline points="167.62,140.00 167.62,150.00" stroke-width="0.25"/>
-<text x="170.62" y="142.80" font-size="1.8" font-family="'IBM Plex Sans Condensed', sans-serif" font-weight="600" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">CHECKED</text>
-<text x="170.62" y="146.80" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">—</text>
+<text x="25.20" y="142.80" font-size="1.8" font-family="'IBM Plex Sans Condensed', sans-serif" font-weight="600" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">DRAWN BY</text>
+<text x="25.20" y="146.80" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">—</text>
+<polyline points="114.60,140.00 114.60,150.00" stroke-width="0.25"/>
+<text x="117.60" y="142.80" font-size="1.8" font-family="'IBM Plex Sans Condensed', sans-serif" font-weight="600" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">REVISION</text>
+<text x="117.60" y="146.80" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">3</text>
+<polyline points="160.80,140.00 160.80,150.00" stroke-width="0.25"/>
+<text x="163.80" y="142.80" font-size="1.8" font-family="'IBM Plex Sans Condensed', sans-serif" font-weight="600" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">CHECKED</text>
+<text x="163.80" y="146.80" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">—</text>
 </g>
 </svg>

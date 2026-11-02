@@ -6,15 +6,19 @@ use crate::{Align, Font, Pen, Point, Primitive, Sheet, bounds};
 
 const MARGIN: f32 = 2.0;
 
-/// The IBM Plex faces the drawing letters in, the same files the app bundles. Lines are black
-/// on white, as printed, rather than the canvas's ink.
-const FONTS: [&[u8]; 3] = [
-    include_bytes!("../../hydra/fonts/IBMPlexSans-Regular.ttf"),
-    include_bytes!("../../hydra/fonts/IBMPlexSans-SemiBold.ttf"),
-    include_bytes!("../../hydra/fonts/IBMPlexSansCondensed-SemiBold.ttf"),
-];
+// The fonts live with the app's in `crates/hydra/fonts/` (one copy, under its OFL). A path out
+// of this crate is fine: the crate is only built inside this workspace, and the bytes are
+// compiled in. The app installs these same statics, so the binary holds them once.
+/// IBM Plex Sans Regular: everything on the drawing.
+pub static PLEX_SANS: &[u8] = include_bytes!("../../hydra/fonts/IBMPlexSans-Regular.ttf");
+/// IBM Plex Sans SemiBold: the title block's name and warnings.
+pub static PLEX_SANS_SEMIBOLD: &[u8] = include_bytes!("../../hydra/fonts/IBMPlexSans-SemiBold.ttf");
+/// IBM Plex Sans Condensed SemiBold: the title block's labels.
+pub static PLEX_SANS_CONDENSED_SEMIBOLD: &[u8] =
+    include_bytes!("../../hydra/fonts/IBMPlexSansCondensed-SemiBold.ttf");
 
-/// Render primitives as an SVG whose user units are millimetres, cut close round them.
+/// Render primitives as an SVG whose user units are millimetres, cut close round them. Lines
+/// are black on white, as printed, rather than the canvas's ink.
 pub fn to_svg(primitives: &[Primitive]) -> String {
     let ([x0, y0], [x1, y1]) = bounds(primitives).unwrap_or(([0.0; 2], [0.0; 2]));
     svg(
@@ -128,7 +132,7 @@ pub fn sheet_pdf(sheet: &Sheet, primitives: &[Primitive]) -> Result<Vec<u8>, Str
 
     let mut options = Options::default();
     let fontdb = options.fontdb_mut();
-    for font in FONTS {
+    for font in [PLEX_SANS, PLEX_SANS_SEMIBOLD, PLEX_SANS_CONDENSED_SEMIBOLD] {
         fontdb.load_font_data(font.to_vec());
     }
     fontdb.set_sans_serif_family("IBM Plex Sans");
