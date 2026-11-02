@@ -112,7 +112,8 @@ The Components board shows each one. How they map to egui, with the `theme` help
 - **Status chips:** `theme::chip(ui, mark, word)`: the mark, then the word, in the tone's text on its tint with a `strong` edge, 24 px high. Kittests and screen readers read the word as a label. The mark picks the tone (`Mark::tone`): ▲ `unlisted`, ■ `missing`, ⇄ `stand_in`, ✓ `ok`, ◆ `agent`, ● the accent (waiting for a person), ✕ grey (rejected). Valve status is about the catalogue. Review status (waiting, approved, rejected, checked) is about a person's decision.
 - **Marked text:** `theme::marked(ui, mark, text)`: the mark, as tall as the text, then the text, both in the mark's tone and always left to right. Used for a problem line, a queue row's check or a "No symbol" note.
 - **Banners:** `theme::banner(ui, mark, first, rest, action)`: a full-width strip in the mark's tint with a `strong` edge: the mark, the bold first sentence, then the fix, and after it what `action` adds, so it is read in that order. The board allows at most one button: an unchecked import offers "Mark checked". Pass `|_| ()` for none.
-- **Tables:** square, a `border` edge, `divider` lines between rows, a `panel`-coloured header row in Overline type and `secondary` colour, and 12 px cell padding.
+- **Tables:** square, a `border` edge, `divider` lines between rows, a `panel`-coloured header row in Overline type and `secondary` colour, and 12 px cell padding. `theme::table(ui, width, rows)` draws the frame, `theme::table_row(ui, fill, cells)` one row (`panel` fill for the header), `theme::cell(ui, width, add)` a column and `theme::column_title(ui, title)` a header. The Proposals fields and parts and the Catalogue's parts and editor use them. The Catalogue's valve-type list is a table whose body rows are `list_row`s, so they select like the review queue.
+- **Symbol preview:** `schematic::symbol_preview(ui, size, symbol, caption, right)`: the symbol fitted on the `sheet` colour over a `panel` caption strip, the caption at its left and the symbol's reference (or ■/▲ No symbol) at its right. The Proposals detail and the Catalogue detail and editor show symbols this way.
 - **Panel sections:** `theme::section(ui, add)`: a strip as wide as the side panel, 12 × 10 px padding over a `border` line. A panel's header (an overline title such as PARTS, and a count or buttons) and each section of the inspector (CATALOGUE, USE INSTEAD, PLACEMENT, titled in overline type in `secondary`) are sections.
 - **List rows:** `theme::list_row(ui, selected, name, add)`: a 1 px `divider` under each row; the selected row is `accent_tint` with a 1 px `accent` edge all round (never a coloured stripe down one side), and a focused row gets the same edge. A clickable row tells screen readers its name and whether it is selected (`WidgetInfo::selected`). The review queue and the parts list use it.
 - **Segmented control:** joined `Button::selected` segments in a `theme::group`; the selected one is `accent_tint`. The review queue's Waiting / All and the Issues / Extra BOM lines / Import notes switch under the sheet are ones.
@@ -149,17 +150,24 @@ The Schematic tab follows the board around the sheet:
 - the status bar: the pointer's position on the sheet in mm, the zoom in points per mm (not a percentage, since screens differ in how big a point is) and the essential keys for the mode, with every key in its hover.
 - An issue links the part it is about only when it knows the part's id (`Issue::component`, or the part the outline is cut round); the drawn-wire messages link none. Nothing is guessed from a message's words.
 
+The Catalogue tab has no board of its own; it is built from the same parts:
+- a toolbar: Search with its label, All versions, how many valve types are shown, and New valve type (secondary, disabled offline with the reason);
+- the valve types as a table filling the tab, since engineers scan a catalogue like a paper one: SERIES, CODE, MANUFACTURER, MOUNTING, VERSION, STATUS and DATASHEET, codes in Data type, rows one line high (only those in view are laid out) and selectable like the review queue. STATUS says only what is wrong: ■ Symbol missing, ▲ Version N is newer, ▲ Draft, no symbol; a normal type says nothing;
+- the selected type's detail as a side panel on the right, in sections like the inspector: its title, manufacturer and `key@version`, "A newer version exists", Place in schematic (the view's primary action, disabled with the reason when the latest version has no symbol) and Edit as new version; SYMBOL as a symbol preview with what is wrong with it; MOUNTING; PARAMETERS; PARTS as a table; DATASHEET;
+- the new-version editor as a dialog: the fields as a table, the symbol it will draw, the error as a ■ line, then Cancel and Save as new version (primary, last);
+- while a file is dragged over the window, a scrim of `ink` at 80 % covers it with the drop hint in Title type in `surface`.
+
 ## Not built yet
 
 The boards show the target. `theme.rs` is in place, but these parts are still to come in the restyle PRs (see TODO.md):
 - **The sheet:** the title block's date and who drew or checked it, which need the revision's author and time from the database (the editor doesn't get them today); designators in Plex Mono SemiBold on the sheet, as the boards letter them (the sheet letters everything in Plex Sans).
 - **The tabs:**
   - the tab strip's 3 px accent edge and the Proposals count;
-  - toolbar groups, side panels and the status bar on the Catalogue, Account and 3D tabs;
+  - toolbar groups, side panels and the status bar on the Account and 3D tabs;
   - icons on the Undo and Redo buttons, which are words today;
   - on the Proposals tab: the assistant's step list, the datasheet page beside the symbol, each field's source page and the activity feed, which need new data from hydra-mcp;
-  - primary buttons and chips in the Catalogue, Account and 3D tabs.
-- **Older literals:** a few places in older code still write literal colours or sizes: `viewer3d.rs` and the catalogue's drop overlay. They move to the palette as their tab is restyled.
+  - primary buttons and chips in the Account and 3D tabs.
+- **Older literals:** `viewer3d.rs` still writes literal colours and sizes. It moves to the palette when the 3D tab is restyled.
 
 ## Adding a theme
 

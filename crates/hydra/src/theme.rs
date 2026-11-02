@@ -444,6 +444,55 @@ pub fn list_row(ui: &mut Ui, selected: bool, name: &str, add: impl FnOnce(&mut U
     row
 }
 
+/// A table: square, `width` wide on `surface` with a `border` edge, its rows laid out flush.
+pub fn table(ui: &mut Ui, width: f32, rows: impl FnOnce(&mut Ui)) {
+    Frame::new()
+        .fill(LIGHT.surface)
+        .stroke(Stroke::new(1.0, LIGHT.border))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            rows(ui);
+        });
+}
+
+/// One table row on `fill` (`panel` for the header row), its cells side by side in 12 × 6 px
+/// padding and 12 px apart, with a `divider` line under it.
+pub fn table_row(ui: &mut Ui, fill: Color32, cells: impl FnOnce(&mut Ui)) {
+    let row = Frame::new()
+        .fill(fill)
+        .inner_margin(Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = Vec2::new(12.0, 4.0);
+            ui.horizontal_top(cells);
+        });
+    let rect = row.response.rect;
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom(),
+        Stroke::new(1.0, LIGHT.divider),
+    );
+}
+
+/// A table cell `width` wide.
+pub fn cell(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui)) {
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        add(ui);
+    });
+}
+
+/// A column title in a table's header row: overline type in `secondary`, written in capitals by
+/// the caller.
+pub fn column_title(ui: &mut Ui, title: &str) -> Response {
+    ui.label(
+        RichText::new(title)
+            .text_style(overline())
+            .color(LIGHT.secondary),
+    )
+}
+
 /// Install the fonts and the palette's style, and keep the app in light mode whatever the
 /// system setting is.
 pub fn apply(ctx: &egui::Context, palette: &Palette) {
@@ -936,6 +985,44 @@ mod tests {
                 .any(|r| r.fill == LIGHT.accent_tint && r.stroke == Stroke::new(1.0, LIGHT.accent));
             assert_eq!(tinted, selected, "selected: {selected}");
         }
+    }
+
+    #[test]
+    fn tables_have_a_border_edge_a_panel_header_and_dividers() {
+        let painted = shapes(|ui| {
+            table(ui, 300.0, |ui| {
+                table_row(ui, LIGHT.panel, |ui| {
+                    cell(ui, 100.0, |ui| {
+                        column_title(ui, "PART NUMBER");
+                    });
+                });
+                table_row(ui, Color32::TRANSPARENT, |ui| {
+                    cell(ui, 100.0, |ui| {
+                        ui.label("DEMO-1");
+                    });
+                });
+            });
+        });
+        let frame = rects(&painted)
+            .into_iter()
+            .find(|r| r.stroke == Stroke::new(1.0, LIGHT.border))
+            .expect("the table's border edge");
+        assert_eq!(frame.fill, LIGHT.surface);
+        assert_eq!(frame.corner_radius, CornerRadius::ZERO, "tables are square");
+        assert!(rects(&painted).iter().any(|r| r.fill == LIGHT.panel));
+        let dividers = painted
+            .iter()
+            .filter(
+                |s| matches!(s, Shape::LineSegment { stroke, .. } if stroke.color == LIGHT.divider),
+            )
+            .count();
+        assert_eq!(dividers, 2, "a divider under each row");
+        let title = painted.iter().find_map(|s| match s {
+            Shape::Text(t) if t.galley.text() == "PART NUMBER" => Some(t),
+            _ => None,
+        });
+        let title = title.expect("the column title");
+        assert_eq!(title.galley.job.sections[0].format.color, LIGHT.secondary);
     }
 
     /// The shapes of a button after a few frames, with the pointer over it or keyboard focus.
