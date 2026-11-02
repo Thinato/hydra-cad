@@ -365,6 +365,8 @@ pub fn banner<R>(
 pub fn group<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     // A wrapping row can't know a group's width before laying it out, so a group that didn't
     // fit in the last frame starts a new row, rather than running off the row's end.
+    // ponytail: a group wider than a whole row (the Schematic's place group, below a tab of
+    // about 390 px) still runs off it; split or shrink the group if tabs get that narrow.
     let width_id = ui.next_auto_id().with("group-width");
     let row_started = ui.cursor().min.x > ui.max_rect().min.x;
     if ui.layout().main_wrap

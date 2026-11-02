@@ -11,7 +11,7 @@ const GRID: f32 = 5.0;
 const MAJOR: usize = 5;
 /// Grid lines closer than this on screen are left out.
 const GRID_MIN_PX: f32 = 4.0;
-/// The zoom's range in px per mm. Never 0: text sized by it must stay positive.
+/// The zoom's range in points per mm. Never 0: text sized by it must stay positive.
 const ZOOM: (f32, f32) = (0.05, 200.0);
 
 /// `zoom` within [`ZOOM`]; NaN becomes the smallest.

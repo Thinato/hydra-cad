@@ -747,15 +747,20 @@ impl SchematicEditor {
         let locked = self.awaiting.is_some();
         let status = self.circuit_status(shared);
         let issues = self.issues(shared);
-        // The sheet is the point of the tab, so it keeps at least about half of it: the panels
-        // round it are capped by the tab's size, and in a narrow tab, such as the default dock's,
-        // the parts list hides behind its toggle. A narrow tab keeps its side panels' widths
-        // apart from a wide one's, so widening the window brings the wide layout back.
-        let (width, height) = (ui.available_width(), ui.available_height());
-        let narrow = width < NARROW_TAB;
-        let side = |share: f32, at_least: f32| (width * share).max(at_least);
-        let (parts_max, inspector_max) = (side(0.2, 200.0), side(0.3, 260.0));
-        let issues_max = (height * 0.3).max(90.0);
+        // The sheet is the point of the tab, so it keeps most of it: in a narrow tab, such as the
+        // default dock's, the parts list hides behind its toggle and the inspector starts
+        // narrower, and the issues start at most three tenths of the tab's height. Only the
+        // starting sizes change: egui stores the size each panel is drawn at, so a maximum
+        // that follows the tab would shrink the panels for good as the window passes through
+        // smaller sizes. A narrow tab keeps its side panels' widths apart from a wide one's,
+        // so widening the window brings the wide layout back.
+        let narrow = ui.available_width() < NARROW_TAB;
+        let (parts_width, inspector_width) = if narrow {
+            (200.0, 260.0)
+        } else {
+            (248.0, 300.0)
+        };
+        let issues_height = (ui.available_height() * 0.3).clamp(90.0, 200.0);
         ui.add_enabled_ui(!locked, |ui| {
             let fill = |color| egui::Frame::new().fill(color);
             egui::Panel::top("schematic-toolbar")
@@ -773,25 +778,25 @@ impl SchematicEditor {
             // Each side panel stops short of the window, so the sheet always has room.
             egui::Panel::bottom("schematic-issues")
                 .resizable(true)
-                .default_size(issues_max.min(200.0))
+                .default_size(issues_height)
                 .min_size(90.0)
-                .max_size(issues_max.min(360.0))
+                .max_size(360.0)
                 .frame(fill(LIGHT.surface))
                 .show(ui, |ui| self.bottom_panel(ui, &issues));
             if !narrow || self.parts_open {
                 egui::Panel::left(egui::Id::new(("schematic-parts", narrow)))
                     .resizable(true)
-                    .default_size(parts_max.min(248.0))
+                    .default_size(parts_width)
                     .min_size(180.0)
-                    .max_size(parts_max.min(400.0))
+                    .max_size(400.0)
                     .frame(fill(LIGHT.panel))
                     .show(ui, |ui| self.parts(ui, &shared.catalogue, &status));
             }
             egui::Panel::right(egui::Id::new(("schematic-inspector", narrow)))
                 .resizable(true)
-                .default_size(inspector_max.min(300.0))
+                .default_size(inspector_width)
                 .min_size(240.0)
-                .max_size(inspector_max.min(480.0))
+                .max_size(480.0)
                 .frame(fill(LIGHT.panel))
                 .show(ui, |ui| self.inspector(ui, &shared.catalogue, &status));
             self.canvas(ui, shared, &status);
@@ -5090,7 +5095,8 @@ mod tests {
         // A toolbar group too wide for what is left of its row starts the next one.
         for label in ["Add part", "Parts", "Draw wires W", "Export"] {
             let r = h.get_by_label(label).rect();
-            assert!(r.right() <= 728.0, "{label} runs off the toolbar: {r:?}");
+            // The tab's edge: the harness less kittest's 8 px margin.
+            assert!(r.right() <= 712.0, "{label} runs off the toolbar: {r:?}");
         }
         // The inspector stays, narrower, and its codes don't widen it over the sheet.
         assert!(
@@ -5138,19 +5144,36 @@ mod tests {
 
     #[test]
     fn a_wide_tab_keeps_the_parts_list_and_inspector_at_their_widths() {
-        let h = sized_harness(Vec2::new(1400.0, 900.0));
+        let wide = Vec2::new(1400.0, 900.0);
         // The tab is the harness less kittest's 8 px margins.
+        let sheet = 1384.0 - 248.0 - 300.0;
+        let mut h = sized_harness(wide);
         assert!(h.query_by_label("PARTS").is_some());
         assert!(h.query_by_label("Parts").is_none());
-        assert_eq!(h.state().0.view.width(), 1384.0 - 248.0 - 300.0);
-        // Between the two, the side panels give way before the sheet goes under half.
-        let h = sized_harness(Vec2::new(1000.0, 800.0));
+        assert_eq!(h.state().0.view.width(), sheet);
+        // Passing through a smaller wide tab leaves the panels as they were.
+        h.set_size(Vec2::new(1100.0, 900.0));
+        h.run_steps(3);
+        h.set_size(wide);
+        h.run_steps(3);
+        assert_eq!(h.state().0.view.width(), sheet);
+        let mut h = sized_harness(Vec2::new(1000.0, 800.0));
         assert!(h.query_by_label("PARTS").is_some());
-        assert!(
-            h.state().0.view.width() >= 0.49 * 984.0,
-            "{:?}",
-            h.state().0.view
-        );
+        h.set_size(wide);
+        h.run_steps(3);
+        assert_eq!(h.state().0.view.width(), sheet);
+        // So does a width the user dragged the inspector to.
+        let view = h.state().0.view;
+        let edge = Pos2::new(view.right() + 2.0, view.center().y);
+        drag(&mut h, edge, edge - Vec2::new(150.0, 0.0));
+        let inspector = |h: &Harness<State>| 1392.0 - h.state().0.view.right();
+        let dragged = inspector(&h);
+        assert!((dragged - 450.0).abs() <= 2.0, "{dragged}");
+        h.set_size(Vec2::new(1100.0, 900.0));
+        h.run_steps(3);
+        h.set_size(wide);
+        h.run_steps(3);
+        assert_eq!(inspector(&h), dragged);
     }
 
     #[test]
@@ -5161,7 +5184,8 @@ mod tests {
             let mut h = sized_harness(size);
             let e = &h.state().0;
             assert!(e.zoom > 0.0 && e.zoom.is_finite(), "{}", e.zoom);
-            // Refit, as a double-click does, and scroll far out over what is left of the canvas.
+            // Refit, as a double-click does, and scroll far out over what is left of the canvas:
+            // unclamped, the zoom would underflow to 0.
             h.state_mut().0.fitted_to = Some(Vec2::ZERO);
             h.run_steps(2);
             let at = h.state().0.view.center();
