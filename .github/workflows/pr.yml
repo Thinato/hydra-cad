@@ -140,7 +140,7 @@ jobs:
       # Attach the demo models, then smoke-test every stored model.
       - run: cargo run -p hydra-db --bin hydra-admin -- model block blk-demo@1 fixtures/models/demo-block.glb --source fixtures/models/demo-block.step
       - run: cargo run -p hydra-db --bin hydra-admin -- model block blk-demo@2 fixtures/models/demo-block.glb --source fixtures/models/demo-block.step
-      - run: cargo run -p hydra-db --bin hydra-admin -- model valve vt-rpe3-06-z11@1 fixtures/models/demo-valve-cetop3.glb --align none
+      - run: cargo run -p hydra-db --bin hydra-admin -- model valve vt-demo-4-3-closed@1 fixtures/models/demo-valve-cetop3.glb --align none
       - run: cargo run -p hydra-db --bin hydra-admin -- model valve vt-demo-4-2@1 fixtures/models/demo-valve-cetop3.glb --align none
       - run: cargo run -p hydra-db --bin hydra-admin -- model valve vt-demo-cartridge-relief@1 fixtures/models/demo-cartridge.glb --source fixtures/models/demo-cartridge.step
       - run: cargo run -p hydra-db --bin hydra-admin -- models

@@ -1,6 +1,5 @@
 {
   "manufacturers": [
-    {"key": "argo-hytos", "name": "Argo-Hytos"},
     {"key": "demo", "name": "Demo (fixture data, not a real product)"}
   ],
   "symbol_defs": [
@@ -247,7 +246,7 @@
     {"key": "sym-flow-control-pilot", "version": 1, "definition": {"kind": "flow_control", "actuator": "proportional", "compensated": true, "bypass": true, "pilot_port": true}}
   ],
   "valve_types": [
-    {"key": "vt-rpe3-06-z11", "version": 1, "manufacturer": "argo-hytos", "series": "RPE3-06", "code": "Z11", "symbol": "sym-4-3-closed-centre@1", "mounting": "ISO 4401-03"},
+    {"key": "vt-demo-4-3-closed", "version": 1, "manufacturer": "demo", "series": "DEMO-06", "code": "4-3-C", "symbol": "sym-4-3-closed-centre@1", "mounting": "ISO 4401-03"},
     {"key": "vt-demo-4-2", "version": 1, "manufacturer": "demo", "series": "DEMO-06", "code": "4-2-S", "symbol": "sym-4-2-spring-return@1", "mounting": "ISO 4401-03"},
     {"key": "vt-demo-4-3-tandem", "version": 1, "manufacturer": "demo", "series": "DEMO-06", "code": "4-3-T", "symbol": "sym-4-3-tandem-centre@1", "mounting": "ISO 4401-03"},
     {"key": "vt-demo-check", "version": 1, "manufacturer": "demo", "series": "DEMO-CV", "code": "1", "symbol": "sym-check-spring@1"},

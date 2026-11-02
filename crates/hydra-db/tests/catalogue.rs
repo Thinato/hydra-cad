@@ -111,11 +111,11 @@ async fn conflicting_import_fails_and_writes_nothing(pool: PgPool) {
     assert_eq!(
         msgs,
         [
-            "valve type vt-rpe3-06-z11@1 already exists with different content; import it as version 2",
+            "valve type vt-demo-4-3-closed@1 already exists with different content; import it as version 2",
             "part DEMO-06-4-2-S-24DC of vt-demo-4-2@1 already exists with different options",
         ]
     );
-    assert_eq!(count(&pool, "manufacturers").await, 2);
+    assert_eq!(count(&pool, "manufacturers").await, 1);
     assert_eq!(
         load_catalogue(&pool).await.unwrap().catalogue,
         sorted(fixture())
@@ -132,7 +132,7 @@ async fn unknown_symbol_ref_is_invalid(pool: PgPool) {
     };
     assert_eq!(
         msgs,
-        ["valve type vt-rpe3-06-z11@1: unknown symbol sym-missing@1"]
+        ["valve type vt-demo-4-3-closed@1: unknown symbol sym-missing@1"]
     );
     assert_eq!(count(&pool, "symbol_defs").await, 0);
 }
@@ -157,14 +157,14 @@ async fn duplicate_manufacturer_name_is_invalid(pool: PgPool) {
     import_catalogue(&pool, &fixture()).await.unwrap();
     let c = Catalogue {
         manufacturers: vec![Manufacturer {
-            key: "argo2".into(),
-            name: "Argo-Hytos".into(),
+            key: "demo2".into(),
+            name: "Demo (fixture data, not a real product)".into(),
         }],
         ..Catalogue::default()
     };
     assert_eq!(
         invalid(import_catalogue(&pool, &c).await),
-        [r#"manufacturer name "Argo-Hytos" is already used"#]
+        [r#"manufacturer name "Demo (fixture data, not a real product)" is already used"#]
     );
 }
 
@@ -200,20 +200,20 @@ async fn save_copies_parts_and_datasheet_forward(pool: PgPool) {
 async fn save_from_stale_base_is_refused(pool: PgPool) {
     let f = fixture();
     import_catalogue(&pool, &f).await.unwrap();
-    let base = valve(&f, "vt-rpe3-06-z11");
+    let base = valve(&f, "vt-demo-4-3-closed");
     let mut first = base.clone();
-    first.code = "Z11-A".into();
+    first.code = "4-3-C-A".into();
     save_valve_type(&pool, &first).await.unwrap();
 
     let mut second = base.clone();
-    second.code = "Z11-B".into();
+    second.code = "4-3-C-B".into();
     assert_eq!(
         invalid(save_valve_type(&pool, &second).await),
-        ["valve type vt-rpe3-06-z11 was changed to version 2 meanwhile; reload and edit again"]
+        ["valve type vt-demo-4-3-closed was changed to version 2 meanwhile; reload and edit again"]
     );
     let c = load_catalogue(&pool).await.unwrap().catalogue;
     let v2 = CatalogueRef::new(&base.key, 2);
-    assert_eq!(c.valve_type(&v2).unwrap().code, "Z11-A");
+    assert_eq!(c.valve_type(&v2).unwrap().code, "4-3-C-A");
     assert!(c.valve_type(&CatalogueRef::new(&base.key, 3)).is_none());
 }
 
@@ -222,10 +222,10 @@ async fn save_from_stale_base_is_refused(pool: PgPool) {
 async fn concurrent_saves_from_one_base_let_one_win(pool: PgPool) {
     let f = fixture();
     import_catalogue(&pool, &f).await.unwrap();
-    let base = valve(&f, "vt-rpe3-06-z11");
+    let base = valve(&f, "vt-demo-4-3-closed");
     let saves = (0..4).map(|i| {
         let (pool, mut v) = (pool.clone(), base.clone());
-        v.code = format!("Z11-{i}");
+        v.code = format!("4-3-C-{i}");
         tokio::spawn(async move { save_valve_type(&pool, &v).await })
     });
     let mut ok = 0;
@@ -246,11 +246,11 @@ async fn concurrent_saves_from_one_base_let_one_win(pool: PgPool) {
 async fn save_new_key(pool: PgPool) {
     let f = fixture();
     import_catalogue(&pool, &f).await.unwrap();
-    let mut v = valve(&f, "vt-rpe3-06-z11");
+    let mut v = valve(&f, "vt-demo-4-3-closed");
     v.version = 0;
     assert_eq!(
         invalid(save_valve_type(&pool, &v).await),
-        ["valve type key vt-rpe3-06-z11 already exists"]
+        ["valve type key vt-demo-4-3-closed already exists"]
     );
 
     v.key = "vt-new".into();
@@ -282,7 +282,7 @@ async fn save_new_key(pool: PgPool) {
 #[ignore = "needs DATABASE_URL (Postgres)"]
 async fn datasheet_carries_over_from_lower_versions_only(pool: PgPool) {
     let f = fixture();
-    let mut v2 = valve(&f, "vt-rpe3-06-z11");
+    let mut v2 = valve(&f, "vt-demo-4-3-closed");
     v2.version = 2;
     let only_v2 = Catalogue {
         manufacturers: f.manufacturers.clone(),

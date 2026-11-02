@@ -227,7 +227,7 @@ fn directional_stand_ins_need_the_same_spool() {
         e.to_string(),
         "no compatible stand-in: needs directional, ISO 4401-05"
     );
-    // The same look-alike on CETOP 3 matches only the closed-centre RPE3, not the 4/2 or tandem.
+    // The same look-alike on CETOP 3 matches only the closed-centre DEMO-06 4-3-C, not the 4/2 or tandem.
     let mut c3 = c.clone();
     let ComponentKind::Valve(v) = &mut c3
         .components
@@ -241,7 +241,7 @@ fn directional_stand_ins_need_the_same_spool() {
     v.requested.as_mut().unwrap().mounting = Some("ISO 4401-03".into());
     assert_eq!(
         keys(&stand_ins(&c3, "5.2", &cat).unwrap()),
-        ["vt-rpe3-06-z11@1"]
+        ["vt-demo-4-3-closed@1"]
     );
 }
 

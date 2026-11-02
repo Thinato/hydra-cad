@@ -64,7 +64,7 @@ pub struct SymbolDefRecord {
     pub definition: SymbolDef,
 }
 
-/// A valve family and spool, e.g. RPE3-06 Z11.
+/// A valve family and spool, e.g. DEMO-06 4-3-C.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValveType {
     pub key: String,
