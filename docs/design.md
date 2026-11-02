@@ -105,7 +105,7 @@ The Components board shows each one. How they map to egui, with the `theme` help
   - A disabled button always says why in its tooltip (`on_disabled_hover_text`).
 - **Toolbar groups:** buttons grouped by job with joined edges (file, edit, place, export), built with `theme::group(ui, add)`: one `border_strong` edge, square controls inside that share their 1 px `border` edges as dividers. Each control fills itself, so a disabled one fades to the surface. A toggle is a `Button::selected` with its key as `right_text` (`Draw wires W`) and turns `accent_tint` while on. The Schematic toolbar's controls are 32 px, the primary Save button's height, so a group's joined edges line up.
 - **Tabs:** the active tab has a 3 px `accent` top edge and the panel colour. Proposals carries a count of waiting proposals in the `agent` tone.
-- **Fields:** a label above, 32 px high. In a table (the Proposals fields) the label is the first column instead.
+- **Fields:** a label above, 32 px high: `theme::field(ui, name, edit)` puts `name` in label type over the `TextEdit` and labels the edit with it. In a table (the Proposals fields) the label is the first column instead.
   - Codes and refs are in Data type.
   - A changed field gets an `unlisted` edge, a CHANGED tag and "Was …" under it. In a table, the row is tinted `unlisted`, the label gets a ▲ Changed chip, and "was …" sits in its own column.
   - A field with an error gets a `missing` edge and the fix in plain words under it.
@@ -119,7 +119,7 @@ The Components board shows each one. How they map to egui, with the `theme` help
 - **Segmented control:** joined `Button::selected` segments in a `theme::group`; the selected one is `accent_tint`. The review queue's Waiting / All and the Issues / Extra BOM lines / Import notes switch under the sheet are ones.
 - **Issue list:** one row per issue: the severity word with its mark, the part as a link that selects it on the sheet, then the message. Errors come first.
 - **Title block:** in the sheet's bottom right corner, 10 mm in, drawn by `hydra_symbols::title_block` so it prints in the SVG and PDF too. A 120 mm box (wider for a long name), a 0.50 mm frame and 0.25 mm rules: the circuit name in Plex Sans SemiBold and "schema N" on the first row, then DRAWN BY, REVISION and CHECKED in columns two, one and one quarters wide, their labels in Plex Sans Condensed SemiBold capitals (`secondary` on the canvas). It says only what Hydra knows: an import was drawn by the AI assistant, and at its first revision it is checked "not yet"; anything else reads "—". Hydra records no check, so the block never says a circuit was checked. The revision reads "not saved" for a new circuit, and "4, edited" with unsaved changes, in an export too, since an export is the circuit as it is. It replaces the toolbar's revision text; screen readers and kittests read it from the sheet's accessible label.
-- **Dialogs:** a 16 px title, a sentence saying that nothing has been lost and what the choice is, then the buttons right-aligned on a panel-coloured footer, with the primary button last.
+- **Dialogs:** a 16 px title, a sentence saying that nothing has been lost and what the choice is, then the buttons right-aligned on a panel-coloured footer, with the primary button last. `theme::dialog(ctx, id, title, body, footer)` builds one as a modal, 420 px wide: the title in heading type, `body` in 24 × 20 px padding, then `footer`'s buttons on the `panel` footer under a `divider` line. The footer is laid out right to left, so `footer` adds the primary button first; what it returns comes back in the `ModalResponse`. The sign-in window and the Account tab's Set password and Delete windows use it.
 
 ## Layout of a tab
 
@@ -157,16 +157,27 @@ The Catalogue tab has no board of its own; it is built from the same parts:
 - the new-version editor as a dialog: the fields as a table, the symbol it will draw, the error as a ■ line, then Cancel and Save as new version (primary, last);
 - while a file is dragged over the window, a scrim of `ink` at 80 % covers it with the drop hint in Title type in `surface`.
 
+The Account tab has no board either; it is a column of sections, each titled in overline type:
+- the "Offline: no database." banner in the `unlisted` tone when there is no database, with how to set one up;
+- ACCOUNT: "Signed in as …" in heading type, the server in Data type, whether the password is remembered, and Sign out; or "Connected as … through HYDRA_DATABASE_URL";
+- YOUR PASSWORD: labelled 32 px fields, Change password (primary), and each problem as a ■ line in plain words;
+- USERS, for administrators: Refresh, the users as a table (NAME, ROLE, SIGNING IN, SESSIONS and an Actions menu per row) where only what is wrong is marked (✕ Disabled), then the New user fields and Add user (primary). On your own row the actions the rules forbid are off and say why;
+- ABOUT: the Hydra version in Data type and the font licence.
+
+The strip above the tabs shows only when there is something to show: a database error as a `missing` banner, its first sentence in bold; then the latest notice in `secondary` and the update link at the left, and at the right, as in the boards' app bar, the database's name in Data type (the server in its hover), "Signed in as …", Retry after a failed connection, and Sign out.
+
 ## Not built yet
 
 The boards show the target. `theme.rs` is in place, but these parts are still to come in the restyle PRs (see TODO.md):
 - **The sheet:** the title block's date and who drew or checked it, which need the revision's author and time from the database (the editor doesn't get them today); designators in Plex Mono SemiBold on the sheet, as the boards letter them (the sheet letters everything in Plex Sans).
 - **The tabs:**
   - the tab strip's 3 px accent edge and the Proposals count;
-  - toolbar groups, side panels and the status bar on the Account and 3D tabs;
+  - toolbar groups, side panels and the status bar on the 3D tab;
+  - the app bar itself: the tabs are egui_dock's strip, so the database and user sit in the strip above it rather than beside the tabs, and the database has no connection dot;
   - icons on the Undo and Redo buttons, which are words today;
   - on the Proposals tab: the assistant's step list, the datasheet page beside the symbol, each field's source page and the activity feed, which need new data from hydra-mcp;
-  - primary buttons and chips in the Account and 3D tabs.
+  - primary buttons and chips in the 3D tab;
+  - the Catalogue's new-version editor and the Schematic's dialogs are still egui windows with their buttons on the left, not `theme::dialog`.
 - **Older literals:** `viewer3d.rs` still writes literal colours and sizes. It moves to the palette when the 3D tab is restyled.
 
 ## Adding a theme
