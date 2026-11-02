@@ -284,6 +284,8 @@ fn status_strip(
     update: Option<&Update>,
 ) {
     let notice = shared.notice.clone();
+    // Signed out, the sign-in window asks; the strip has nothing to say about it.
+    let signin = signin.filter(|s| s.user().is_some());
     if shared.error.is_none() && notice.is_none() && signin.is_none() && update.is_none() {
         return;
     }
@@ -683,19 +685,33 @@ mod tests {
                     .contains(&theme::LIGHT.accent))
         });
         assert!(accent, "the update link is in the accent");
-        h.get_by_label("Signed in as anna");
-        h.get_by_label("Sign out");
+        // At the right, as in the app bar: the database, who, then Sign out.
+        let x = |label: &str| h.get_by_label(label).rect().left();
+        assert!(x("hydra") < x("Signed in as anna"));
+        assert!(x("Signed in as anna") < x("Sign out"));
+        assert!(x("Download Hydra 0.2.0") < x("hydra"));
     }
 
     #[test]
     fn the_status_strip_is_hidden_with_nothing_to_show() {
+        let lines = |h: &egui_kittest::Harness<Strip>| {
+            h.output()
+                .shapes
+                .iter()
+                .filter(|c| matches!(c.shape, egui::Shape::LineSegment { .. }))
+                .count()
+        };
         let h = strip((Shared::new(Catalogue::default()), None, None));
-        let lines = h
-            .output()
-            .shapes
-            .iter()
-            .filter(|c| matches!(c.shape, egui::Shape::LineSegment { .. }))
-            .count();
-        assert_eq!(lines, 0, "no strip, so no line under it");
+        assert_eq!(lines(&h), 0, "no strip, so no line under it");
+        // Signed out, the sign-in window asks: no empty strip above it.
+        let signed_out = SignIn::new("postgres://hydra-db.office.local:5433/hydra".into()).unwrap();
+        let h = strip((Shared::new(Catalogue::default()), Some(signed_out), None));
+        assert_eq!(lines(&h), 0, "no empty strip while signed out");
+        let h = strip((
+            Shared::new(Catalogue::default()),
+            Some(SignIn::test("anna", "pw")),
+            None,
+        ));
+        assert_eq!(lines(&h), 1, "signed in, the strip shows who");
     }
 }

@@ -262,113 +262,139 @@ impl AccountPanel {
         let mut request = None;
         let (mut set_password, mut delete) = (None, None);
         if let Some(users) = &self.users {
-            let width = ui.available_width();
-            // Name takes the slack: the table's edges, the rows' 12 px margins and the gaps come off.
-            let [role, login, sessions, actions] = [120.0, 110.0, 80.0, 80.0];
-            let name_width =
-                (width - 2.0 - 24.0 - 4.0 * 12.0 - role - login - sessions - actions).max(100.0);
+            // Name takes the slack: the table's edges, the rows' 12 px margins and the gaps come
+            // off. Below its narrowest the table scrolls sideways, so Actions stays reachable.
+            let [role, login, sessions, actions] = [100.0, 92.0, 64.0, 72.0];
+            let fixed = 2.0 + 24.0 + 4.0 * 12.0 + role + login + sessions + actions;
+            let width = ui.available_width().max(fixed + NAME_MIN);
+            let name_width = width - fixed;
             // Each cell's line is as tall as the Actions button, so the row reads level.
             let level = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
                 ui.horizontal(|ui| add(ui));
             };
-            theme::table(ui, width, |ui| {
-                theme::table_row(ui, LIGHT.panel, |ui| {
-                    for (title, w) in [
-                        ("NAME", name_width),
-                        ("ROLE", role),
-                        ("SIGNING IN", login),
-                        ("SESSIONS", sessions),
-                    ] {
-                        theme::cell(ui, w, |ui| {
-                            theme::column_title(ui, title);
+            egui::ScrollArea::horizontal()
+                .id_salt("users")
+                .show(ui, |ui| {
+                    theme::table(ui, width, |ui| {
+                        theme::table_row(ui, LIGHT.panel, |ui| {
+                            for (title, w) in [
+                                ("NAME", name_width),
+                                ("ROLE", role),
+                                ("SIGNING IN", login),
+                                ("SESSIONS", sessions),
+                            ] {
+                                theme::cell(ui, w, |ui| {
+                                    theme::column_title(ui, title);
+                                });
+                            }
                         });
-                    }
-                });
-                for u in users {
-                    let own = u.name == me;
-                    theme::table_row(ui, Color32::TRANSPARENT, |ui| {
-                        theme::cell(ui, name_width, |ui| {
-                            level(ui, &mut |ui| {
-                                ui.label(if own {
-                                    format!("{} (you)", u.name)
-                                } else {
-                                    u.name.clone()
+                        for u in users {
+                            let own = u.name == me;
+                            theme::table_row(ui, Color32::TRANSPARENT, |ui| {
+                                theme::cell(ui, name_width, |ui| {
+                                    level(ui, &mut |ui| {
+                                        // Cut short when long; the whole name shows in its hover.
+                                        let name = if own {
+                                            format!("{} (you)", u.name)
+                                        } else {
+                                            u.name.clone()
+                                        };
+                                        ui.add(egui::Label::new(name).truncate());
+                                    });
+                                });
+                                theme::cell(ui, role, |ui| {
+                                    level(ui, &mut |ui| {
+                                        ui.label(if u.admin {
+                                            "Administrator"
+                                        } else {
+                                            "Engineer"
+                                        });
+                                    });
+                                });
+                                theme::cell(ui, login, |ui| {
+                                    level(ui, &mut |ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        if u.can_login {
+                                            ui.label("Allowed");
+                                        } else {
+                                            theme::marked(ui, Mark::Rejected, "Disabled");
+                                        }
+                                    });
+                                });
+                                theme::cell(ui, sessions, |ui| {
+                                    level(ui, &mut |ui| {
+                                        let count = ui.monospace(u.sessions.len().to_string());
+                                        if !u.sessions.is_empty() {
+                                            let lines: Vec<String> = u
+                                                .sessions
+                                                .iter()
+                                                .map(|s| match &s.client {
+                                                    Some(c) => format!(
+                                                        "{} from {c} since {}",
+                                                        s.application, s.since
+                                                    ),
+                                                    None => format!(
+                                                        "{} since {}",
+                                                        s.application, s.since
+                                                    ),
+                                                })
+                                                .collect();
+                                            count.on_hover_text(lines.join("\n"));
+                                        }
+                                    });
+                                });
+                                // A button, disabled with the reason when the rules forbid it on your own row.
+                                let action = |ui: &mut egui::Ui, text: &str, forbidden: &str| {
+                                    let b = ui.add_enabled(!busy && !own, egui::Button::new(text));
+                                    let b = if own {
+                                        b.on_disabled_hover_text(forbidden)
+                                    } else {
+                                        b
+                                    };
+                                    b.clicked()
+                                };
+                                let name = || u.name.clone();
+                                // A menu: five buttons per row are wider than the tab.
+                                ui.menu_button("Actions", |ui| {
+                                    if action(
+                                        ui,
+                                        "Set password…",
+                                        "Change your own password above.",
+                                    ) {
+                                        set_password = Some(name());
+                                    }
+                                    let admin = if u.admin {
+                                        "Remove admin"
+                                    } else {
+                                        "Make admin"
+                                    };
+                                    if action(
+                                        ui,
+                                        admin,
+                                        "You can't remove your own administrator rights.",
+                                    ) {
+                                        request = Some(UserChange::SetAdmin(name(), !u.admin));
+                                    }
+                                    let login = if u.can_login { "Disable" } else { "Enable" };
+                                    if action(ui, login, "You can't disable yourself.") {
+                                        request =
+                                            Some(UserChange::SetCanLogin(name(), !u.can_login));
+                                    }
+                                    if action(
+                                        ui,
+                                        "End sessions",
+                                        "You can't end your own sessions.",
+                                    ) {
+                                        request = Some(UserChange::EndSessions(name()));
+                                    }
+                                    if action(ui, "Delete…", "You can't delete yourself.") {
+                                        delete = Some(name());
+                                    }
                                 });
                             });
-                        });
-                        theme::cell(ui, role, |ui| {
-                            level(ui, &mut |ui| {
-                                ui.label(if u.admin { "Administrator" } else { "Engineer" });
-                            });
-                        });
-                        theme::cell(ui, login, |ui| {
-                            level(ui, &mut |ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                if u.can_login {
-                                    ui.label("Allowed");
-                                } else {
-                                    theme::marked(ui, Mark::Rejected, "Disabled");
-                                }
-                            });
-                        });
-                        theme::cell(ui, sessions, |ui| {
-                            level(ui, &mut |ui| {
-                                let count = ui.monospace(u.sessions.len().to_string());
-                                if !u.sessions.is_empty() {
-                                    let lines: Vec<String> = u
-                                        .sessions
-                                        .iter()
-                                        .map(|s| match &s.client {
-                                            Some(c) => format!(
-                                                "{} from {c} since {}",
-                                                s.application, s.since
-                                            ),
-                                            None => format!("{} since {}", s.application, s.since),
-                                        })
-                                        .collect();
-                                    count.on_hover_text(lines.join("\n"));
-                                }
-                            });
-                        });
-                        // A button, disabled with the reason when the rules forbid it on your own row.
-                        let action = |ui: &mut egui::Ui, text: &str, forbidden: &str| {
-                            let b = ui.add_enabled(!busy && !own, egui::Button::new(text));
-                            let b = if own {
-                                b.on_disabled_hover_text(forbidden)
-                            } else {
-                                b
-                            };
-                            b.clicked()
-                        };
-                        let name = || u.name.clone();
-                        // A menu: five buttons per row are wider than the tab.
-                        ui.menu_button("Actions", |ui| {
-                            if action(ui, "Set password…", "Change your own password above.") {
-                                set_password = Some(name());
-                            }
-                            let admin = if u.admin {
-                                "Remove admin"
-                            } else {
-                                "Make admin"
-                            };
-                            if action(ui, admin, "You can't remove your own administrator rights.")
-                            {
-                                request = Some(UserChange::SetAdmin(name(), !u.admin));
-                            }
-                            let login = if u.can_login { "Disable" } else { "Enable" };
-                            if action(ui, login, "You can't disable yourself.") {
-                                request = Some(UserChange::SetCanLogin(name(), !u.can_login));
-                            }
-                            if action(ui, "End sessions", "You can't end your own sessions.") {
-                                request = Some(UserChange::EndSessions(name()));
-                            }
-                            if action(ui, "Delete…", "You can't delete yourself.") {
-                                delete = Some(name());
-                            }
-                        });
+                        }
                     });
-                }
-            });
+                });
         }
 
         ui.add_space(8.0);
@@ -500,6 +526,8 @@ fn cancel_button(ui: &mut egui::Ui) -> bool {
 }
 
 const WAITING: &str = "Waiting for the database.";
+/// The users table's name column at its narrowest.
+const NAME_MIN: f32 = 72.0;
 
 fn too_short(password: &str) -> Option<String> {
     (password.chars().count() < MIN_PASSWORD_CHARS)
@@ -549,6 +577,14 @@ mod tests {
 
     /// The tab signed in through hydra.ini as `name`, with the requests it sends.
     fn harness(name: &str, admin: bool) -> (Harness<'static, State>, Receiver<Request>) {
+        harness_wide(name, admin, 900.0)
+    }
+
+    fn harness_wide(
+        name: &str,
+        admin: bool,
+        width: f32,
+    ) -> (Harness<'static, State>, Receiver<Request>) {
         let (requests, inbox) = channel();
         let mut shared = Shared::new(hydra_core::Catalogue::default());
         shared.db = Some(Db::new(requests, channel().1));
@@ -560,7 +596,7 @@ mod tests {
         panel.signed_in(account, &shared);
         let signin = SignIn::test(name, "old-password-1");
         let mut h = theme::harness(
-            egui::vec2(900.0, 1000.0),
+            egui::vec2(width, 1000.0),
             |ui, (p, shared, signin): &mut State| p.ui(ui, shared, signin.as_mut()),
             (panel, shared, Some(signin)),
         );
@@ -606,7 +642,9 @@ mod tests {
         h.get_by_label("Your password is not remembered on this computer.");
         h.get_by_label("Sign out");
         h.get_by_label(&format!("Hydra {}", env!("CARGO_PKG_VERSION")));
-        h.get_by_label("Current password");
+        // Passwords are masked.
+        h.get_by_role_and_label(Role::PasswordInput, "Current password");
+        h.get_by_role_and_label(Role::PasswordInput, "New password");
         assert!(h.query_by_label("USERS").is_none());
         assert!(h.query_by_label("Add user").is_none());
         assert!(inbox.try_recv().is_err(), "an engineer loads no users");
@@ -708,6 +746,8 @@ mod tests {
         let (mut h, inbox) = harness("boss", true);
         let _ = inbox.try_recv();
         h.state_mut().0.users(vec![user("boss", true, 1)]);
+        h.run_steps(4);
+        h.get_by_role_and_label(Role::PasswordInput, "Password");
         h.state_mut().0.add_name = " Carl ".into();
         h.state_mut().0.add_password = "short".into();
         h.run_steps(4);
@@ -818,6 +858,65 @@ mod tests {
         h.get_by_label("Set the password of anna");
         assert_eq!(h.state().0.set_password.as_ref().unwrap().1, "short");
         assert!(inbox.try_recv().is_err());
+    }
+
+    #[test]
+    fn in_a_narrow_tab_a_long_name_is_cut_short_and_actions_stay_reachable() {
+        let (mut h, inbox) = harness_wide("boss", true, 500.0);
+        let _ = inbox.try_recv();
+        let long = "a_very_long_user_name_here";
+        h.state_mut()
+            .0
+            .users(vec![user(long, false, 0), user("boss", true, 0)]);
+        h.run_steps(4);
+        let actions = h.query_all_by_label("Actions").next().unwrap().rect();
+        assert!(
+            actions.right() <= 500.0,
+            "Actions is off-screen: {actions:?}"
+        );
+        // The name is cut short, not pushing the row past its headers.
+        let name = h.get_by_label(long).rect();
+        let role = h.get_by_label("ROLE").rect();
+        assert!(
+            name.right() < role.left(),
+            "{name:?} runs into ROLE {role:?}"
+        );
+        for (title, value) in [("ROLE", "Engineer"), ("SESSIONS", "0")] {
+            let (t, v) = (
+                h.get_by_label(title).rect(),
+                h.query_all_by_label(value).next().unwrap().rect(),
+            );
+            assert!(
+                (t.left() - v.left()).abs() <= 1.0,
+                "{title} {t:?} over {value} {v:?}"
+            );
+        }
+        open_actions(&mut h, 0);
+        h.get_by_label("End sessions").click();
+        h.run_steps(4);
+        assert!(matches!(
+            inbox.try_recv(),
+            Ok(Request::ChangeUser(UserChange::EndSessions(n))) if n == long
+        ));
+    }
+
+    #[test]
+    fn escape_closes_the_delete_dialog_without_deleting() {
+        let (mut h, inbox) = harness("boss", true);
+        let _ = inbox.try_recv();
+        h.state_mut()
+            .0
+            .users(vec![user("anna", false, 0), user("boss", true, 0)]);
+        h.run_steps(4);
+        open_actions(&mut h, 0);
+        h.get_by_label("Delete…").click();
+        h.run_steps(4);
+        h.get_by_label("Delete anna?");
+        h.key_press(egui::Key::Escape);
+        h.run_steps(4);
+        assert!(h.query_by_label("Delete anna?").is_none());
+        assert!(h.state().0.delete.is_none());
+        assert!(inbox.try_recv().is_err(), "nothing was sent");
     }
 
     #[test]
