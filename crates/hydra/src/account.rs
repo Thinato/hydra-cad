@@ -266,135 +266,129 @@ impl AccountPanel {
             // off. Below its narrowest the table scrolls sideways, so Actions stays reachable.
             let [role, login, sessions, actions] = [100.0, 92.0, 64.0, 72.0];
             let fixed = 2.0 + 24.0 + 4.0 * 12.0 + role + login + sessions + actions;
-            let width = ui.available_width().max(fixed + NAME_MIN);
+            let room = ui.available_width();
+            let width = room.max(fixed + NAME_MIN);
             let name_width = width - fixed;
             // Each cell's line is as tall as the Actions button, so the row reads level.
             let level = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
                 ui.horizontal(|ui| add(ui));
             };
-            egui::ScrollArea::horizontal()
-                .id_salt("users")
-                .show(ui, |ui| {
-                    theme::table(ui, width, |ui| {
-                        theme::table_row(ui, LIGHT.panel, |ui| {
-                            for (title, w) in [
-                                ("NAME", name_width),
-                                ("ROLE", role),
-                                ("SIGNING IN", login),
-                                ("SESSIONS", sessions),
-                            ] {
-                                theme::cell(ui, w, |ui| {
-                                    theme::column_title(ui, title);
-                                });
-                            }
-                        });
-                        for u in users {
-                            let own = u.name == me;
-                            theme::table_row(ui, Color32::TRANSPARENT, |ui| {
-                                theme::cell(ui, name_width, |ui| {
-                                    level(ui, &mut |ui| {
-                                        // Cut short when long; the whole name shows in its hover.
-                                        let name = if own {
-                                            format!("{} (you)", u.name)
-                                        } else {
-                                            u.name.clone()
-                                        };
-                                        ui.add(egui::Label::new(name).truncate());
-                                    });
-                                });
-                                theme::cell(ui, role, |ui| {
-                                    level(ui, &mut |ui| {
-                                        ui.label(if u.admin {
-                                            "Administrator"
-                                        } else {
-                                            "Engineer"
-                                        });
-                                    });
-                                });
-                                theme::cell(ui, login, |ui| {
-                                    level(ui, &mut |ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        if u.can_login {
-                                            ui.label("Allowed");
-                                        } else {
-                                            theme::marked(ui, Mark::Rejected, "Disabled");
-                                        }
-                                    });
-                                });
-                                theme::cell(ui, sessions, |ui| {
-                                    level(ui, &mut |ui| {
-                                        let count = ui.monospace(u.sessions.len().to_string());
-                                        if !u.sessions.is_empty() {
-                                            let lines: Vec<String> = u
-                                                .sessions
-                                                .iter()
-                                                .map(|s| match &s.client {
-                                                    Some(c) => format!(
-                                                        "{} from {c} since {}",
-                                                        s.application, s.since
-                                                    ),
-                                                    None => format!(
-                                                        "{} since {}",
-                                                        s.application, s.since
-                                                    ),
-                                                })
-                                                .collect();
-                                            count.on_hover_text(lines.join("\n"));
-                                        }
-                                    });
-                                });
-                                // A button, disabled with the reason when the rules forbid it on your own row.
-                                let action = |ui: &mut egui::Ui, text: &str, forbidden: &str| {
-                                    let b = ui.add_enabled(!busy && !own, egui::Button::new(text));
-                                    let b = if own {
-                                        b.on_disabled_hover_text(forbidden)
-                                    } else {
-                                        b
-                                    };
-                                    b.clicked()
-                                };
-                                let name = || u.name.clone();
-                                // A menu: five buttons per row are wider than the tab.
-                                ui.menu_button("Actions", |ui| {
-                                    if action(
-                                        ui,
-                                        "Set password…",
-                                        "Change your own password above.",
-                                    ) {
-                                        set_password = Some(name());
-                                    }
-                                    let admin = if u.admin {
-                                        "Remove admin"
-                                    } else {
-                                        "Make admin"
-                                    };
-                                    if action(
-                                        ui,
-                                        admin,
-                                        "You can't remove your own administrator rights.",
-                                    ) {
-                                        request = Some(UserChange::SetAdmin(name(), !u.admin));
-                                    }
-                                    let login = if u.can_login { "Disable" } else { "Enable" };
-                                    if action(ui, login, "You can't disable yourself.") {
-                                        request =
-                                            Some(UserChange::SetCanLogin(name(), !u.can_login));
-                                    }
-                                    if action(
-                                        ui,
-                                        "End sessions",
-                                        "You can't end your own sessions.",
-                                    ) {
-                                        request = Some(UserChange::EndSessions(name()));
-                                    }
-                                    if action(ui, "Delete…", "You can't delete yourself.") {
-                                        delete = Some(name());
-                                    }
-                                });
+            let mut table = |ui: &mut egui::Ui| {
+                theme::table(ui, width, |ui| {
+                    theme::table_row(ui, LIGHT.panel, |ui| {
+                        for (title, w) in [
+                            ("NAME", name_width),
+                            ("ROLE", role),
+                            ("SIGNING IN", login),
+                            ("SESSIONS", sessions),
+                        ] {
+                            theme::cell(ui, w, |ui| {
+                                theme::column_title(ui, title);
                             });
                         }
                     });
+                    for u in users {
+                        let own = u.name == me;
+                        theme::table_row(ui, Color32::TRANSPARENT, |ui| {
+                            theme::cell(ui, name_width, |ui| {
+                                level(ui, &mut |ui| {
+                                    // Cut short when long; the whole name shows in its hover.
+                                    let name = if own {
+                                        format!("{} (you)", u.name)
+                                    } else {
+                                        u.name.clone()
+                                    };
+                                    ui.add(egui::Label::new(name).truncate());
+                                });
+                            });
+                            theme::cell(ui, role, |ui| {
+                                level(ui, &mut |ui| {
+                                    ui.label(if u.admin { "Administrator" } else { "Engineer" });
+                                });
+                            });
+                            theme::cell(ui, login, |ui| {
+                                level(ui, &mut |ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    if u.can_login {
+                                        ui.label("Allowed");
+                                    } else {
+                                        theme::marked(ui, Mark::Rejected, "Disabled");
+                                    }
+                                });
+                            });
+                            theme::cell(ui, sessions, |ui| {
+                                level(ui, &mut |ui| {
+                                    let count = ui.monospace(u.sessions.len().to_string());
+                                    if !u.sessions.is_empty() {
+                                        let lines: Vec<String> = u
+                                            .sessions
+                                            .iter()
+                                            .map(|s| match &s.client {
+                                                Some(c) => format!(
+                                                    "{} from {c} since {}",
+                                                    s.application, s.since
+                                                ),
+                                                None => {
+                                                    format!("{} since {}", s.application, s.since)
+                                                }
+                                            })
+                                            .collect();
+                                        count.on_hover_text(lines.join("\n"));
+                                    }
+                                });
+                            });
+                            // A button, disabled with the reason when the rules forbid it on your own row.
+                            let action = |ui: &mut egui::Ui, text: &str, forbidden: &str| {
+                                let b = ui.add_enabled(!busy && !own, egui::Button::new(text));
+                                let b = if own {
+                                    b.on_disabled_hover_text(forbidden)
+                                } else {
+                                    b
+                                };
+                                b.clicked()
+                            };
+                            let name = || u.name.clone();
+                            // A menu: five buttons per row are wider than the tab.
+                            ui.menu_button("Actions", |ui| {
+                                if action(ui, "Set password…", "Change your own password above.")
+                                {
+                                    set_password = Some(name());
+                                }
+                                let admin = if u.admin {
+                                    "Remove admin"
+                                } else {
+                                    "Make admin"
+                                };
+                                if action(
+                                    ui,
+                                    admin,
+                                    "You can't remove your own administrator rights.",
+                                ) {
+                                    request = Some(UserChange::SetAdmin(name(), !u.admin));
+                                }
+                                let login = if u.can_login { "Disable" } else { "Enable" };
+                                if action(ui, login, "You can't disable yourself.") {
+                                    request = Some(UserChange::SetCanLogin(name(), !u.can_login));
+                                }
+                                if action(ui, "End sessions", "You can't end your own sessions.") {
+                                    request = Some(UserChange::EndSessions(name()));
+                                }
+                                if action(ui, "Delete…", "You can't delete yourself.") {
+                                    delete = Some(name());
+                                }
+                            });
+                        });
+                    }
                 });
+            };
+            // A scroll area clips the table's edge, so only when the table needs one.
+            if width > room {
+                egui::ScrollArea::horizontal()
+                    .id_salt("users")
+                    .show(ui, table);
+            } else {
+                table(ui);
+            }
         }
 
         ui.add_space(8.0);
