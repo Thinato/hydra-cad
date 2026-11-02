@@ -21,7 +21,6 @@ eframe = { version = "0.36", default-features = false, features = ["accesskit", 
 egui_dock = "0.21"
 egui_extras = "0.36"
 egui_kittest = "0.36"
-epaint_default_fonts = "0.36"
 glam = { version = "0.34", features = ["bytemuck"] }
 gltf = "1.4"
 # Renders datasheet pages for hydra-mcp; pure Rust.

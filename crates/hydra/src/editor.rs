@@ -14,8 +14,8 @@ use hydra_core::{
 };
 use hydra_db::{CircuitSummary, OpenedCircuit, RevisionSummary};
 use hydra_symbols::{
-    Drawing, Rendered, bounds, drawn_inside_outline, notched_parts, render, render_circuit,
-    wire_problems, wire_warnings,
+    Drawing, Rendered, Title, bounds, drawn_inside_outline, notched_parts, render, render_circuit,
+    sheet, title_block, wire_problems, wire_warnings,
 };
 
 use crate::catalogue::Shared;
@@ -331,6 +331,19 @@ impl SchematicEditor {
     /// Imported by the assistant and not yet saved again by an engineer.
     fn unchecked(&self) -> bool {
         self.doc.circuit.import.is_some() && self.saved.as_ref().is_some_and(|s| s.revision == 1)
+    }
+
+    /// What the title block says about the circuit as it is now. An import counts as checked
+    /// once an engineer has saved a revision after the assistant's.
+    fn title(&self) -> Title {
+        let revision = self.saved.as_ref().map(|s| s.revision);
+        Title {
+            name: self.doc.circuit.name.clone(),
+            schema: self.doc.circuit.schema,
+            revision,
+            edited: self.doc.is_dirty(),
+            checked: (self.doc.circuit.import.as_ref()).map(|_| revision.is_some_and(|r| r > 1)),
+        }
     }
 
     /// Save the imported circuit unchanged as checked, which ends its unchecked state.
@@ -966,12 +979,6 @@ impl SchematicEditor {
                     .hint_text("note for this save")
                     .desired_width(200.0),
             );
-            let state = match (&self.saved, self.doc.is_dirty()) {
-                (Some(s), false) => format!("revision {}", s.revision),
-                (Some(s), true) => format!("revision {}, unsaved changes", s.revision),
-                (None, _) => "not saved yet".to_string(),
-            };
-            ui.label(RichText::new(state).color(LIGHT.secondary));
             if let Some(s) = &self.status {
                 ui.label(s);
             }
@@ -1036,7 +1043,7 @@ impl SchematicEditor {
         else {
             return;
         };
-        let written = export_bytes(kind, &self.doc.circuit, catalogue)
+        let written = export_bytes(kind, &self.doc.circuit, &self.title(), catalogue)
             .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()));
         self.status = Some(match written {
             Ok(()) => format!("Exported {}.", path.display()),
@@ -1775,11 +1782,24 @@ impl SchematicEditor {
         }
         let rendered = self.rendered_shown(&shown, shared);
         let (drawing, parts) = (&rendered.drawing, &rendered.parts);
+        let title = self.title();
+        let paper = sheet(&drawing.primitives, Some(&title));
+        // The title block, also read out for screen readers, as it is only painted.
+        let read = (title.fields().iter())
+            .map(|(label, value, _)| format!("{}: {value}", label.to_lowercase()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let size = paper.size.unwrap_or("Oversize");
+        let read = format!(
+            "{size} sheet, {}, schema {}; {read}",
+            title.name, title.schema
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &read));
 
         // Not while drawing wires, where corners are clicked in quick succession.
         let refit = response.double_clicked() && !self.wiring;
         if refit || self.fitted_to.is_some_and(|s| s != rect.size()) {
-            (self.pan, self.zoom) = fit(&drawing.primitives, rect.size());
+            (self.pan, self.zoom) = fit(Some((paper.min, paper.max)), rect.size());
             self.fitted_to = Some(rect.size());
         }
         let reach = PORT_REACH / self.zoom;
@@ -1884,7 +1904,15 @@ impl SchematicEditor {
         }
 
         let painter = ui.painter_at(rect);
-        paint_sheet(&painter, rect, self.pan, self.zoom, &drawing.primitives);
+        let block = title_block(&paper, &title);
+        paint_sheet(
+            &painter,
+            rect,
+            self.pan,
+            self.zoom,
+            Some((&paper, &block)),
+            &drawing.primitives,
+        );
         for (id, part) in parts {
             if let Some(tone) = status.status(id).and_then(status_tone)
                 && let Some((min, max)) = bounds(&part.primitives)
@@ -1906,7 +1934,8 @@ impl SchematicEditor {
             && let Some((min, max)) = bounds(&part.primitives)
         {
             let r = Rect::from_min_max(self.to_screen(min), self.to_screen(max)).expand(4.0);
-            painter.rect_stroke(r, 2.0, accent, egui::StrokeKind::Outside);
+            let frame = Stroke::new(2.0, ACCENT);
+            painter.rect_stroke(r, theme::RADIUS, frame, egui::StrokeKind::Outside);
         }
         if let Some(Drag::Wire { start, end, .. }) = &self.drag {
             painter.line_segment([self.to_screen(*start), self.to_screen(*end)], accent);
@@ -2526,11 +2555,28 @@ impl Export {
 }
 
 /// The exported file's contents.
-fn export_bytes(kind: Export, circuit: &Circuit, catalogue: &Catalogue) -> Result<Vec<u8>, String> {
-    let drawing = || render_circuit(circuit, catalogue).primitives;
+fn export_bytes(
+    kind: Export,
+    circuit: &Circuit,
+    title: &Title,
+    catalogue: &Catalogue,
+) -> Result<Vec<u8>, String> {
+    // The drawing on its sheet, with the title block.
+    let page = || {
+        let mut drawing = render_circuit(circuit, catalogue).primitives;
+        let paper = sheet(&drawing, Some(title));
+        drawing.extend(title_block(&paper, title));
+        (paper, drawing)
+    };
     match kind {
-        Export::Svg => Ok(hydra_symbols::to_svg(&drawing()).into_bytes()),
-        Export::Pdf => hydra_symbols::to_pdf(&drawing()),
+        Export::Svg => {
+            let (paper, drawing) = page();
+            Ok(hydra_symbols::sheet_svg(&paper, &drawing).into_bytes())
+        }
+        Export::Pdf => {
+            let (paper, drawing) = page();
+            hydra_symbols::sheet_pdf(&paper, &drawing)
+        }
         Export::Bom => Ok(hydra_core::bom_csv(&circuit.bom(catalogue)).into_bytes()),
     }
 }
@@ -3093,7 +3139,7 @@ mod tests {
             let dashed = render_circuit(&e.doc.circuit, &s.catalogue)
                 .primitives
                 .iter()
-                .any(|p| matches!(p, hydra_symbols::Primitive::Polyline { dashed: true, points, .. } if points.first() == Some(&[0.0, 0.0]) && points.last() == Some(&[30.0, 0.0])));
+                .any(|p| matches!(p, hydra_symbols::Primitive::Polyline { pen: hydra_symbols::Pen::Pilot, points, .. } if points.first() == Some(&[0.0, 0.0]) && points.last() == Some(&[30.0, 0.0])));
             (kind, dashed)
         };
         click_sheet(&mut h, [12.0, -9.8], egui::PointerButton::Primary);
@@ -3429,11 +3475,24 @@ mod tests {
             "/../../fixtures/circuits/demo-manifold.json"
         );
         let circuit = Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
-        let export = |kind| export_bytes(kind, &circuit, &catalogue).unwrap();
+        let title = Title {
+            name: circuit.name.clone(),
+            schema: circuit.schema,
+            revision: Some(4),
+            edited: true,
+            checked: None,
+        };
+        let export = |kind| export_bytes(kind, &circuit, &title, &catalogue).unwrap();
 
         let svg = String::from_utf8(export(Export::Svg)).unwrap();
         assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"));
         assert!(svg.contains(">V1<"), "designators are drawn");
+        // On an A4 sheet, with the title block saying what was exported.
+        assert!(
+            svg.contains(r#"width="297.00mm" height="210.00mm""#),
+            "{svg}"
+        );
+        assert!(svg.contains(">REVISION<") && svg.contains(">4, edited<"));
         assert!(export(Export::Pdf).starts_with(b"%PDF-"));
         let csv = String::from_utf8(export(Export::Bom)).unwrap();
         assert!(
@@ -4359,9 +4418,10 @@ mod tests {
         assert_eq!(lines(&h)[1].quantity, 6);
         assert_eq!(h.state().0.doc.undo_label(), Some("Edit extra line 2"));
         let (e, s) = h.state();
-        let csv =
-            String::from_utf8(export_bytes(Export::Bom, &e.doc.circuit, &s.catalogue).unwrap())
-                .unwrap();
+        let csv = String::from_utf8(
+            export_bytes(Export::Bom, &e.doc.circuit, &e.title(), &s.catalogue).unwrap(),
+        )
+        .unwrap();
         assert!(csv.contains("20,6,,,Plug G1/4,DEMO-PLUG-G1/4"), "{csv}");
 
         // A bad quantity is refused in words and the field shows the line as it is.
@@ -4904,5 +4964,62 @@ mod tests {
         h.run();
         assert!(!h.state().0.wiring);
         assert_eq!(state(&h), Some(Toggled::False));
+    }
+
+    #[test]
+    fn the_title_block_says_the_revision_and_unsaved_changes_instead_of_the_toolbar() {
+        let sheet = |h: &Harness<State>| {
+            h.get_by_label_contains(" sheet, ")
+                .accesskit_node()
+                .label()
+                .unwrap()
+        };
+        let h = harness();
+        assert!(sheet(&h).contains("revision: not saved"), "{}", sheet(&h));
+        let mut h = saved_harness();
+        assert!(sheet(&h).contains("revision: 2, checked"), "{}", sheet(&h));
+        assert!(sheet(&h).contains("drawn by: —"), "{}", sheet(&h));
+        h.state_mut().0.apply(Command::Rename {
+            name: "Press".into(),
+        });
+        h.run_steps(2);
+        assert!(sheet(&h).contains("Press, schema"), "{}", sheet(&h));
+        assert!(sheet(&h).contains("revision: 2, edited"), "{}", sheet(&h));
+        // The toolbar no longer says it.
+        assert!(h.query_by_label_contains("unsaved changes").is_none());
+        assert!(h.query_by_label("revision 2").is_none());
+        // An import says who drew it and whether it was checked.
+        let h = import_harness(Some(1), false);
+        assert!(
+            sheet(&h).contains("drawn by: AI assistant"),
+            "{}",
+            sheet(&h)
+        );
+        assert!(sheet(&h).contains("checked: not yet"), "{}", sheet(&h));
+        let h = import_harness(Some(2), false);
+        assert!(sheet(&h).contains("checked: yes"), "{}", sheet(&h));
+    }
+
+    #[test]
+    fn fitting_shows_the_whole_sheet() {
+        let mut h = import_harness(Some(1), false);
+        let e = &mut h.state_mut().0;
+        // Refit, as a double-click or a resized view does.
+        e.fitted_to = Some(Vec2::ZERO);
+        h.run_steps(2);
+        let (e, s) = h.state();
+        let paper = sheet(
+            &render_circuit(&e.doc.circuit, &s.catalogue).primitives,
+            Some(&e.title()),
+        );
+        assert_eq!(paper.size, Some("A3"));
+        let on_screen = Rect::from_min_max(e.to_screen(paper.min), e.to_screen(paper.max));
+        assert!(
+            e.view.contains_rect(on_screen),
+            "{on_screen:?} in {:?}",
+            e.view
+        );
+        let filled = (on_screen.width() / e.view.width()).max(on_screen.height() / e.view.height());
+        assert!((filled - 0.9).abs() < 0.01, "{filled}");
     }
 }

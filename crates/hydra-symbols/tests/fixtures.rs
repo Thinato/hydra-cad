@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 
 use hydra_core::{Catalogue, Circuit, SCHEMA_VERSION, Severity, Wire};
 use hydra_symbols::{
-    Align, Primitive, block_outline, bounds, outline_issues, render_circuit, render_parts,
-    render_symbol, to_pdf, to_svg, wire_problems, wire_warnings,
+    Align, Font, Pen, Primitive, Title, block_outline, bounds, outline_issues, render_circuit,
+    render_parts, render_symbol, sheet, sheet_pdf, sheet_svg, title_block, to_svg, wire_problems,
+    wire_warnings,
 };
 
 fn fixtures() -> PathBuf {
@@ -76,14 +77,25 @@ fn golden_circuits_load_validate_round_trip_and_render() {
             bounds(&drawing.primitives).is_some(),
             "{name} draws something"
         );
-        let svg = to_svg(&drawing.primitives);
+        // On its sheet with a title block, as the editor exports a saved revision.
+        let title = Title {
+            name: circuit.name.clone(),
+            schema: circuit.schema,
+            revision: Some(3),
+            edited: false,
+            checked: circuit.import.as_ref().map(|_| true),
+        };
+        let paper = sheet(&drawing.primitives, Some(&title));
+        let mut primitives = drawing.primitives.clone();
+        primitives.extend(title_block(&paper, &title));
+        let svg = sheet_svg(&paper, &primitives);
         insta::assert_snapshot!(format!("circuit-{name}"), svg);
         insta::assert_snapshot!(
             format!("circuit-{name}-bom"),
             hydra_core::bom_csv(&circuit.bom(&catalogue))
         );
 
-        let pdf = to_pdf(&drawing.primitives).unwrap();
+        let pdf = sheet_pdf(&paper, &primitives).unwrap();
         assert!(pdf.starts_with(b"%PDF-"), "{name}: not a PDF");
         assert!(pdf.len() < 200_000, "{name}: PDF is {} bytes", pdf.len());
         let (w, h) = media_box(&pdf);
@@ -114,7 +126,7 @@ fn designators_are_clear_of_wires_frames_and_the_outline() {
                 p,
                 Primitive::Polyline {
                     closed: true,
-                    dashed: true,
+                    pen: Pen::Frame,
                     ..
                 }
             )
@@ -331,7 +343,7 @@ fn nets_are_drawn_between_port_anchors() {
     let wire = Primitive::Polyline {
         points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]],
         closed: false,
-        dashed: false,
+        pen: Pen::Working,
         filled: false,
     };
     assert!(drawing.primitives.contains(&wire));
@@ -355,10 +367,10 @@ fn pilot_and_drain_wires_are_dashed_and_plugged_ports_closed_with_a_bar() {
             .filter_map(|p| match p {
                 Primitive::Polyline {
                     points,
-                    dashed,
+                    pen,
                     filled,
                     ..
-                } => Some((points, dashed, filled)),
+                } => Some((points, pen.dash().is_some(), filled)),
                 _ => None,
             })
             .collect();
@@ -504,7 +516,7 @@ fn block_outline_goes_round_its_parts_through_its_ports() {
     assert!(matches!(
         far.last(),
         Some(Primitive::Polyline {
-            dashed: true,
+            pen: Pen::Pilot,
             closed: true,
             ..
         })
@@ -1140,19 +1152,37 @@ fn svg_mm(svg: &str, attr: &str) -> f32 {
 }
 
 #[test]
-fn pdf_keeps_text_as_a_font() {
-    let pdf = to_pdf(&[Primitive::Text {
-        at: [5.0, 5.0],
-        text: "RV1".into(),
-        size: 3.0,
-        align: Align::Start,
-    }])
-    .unwrap();
-    let text = String::from_utf8_lossy(&pdf);
-    assert!(
-        text.contains("/FontFile") || text.contains("/Type0"),
-        "no embedded font"
+fn exports_letter_in_plex_with_the_font_embedded_in_the_pdf() {
+    let text: Vec<Primitive> = [Font::Sans, Font::Bold, Font::Caption, Font::Warning]
+        .into_iter()
+        .enumerate()
+        .map(|(i, font)| Primitive::Text {
+            at: [5.0, 5.0 * i as f32],
+            text: "RV1".into(),
+            size: 3.0,
+            align: Align::Start,
+            font,
+        })
+        .collect();
+    let paper = sheet(&text, None);
+    let svg = sheet_svg(&paper, &text);
+    assert_eq!(
+        svg.matches("font-family=\"'IBM Plex Sans', sans-serif\"")
+            .count(),
+        3
     );
+    assert_eq!(
+        svg.matches("font-family=\"'IBM Plex Sans Condensed'")
+            .count(),
+        1
+    );
+    assert_eq!(svg.matches("font-weight=\"600\"").count(), 3);
+    let pdf = sheet_pdf(&paper, &text).unwrap();
+    let pdf = String::from_utf8_lossy(&pdf);
+    assert!(pdf.contains("/FontFile"), "no embedded font");
+    for face in ["IBMPlexSans", "IBMPlexSans-SmBld", "IBMPlexSansCond-SmBld"] {
+        assert!(pdf.contains(&format!("+{face}\n")), "{face} not embedded");
+    }
 }
 
 #[test]
@@ -1211,7 +1241,7 @@ fn statuses_and_item_labels_are_written_out() {
                 p,
                 Primitive::Polyline {
                     closed: true,
-                    dashed: true,
+                    pen: Pen::Frame,
                     ..
                 }
             )
@@ -1219,7 +1249,8 @@ fn statuses_and_item_labels_are_written_out() {
         .count();
     // 1.1 and 5.1 not listed, 4.1, 5.2 and 9.1 missing, 3.1 a stand-in.
     assert_eq!(frames, 6);
-    assert!(to_pdf(&drawing.primitives).is_ok());
+    let paper = sheet(&drawing.primitives, None);
+    assert!(sheet_pdf(&paper, &drawing.primitives).is_ok());
 }
 
 /// The box round an outline's corners.
@@ -1816,7 +1847,7 @@ fn a_wire_hops_over_another_nets_wire() {
     let lines = |c: &Circuit| -> Vec<(Vec<[f32; 2]>, bool)> {
         (render_circuit(c, &catalogue()).primitives.into_iter())
             .filter_map(|p| match p {
-                Primitive::Polyline { points, dashed, .. } => Some((points, dashed)),
+                Primitive::Polyline { points, pen, .. } => Some((points, pen.dash().is_some())),
                 _ => None,
             })
             .collect()
@@ -1985,7 +2016,11 @@ fn moved_text_keeps_off_other_parts() {
                     .filter(|p| {
                         !matches!(
                             p,
-                            Primitive::Text { .. } | Primitive::Polyline { dashed: true, .. }
+                            Primitive::Text { .. }
+                                | Primitive::Polyline {
+                                    pen: Pen::Frame | Pen::Pilot | Pen::Drain,
+                                    ..
+                                }
                         )
                     })
                     .collect();
@@ -2186,4 +2221,210 @@ fn a_valves_own_wires_never_warn_in_any_placement() {
             assert_eq!(wire_warnings(&c, &catalogue), Vec::<String>::new(), "{at}");
         }
     }
+}
+
+/// A box `w` by `h` mm with its corner at the origin.
+fn sized(w: f32, h: f32) -> Vec<Primitive> {
+    vec![Primitive::Polyline {
+        points: vec![[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]],
+        closed: true,
+        pen: Pen::Body,
+        filled: false,
+    }]
+}
+
+#[test]
+fn a_drawing_goes_on_the_smallest_landscape_a_sheet_that_holds_it() {
+    let size = |w, h, title: Option<&Title>| sheet(&sized(w, h), title).size;
+    // 10 mm of paper all round.
+    for (w, h, expected) in [
+        (277.0, 190.0, "A4"),
+        (278.0, 190.0, "A3"),
+        (277.0, 191.0, "A3"),
+        (400.0, 277.0, "A3"),
+        (401.0, 277.0, "A2"),
+        (574.0, 400.0, "A2"),
+        (821.0, 574.0, "A1"),
+        (821.0, 575.0, "A0"),
+        (1169.0, 821.0, "A0"),
+    ] {
+        assert_eq!(size(w, h, None), Some(expected), "{w} x {h}");
+    }
+    // A title block takes 18 mm under the drawing, and 5 mm between them.
+    let title = Title::default();
+    assert_eq!(size(277.0, 167.0, Some(&title)), Some("A4"));
+    assert_eq!(size(277.0, 168.0, Some(&title)), Some("A3"));
+    // A long name widens the block, and the sheet with it.
+    let long = Title {
+        name: "N".repeat(150),
+        ..Title::default()
+    };
+    assert_eq!(size(10.0, 10.0, Some(&long)), Some("A3"));
+
+    // The drawing is centred, the sheet's corner on the 5 mm grid.
+    let paper = sheet(&sized(100.0, 50.0), None);
+    assert_eq!((paper.min, paper.max), ([-100.0, -80.0], [197.0, 130.0]));
+    // Past A0, the sheet is cut to the drawing and its margin.
+    let paper = sheet(&sized(1170.0, 100.0), Some(&title));
+    assert_eq!(paper.size, None);
+    let [w, h] = [paper.max[0] - paper.min[0], paper.max[1] - paper.min[1]];
+    assert!(w >= 1190.0 && h >= 100.0 + 23.0 + 20.0, "{w} x {h}");
+    assert!(paper.min[0] <= -10.0 && paper.max[0] >= 1180.0, "{paper:?}");
+}
+
+#[test]
+fn working_lines_are_heavier_and_drain_dashes_shorter_than_pilot_ones() {
+    let json = r#"{"schema": 5, "name": "w", "components": [
+        {"id": "A", "kind": "port", "label": "A"}, {"id": "B", "kind": "port", "label": "B"},
+        {"id": "C", "kind": "port", "label": "C"}, {"id": "D", "kind": "port", "label": "D"},
+        {"id": "E", "kind": "port", "label": "E"}, {"id": "F", "kind": "port", "label": "F"}],
+        "nets": [{"id": "w", "ports": [{"component": "A", "port": "port"}, {"component": "B", "port": "port"}]},
+                 {"id": "p", "ports": [{"component": "C", "port": "port"}, {"component": "D", "port": "port"}]},
+                 {"id": "d", "ports": [{"component": "E", "port": "port"}, {"component": "F", "port": "port"}]}],
+        "layout": {"components": {"A": {"x": 0, "y": 0}, "B": {"x": 20, "y": 0}, "C": {"x": 0, "y": 10},
+                                  "D": {"x": 20, "y": 10}, "E": {"x": 0, "y": 20}, "F": {"x": 20, "y": 20}},
+                   "wires": {"w": [[[0, 0], [20, 0]]],
+                             "p": [{"kind": "pilot", "points": [[0, 10], [20, 10]]}],
+                             "d": [{"kind": "drain", "points": [[0, 20], [20, 20]]}]}}}"#;
+    let circuit = Circuit::from_json(json).unwrap();
+    let primitives = render_circuit(&circuit, &catalogue()).primitives;
+    let pen = |y: f32| {
+        (primitives.iter())
+            .find_map(|p| match p {
+                Primitive::Polyline { points, pen, .. } if points[..] == [[0.0, y], [20.0, y]] => {
+                    Some(*pen)
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        [pen(0.0), pen(10.0), pen(20.0)],
+        [Pen::Working, Pen::Pilot, Pen::Drain]
+    );
+    // As in the line table of docs/design.md.
+    assert_eq!(Pen::Working.width(), 0.5);
+    assert_eq!(Pen::Working.dash(), None);
+    for p in [Pen::Pilot, Pen::Drain, Pen::Outline, Pen::Body] {
+        assert_eq!(p.width(), 0.35, "{p:?}");
+    }
+    let ([pilot, _], [drain, _]) = (Pen::Pilot.dash().unwrap(), Pen::Drain.dash().unwrap());
+    assert!(drain < pilot, "drain {drain} mm, pilot {pilot} mm");
+    // The SVG says the same.
+    let svg = to_svg(&primitives);
+    let line = |y: &str| {
+        let at = svg
+            .find(&format!(r#"points="0.00,{y} 20.00,{y}""#))
+            .unwrap();
+        svg[at..at + svg[at..].find('\n').unwrap()].to_string()
+    };
+    assert!(
+        line("0.00").ends_with(r#" stroke-width="0.5"/>"#),
+        "{}",
+        line("0.00")
+    );
+    assert!(
+        line("10.00").ends_with(r#" stroke-dasharray="1.6,0.8"/>"#),
+        "{}",
+        line("10.00")
+    );
+    assert!(
+        line("20.00").ends_with(r#" stroke-dasharray="0.6,0.6"/>"#),
+        "{}",
+        line("20.00")
+    );
+
+    // Symbol bodies, the block outline and status frames have pens of their own.
+    let manifold = render_circuit(&golden("demo-manifold"), &catalogue()).primitives;
+    let pens: std::collections::BTreeSet<String> = (manifold.iter())
+        .filter_map(|p| match p {
+            Primitive::Polyline { pen, .. } => Some(format!("{pen:?}")),
+            _ => None,
+        })
+        .collect();
+    for p in ["Body", "Working", "Pilot", "Outline"] {
+        assert!(pens.contains(p), "{p} in {pens:?}");
+    }
+    let imported = render_circuit(&golden("demo-import-manifold"), &catalogue()).primitives;
+    assert!(imported.iter().any(|p| matches!(
+        p,
+        Primitive::Polyline {
+            closed: true,
+            pen: Pen::Frame,
+            ..
+        }
+    )));
+}
+
+/// The title block's texts, with their lettering.
+fn lettering(block: &[Primitive]) -> Vec<(String, Font)> {
+    (block.iter())
+        .filter_map(|p| match p {
+            Primitive::Text { text, font, .. } => Some((text.clone(), *font)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_title_block_says_only_what_hydra_knows() {
+    let drawing = sized(100.0, 50.0);
+    let unsaved = Title {
+        name: "Press".into(),
+        schema: 5,
+        ..Title::default()
+    };
+    let paper = sheet(&drawing, Some(&unsaved));
+    let block = title_block(&paper, &unsaved);
+    let text = |s: &str, f: Font| (s.to_string(), f);
+    assert_eq!(
+        lettering(&block),
+        [
+            text("Press", Font::Bold),
+            text("schema 5", Font::Sans),
+            text("DRAWN BY", Font::Caption),
+            text("—", Font::Sans),
+            text("REVISION", Font::Caption),
+            text("not saved", Font::Warning),
+            text("CHECKED", Font::Caption),
+            text("—", Font::Sans),
+        ]
+    );
+    // In the bottom right corner, 10 mm in, with a heavy frame, and clear of the drawing.
+    let (lo, hi) = bounds(&block).unwrap();
+    assert_eq!(hi, [paper.max[0] - 10.0, paper.max[1] - 10.0]);
+    assert!(lo[1] >= 50.0 + 5.0, "{lo:?}");
+    assert!(matches!(
+        block[0],
+        Primitive::Polyline {
+            pen: Pen::Border,
+            closed: true,
+            ..
+        }
+    ));
+    assert_eq!(
+        (block.iter())
+            .filter(|p| matches!(p, Primitive::Polyline { pen: Pen::Rule, .. }))
+            .count(),
+        3
+    );
+
+    let edited = Title {
+        revision: Some(4),
+        edited: true,
+        checked: Some(false),
+        ..unsaved.clone()
+    };
+    let words = lettering(&title_block(&paper, &edited));
+    assert_eq!(words[3], text("AI assistant", Font::Sans));
+    assert_eq!(words[5], text("4, edited", Font::Warning));
+    assert_eq!(words[7], text("not yet", Font::Warning));
+    let checked = Title {
+        edited: false,
+        checked: Some(true),
+        ..edited
+    };
+    let words = lettering(&title_block(&paper, &checked));
+    assert_eq!(words[5], text("4", Font::Sans));
+    assert_eq!(words[7], text("yes", Font::Sans));
 }

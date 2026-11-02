@@ -3,7 +3,7 @@ source: crates/hydra-symbols/tests/fixtures.rs
 expression: to_svg(&drawing.primitives)
 ---
 <svg xmlns="http://www.w3.org/2000/svg" width="54.00mm" height="20.00mm" viewBox="-27.00 -10.00 54.00 20.00">
-<g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
+<g fill="none" stroke="black" stroke-width="0.35" stroke-linecap="round" stroke-linejoin="round">
 <polygon points="-15.00,-5.00 -5.00,-5.00 -5.00,5.00 -15.00,5.00"/>
 <polyline points="-11.67,5.00 -11.67,-5.00"/>
 <polygon points="-11.67,-5.00 -11.07,-3.40 -12.27,-3.40" fill="black"/>
@@ -24,13 +24,13 @@ expression: to_svg(&drawing.primitives)
 <polyline points="8.33,-5.00 11.67,5.00"/>
 <polygon points="11.67,5.00 10.59,3.67 11.73,3.29" fill="black"/>
 <polyline points="-1.67,-5.00 -1.67,-8.00"/>
-<text x="-1.07" y="-6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
+<text x="-1.07" y="-6.50" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">A</text>
 <polyline points="1.67,-5.00 1.67,-8.00"/>
-<text x="2.27" y="-6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
+<text x="2.27" y="-6.50" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">B</text>
 <polyline points="-1.67,5.00 -1.67,8.00"/>
-<text x="-1.07" y="6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="-1.07" y="6.50" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 <polyline points="1.67,5.00 1.67,8.00"/>
-<text x="2.27" y="6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="2.27" y="6.50" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
 <polygon points="-20.00,-3.00 -15.00,-3.00 -15.00,3.00 -20.00,3.00"/>
 <polyline points="-18.75,3.00 -16.25,-3.00"/>
 <polyline points="-20.00,0.00 -20.42,-2.10 -21.25,2.10 -22.08,-2.10 -22.92,2.10 -23.75,-2.10 -24.58,2.10 -25.00,0.00"/>
