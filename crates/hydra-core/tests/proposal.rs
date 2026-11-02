@@ -130,7 +130,7 @@ fn mistakes_are_explained() {
     );
     assert_eq!(
         with(&|p| p.valve_type.manufacturer = "acme".into()),
-        ["unknown manufacturer \"acme\"; use one of these keys: argo-hytos, demo"]
+        ["unknown manufacturer \"acme\"; use one of these keys: demo"]
     );
     assert_eq!(
         with(&|p| p.valve_type.symbol = Some(CatalogueRef::new("sym-nope", 1))),
@@ -171,7 +171,12 @@ fn problems_the_catalogue_already_has_are_not_the_proposals() {
 
 #[test]
 fn proposals_cannot_take_over_what_others_use() {
-    let cat = catalogue();
+    let mut cat = catalogue();
+    // A second maker, so a proposal can name a known manufacturer other than the valve type's.
+    cat.manufacturers.push(Manufacturer {
+        key: "demo-other".into(),
+        name: "Other demo maker".into(),
+    });
     let with = |f: &dyn Fn(&mut Proposal)| {
         let mut p = proposal();
         f(&mut p);
@@ -182,7 +187,7 @@ fn proposals_cannot_take_over_what_others_use() {
         with(&|p| {
             p.valve_type.key = "vt-demo-4-2".into();
             p.valve_type.version = 1;
-            p.valve_type.manufacturer = "argo-hytos".into();
+            p.valve_type.manufacturer = "demo-other".into();
         }),
         ["valve type vt-demo-4-2 is made by demo; a proposal can't change the manufacturer"]
     );

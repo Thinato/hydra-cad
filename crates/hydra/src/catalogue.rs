@@ -640,7 +640,7 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let mut v2 = c.valve_types[0].clone();
         v2.version = 2;
-        v2.code = "Z11-new".into();
+        v2.code = "4-3-C-new".into();
         c.valve_types.push(v2);
         c
     }
@@ -648,15 +648,15 @@ mod tests {
     #[test]
     fn search_shows_latest_versions_unless_asked() {
         let c = catalogue();
-        let z11: Vec<_> = visible_rows(&c, "rpe3", false)
+        let closed: Vec<_> = visible_rows(&c, "4-3-c", false)
             .iter()
             .map(|v| v.reference())
             .collect();
-        assert_eq!(z11, [CatalogueRef::new("vt-rpe3-06-z11", 2)]);
-        assert_eq!(visible_rows(&c, "RPE3", true).len(), 2);
+        assert_eq!(closed, [CatalogueRef::new("vt-demo-4-3-closed", 2)]);
+        assert_eq!(visible_rows(&c, "4-3-C", true).len(), 2);
         // Manufacturer names are searchable, not just keys.
-        assert_eq!(visible_rows(&c, "argo-hytos", false).len(), 1);
-        assert_eq!(visible_rows(&c, "Argo", false).len(), 1);
+        let latest = c.valve_types.len() - 1;
+        assert_eq!(visible_rows(&c, "fixture data", false).len(), latest);
         assert_eq!(visible_rows(&c, "", false).len(), c.valve_types.len() - 1);
         assert!(visible_rows(&c, "no such valve", true).is_empty());
     }
@@ -664,11 +664,11 @@ mod tests {
     #[test]
     fn dropped_files_attach_or_import() {
         use std::path::Path;
-        let z11 = CatalogueRef::new("vt-rpe3-06-z11", 2);
+        let closed = CatalogueRef::new("vt-demo-4-3-closed", 2);
         let pdf = || Ok(b"%PDF-1.4".to_vec());
         assert!(matches!(
-            dropped_file_request(Path::new("a/B.PDF"), pdf(), Some(&z11)),
-            Ok(Request::AttachDatasheet(r, _)) if r == z11
+            dropped_file_request(Path::new("a/B.PDF"), pdf(), Some(&closed)),
+            Ok(Request::AttachDatasheet(r, _)) if r == closed
         ));
         assert_eq!(
             dropped_file_request(Path::new("b.pdf"), pdf(), None)
@@ -694,8 +694,9 @@ mod tests {
                 .unwrap();
             assert!(e.starts_with("x.json is not a catalogue file"), "{e}");
         }
-        assert!(dropped_file_request(Path::new("x.step"), pdf(), Some(&z11)).is_err());
-        let unreadable = dropped_file_request(Path::new("y.pdf"), Err("denied".into()), Some(&z11));
+        assert!(dropped_file_request(Path::new("x.step"), pdf(), Some(&closed)).is_err());
+        let unreadable =
+            dropped_file_request(Path::new("y.pdf"), Err("denied".into()), Some(&closed));
         assert_eq!(unreadable.err().unwrap(), "Could not read y.pdf: denied");
     }
 

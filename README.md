@@ -21,7 +21,7 @@ Status: early development. The circuit model, symbol rendering, the schematic ed
 
 ## Catalogue model
 
-Symbol definitions and valve types are never edited in place. Every change adds a row with the same `key` and the next `version`, and circuits refer to one exact row as `key@version`, e.g. `vt-rpe3-06-z11@2`. Old circuits keep drawing with the version they were made with. Blocks are versioned the same way. Attaching a datasheet or a 3D model doesn't change how anything draws, so it changes the row in place, and a new version inherits both.
+Symbol definitions and valve types are never edited in place. Every change adds a row with the same `key` and the next `version`, and circuits refer to one exact row as `key@version`, e.g. `vt-demo-4-3-closed@2`. Old circuits keep drawing with the version they were made with. Blocks are versioned the same way. Attaching a datasheet or a 3D model doesn't change how anything draws, so it changes the row in place, and a new version inherits both.
 
 ## 3D models and blocks
 
@@ -33,7 +33,7 @@ Models are stored in Postgres and attached with `hydra-admin`:
 
 ```sh
 hydra-admin model block blk-demo@1 demo-block.step          # converts with step2gltf, keeps the STEP as source
-hydra-admin model valve vt-rpe3-06-z11@1 valve.glb --source valve.step
+hydra-admin model valve vt-demo-4-3-closed@1 valve.glb --source valve.step
 hydra-admin model valve vt-sr1a-a2@1 StepFile_sr1a_a2.zip --preview sr1a.glb   # look before attaching
 hydra-admin model valve vt-sr1a-a2@1 StepFile_sr1a_a2.zip --rotate x:180 --offset 0,0,-2
 hydra-admin models                                           # 3D smoke test of every stored model

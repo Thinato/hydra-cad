@@ -41,11 +41,11 @@ async fn count(pool: &PgPool, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
 
-/// The fixture's demo block and the RPE3 valve type, both version 1.
+/// The fixture's demo block and the closed-centre demo valve type, both version 1.
 fn owners() -> (ModelOwner, ModelOwner) {
     (
         ModelOwner::Block(CatalogueRef::new("blk-demo", 1)),
-        ModelOwner::ValveType(CatalogueRef::new("vt-rpe3-06-z11", 1)),
+        ModelOwner::ValveType(CatalogueRef::new("vt-demo-4-3-closed", 1)),
     )
 }
 
@@ -182,7 +182,7 @@ async fn save_carries_models_forward(pool: PgPool) {
         unreachable!()
     };
     let mut edited = f.valve_type(&v1).unwrap().clone();
-    edited.code = "Z11-B".into();
+    edited.code = "4-3-C-B".into();
     let v2 = save_valve_type(&pool, &edited).await.unwrap();
 
     let loaded = load_catalogue(&pool).await.unwrap();
@@ -325,7 +325,7 @@ async fn attach_and_import_run_together(pool: PgPool) {
     let f = fixture();
     import_catalogue(&pool, &f).await.unwrap();
     let base = f
-        .valve_type(&CatalogueRef::new("vt-rpe3-06-z11", 1))
+        .valve_type(&CatalogueRef::new("vt-demo-4-3-closed", 1))
         .unwrap()
         .clone();
     let glb = valve_glb();

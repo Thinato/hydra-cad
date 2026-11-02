@@ -453,9 +453,10 @@ mod tests {
         shared
             .block_models
             .insert(CatalogueRef::new("blk-demo", 1), "block".into());
-        shared
-            .valve_models
-            .insert(CatalogueRef::new("vt-rpe3-06-z11", 1), "rpe3".into());
+        shared.valve_models.insert(
+            CatalogueRef::new("vt-demo-4-3-closed", 1),
+            "spool-model".into(),
+        );
         shared
     }
 
@@ -476,7 +477,7 @@ mod tests {
                     component: None,
                 },
                 Placed {
-                    sha256: "rpe3".into(),
+                    sha256: "spool-model".into(),
                     transform: block.face("F1").unwrap().transform().unwrap(),
                     component: Some("V1".into()),
                 },

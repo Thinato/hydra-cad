@@ -24,8 +24,8 @@ fn spool_4_3() -> SymbolDef {
 fn catalogue() -> Catalogue {
     Catalogue {
         manufacturers: vec![Manufacturer {
-            key: "argo".into(),
-            name: "Argo-Hytos".into(),
+            key: "demo".into(),
+            name: "Demo".into(),
         }],
         symbol_defs: vec![
             SymbolDefRecord {
@@ -41,16 +41,16 @@ fn catalogue() -> Catalogue {
         ],
         parts: vec![Part {
             part_number: "TEST-PART-1".into(),
-            valve_type: CatalogueRef::new("rpe3-z11", 1),
+            valve_type: CatalogueRef::new("demo-4-3-closed", 1),
             options: json!({"voltage": "24 V DC"}),
         }],
         valve_types: vec![
             ValveType {
-                key: "rpe3-z11".into(),
+                key: "demo-4-3-closed".into(),
                 version: 1,
-                manufacturer: "argo".into(),
-                series: "RPE3-06".into(),
-                code: "Z11".into(),
+                manufacturer: "demo".into(),
+                series: "DEMO-06".into(),
+                code: "4-3-C".into(),
                 symbol: Some(CatalogueRef::new("sym-4-3", 1)),
                 mounting: Some("ISO 4401-03".into()),
                 params: serde_json::Value::Null,
@@ -58,8 +58,8 @@ fn catalogue() -> Catalogue {
             ValveType {
                 key: "check".into(),
                 version: 1,
-                manufacturer: "argo".into(),
-                series: "VJ3".into(),
+                manufacturer: "demo".into(),
+                series: "DEMO-CV".into(),
                 code: "10".into(),
                 symbol: Some(CatalogueRef::new("sym-check", 1)),
                 mounting: None,
@@ -110,7 +110,7 @@ fn circuit() -> Circuit {
         in_block: Default::default(),
         name: "test".into(),
         components: vec![
-            valve("V1", "rpe3-z11@1"),
+            valve("V1", "demo-4-3-closed@1"),
             valve("K1", "check@1"),
             port("P"),
             port("T"),
@@ -157,7 +157,7 @@ fn json_round_trip_is_lossless() {
 
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["schema"], SCHEMA_VERSION);
-    assert_eq!(value["components"][0]["valve_type"], "rpe3-z11@1");
+    assert_eq!(value["components"][0]["valve_type"], "demo-4-3-closed@1");
     assert_eq!(value["layout"]["components"]["V1"]["rotation"], 270);
     assert_eq!(value["layout"]["components"]["V1"]["mirror"], true);
     // Unmirrored parts don't write the flag, and older documents read as unmirrored.
@@ -266,12 +266,12 @@ fn port_on_two_nets() {
 #[test]
 fn unknown_valve_type() {
     let mut c = circuit();
-    c.components.push(valve("V2", "rpe3-z11@2"));
+    c.components.push(valve("V2", "demo-4-3-closed@2"));
     assert_eq!(
         c.validate(&catalogue()),
         vec![Issue::UnknownValveType {
             component: "V2".into(),
-            valve_type: CatalogueRef::new("rpe3-z11", 2)
+            valve_type: CatalogueRef::new("demo-4-3-closed", 2)
         }]
     );
 }
@@ -364,19 +364,19 @@ fn catalogue_problems_name_unknown_rows() {
     assert_eq!(
         cat.problems(),
         [
-            "valve type rpe3-z11@1: unknown manufacturer bosch",
+            "valve type demo-4-3-closed@1: unknown manufacturer bosch",
             "valve type check@1: unknown symbol sym-check@2",
-            "valve type rpe3-z11@1 is defined twice",
-            "valve type rpe3-z11@1: unknown manufacturer bosch"
+            "valve type demo-4-3-closed@1 is defined twice",
+            "valve type demo-4-3-closed@1: unknown manufacturer bosch"
         ]
     );
 }
 
 #[test]
 fn catalogue_refs_parse_and_print() {
-    let r: CatalogueRef = "vt-rpe3-06-z11@3".to_string().try_into().unwrap();
-    assert_eq!(r, CatalogueRef::new("vt-rpe3-06-z11", 3));
-    assert_eq!(r.to_string(), "vt-rpe3-06-z11@3");
+    let r: CatalogueRef = "vt-demo-4-3-closed@3".to_string().try_into().unwrap();
+    assert_eq!(r, CatalogueRef::new("vt-demo-4-3-closed", 3));
+    assert_eq!(r.to_string(), "vt-demo-4-3-closed@3");
     // The key may itself contain '@'; the version is after the last one.
     let r: CatalogueRef = "a@b@2".to_string().try_into().unwrap();
     assert_eq!(r, CatalogueRef::new("a@b", 2));
@@ -402,28 +402,32 @@ fn draft_valve_type_without_symbol() {
 #[test]
 fn keys_parts_and_duplicates_are_checked() {
     let mut cat = catalogue();
-    assert_eq!(cat.parts_of(&CatalogueRef::new("rpe3-z11", 1)).count(), 1);
+    assert_eq!(
+        cat.parts_of(&CatalogueRef::new("demo-4-3-closed", 1))
+            .count(),
+        1
+    );
     cat.manufacturers.push(cat.manufacturers[0].clone());
     cat.symbol_defs[1].key = " sym-check".into();
     cat.valve_types[1].symbol = None;
     cat.parts.push(cat.parts[0].clone());
     cat.parts.push(Part {
         part_number: "X1".into(),
-        valve_type: CatalogueRef::new("rpe3-z11", 9),
+        valve_type: CatalogueRef::new("demo-4-3-closed", 9),
         options: serde_json::Value::Null,
     });
     assert_eq!(
         cat.problems(),
         [
             r#"symbol key " sym-check" has spaces at the start or end"#,
-            "manufacturer argo is defined twice",
-            "part TEST-PART-1 of rpe3-z11@1 is defined twice",
-            "part X1: unknown valve type rpe3-z11@9",
+            "manufacturer demo is defined twice",
+            "part TEST-PART-1 of demo-4-3-closed@1 is defined twice",
+            "part X1: unknown valve type demo-4-3-closed@9",
         ]
     );
     assert_eq!(key_problem(""), Some("is empty"));
     assert_eq!(key_problem("a@b"), Some("contains '@'"));
-    assert_eq!(key_problem("vt-rpe3-06-z11"), None);
+    assert_eq!(key_problem("vt-demo-4-3-closed"), None);
 }
 
 #[test]
@@ -461,7 +465,7 @@ fn on_block(mounts: &[(&str, &str)]) -> (Circuit, Catalogue) {
     let mut cat = catalogue();
     cat.blocks.push(block());
     let mut c = circuit();
-    c.components.push(valve("V2", "rpe3-z11@1"));
+    c.components.push(valve("V2", "demo-4-3-closed@1"));
     c.nets[0].ports.push(pr("V2", "P"));
     c.nets[1].ports.push(pr("V2", "T"));
     c.nets[2].ports.push(pr("V2", "A"));

@@ -187,7 +187,7 @@ async fn proposals_are_checked_then_queued(pool: PgPool) {
          - params.function is missing; say what the valve does, one of: directional, check, \
          pilot_operated_check, relief, counterbalance, flow_control, pressure_reducing, sequence, \
          other\n\
-         - unknown manufacturer \"acme\"; use one of these keys: argo-hytos, demo"
+         - unknown manufacturer \"acme\"; use one of these keys: demo"
     );
     let mut bad = good_proposal();
     bad["valve_type"]["manufacturer"] = "acme".into();
