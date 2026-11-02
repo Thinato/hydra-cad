@@ -99,7 +99,7 @@ impl CataloguePanel {
             let shared: &Shared = shared;
             let catalogue = &shared.catalogue;
             let latest = latest_versions(catalogue);
-            let rows = visible_rows(catalogue, &self.search, self.all_versions);
+            let rows = visible_rows(catalogue, &latest, &self.search, self.all_versions);
             egui::Panel::top("catalogue-toolbar")
                 .frame(
                     Frame::new()
@@ -115,7 +115,7 @@ impl CataloguePanel {
                 .min_size(320.0)
                 .max_size(560.0)
                 .frame(Frame::new().fill(LIGHT.panel))
-                .show(ui, |ui| place = self.detail(ui, shared));
+                .show(ui, |ui| place = self.detail(ui, shared, &latest));
             ui.painter()
                 .rect_filled(ui.available_rect_before_wrap(), 0.0, LIGHT.surface);
             self.list(ui, &rows, &latest, catalogue, &shared.datasheets);
@@ -177,6 +177,8 @@ impl CataloguePanel {
         let widths = column_widths(ui.available_width());
         ui.spacing_mut().item_spacing.y = 0.0;
         theme::table_row(ui, LIGHT.panel, |ui| {
+            // In line with the rows' cells, which sit inside the rows' 1 px edge.
+            ui.add_space(1.0);
             for ((title, _), width) in COLUMNS.iter().zip(widths) {
                 theme::cell(ui, width, |ui| {
                     theme::column_title(ui, title);
@@ -185,7 +187,12 @@ impl CataloguePanel {
         });
         if rows.is_empty() {
             Frame::new().inner_margin(Margin::same(12)).show(ui, |ui| {
-                ui.label(RichText::new("No valve types match the search.").color(LIGHT.secondary));
+                let text = if self.search.trim().is_empty() {
+                    "The catalogue has no valve types."
+                } else {
+                    "No valve types match the search."
+                };
+                ui.label(RichText::new(text).color(LIGHT.secondary));
             });
             return;
         }
@@ -201,28 +208,27 @@ impl CataloguePanel {
                     let r = v.reference();
                     let selected = self.selected.as_ref() == Some(&r);
                     let newer = latest[v.key.as_str()];
-                    let row =
-                        theme::list_row(ui, selected, &format!("{} {}", v.series, v.code), |ui| {
-                            ui.spacing_mut().item_spacing.x = 12.0;
-                            // Not `horizontal`, whose 28 px minimum would make rows taller than
-                            // `height`.
-                            let one_line = Vec2::new(ui.available_width(), line);
-                            ui.allocate_ui_with_layout(
-                                one_line,
-                                Layout::left_to_right(Align::Min),
-                                |ui| {
-                                    ui.set_min_height(line);
-                                    list_cells(
-                                        ui,
-                                        v,
-                                        newer,
-                                        catalogue,
-                                        datasheets.contains_key(&r),
-                                        widths,
-                                    );
-                                },
-                            );
-                        });
+                    let row = theme::list_row(ui, selected, &row_name(v), |ui| {
+                        ui.spacing_mut().item_spacing.x = 12.0;
+                        // Not `horizontal`, whose 28 px minimum would make rows taller than
+                        // `height`.
+                        let one_line = Vec2::new(ui.available_width(), line);
+                        ui.allocate_ui_with_layout(
+                            one_line,
+                            Layout::left_to_right(Align::Min),
+                            |ui| {
+                                ui.set_min_height(line);
+                                list_cells(
+                                    ui,
+                                    v,
+                                    newer,
+                                    catalogue,
+                                    datasheets.contains_key(&r),
+                                    widths,
+                                );
+                            },
+                        );
+                    });
                     if row.clicked() {
                         clicked = Some(r);
                     }
@@ -235,7 +241,12 @@ impl CataloguePanel {
 
     /// The selected valve type. Returns the latest version of it to place in the schematic,
     /// when asked.
-    fn detail(&mut self, ui: &mut egui::Ui, shared: &Shared) -> Option<CatalogueRef> {
+    fn detail(
+        &mut self,
+        ui: &mut egui::Ui,
+        shared: &Shared,
+        latest: &HashMap<&str, u32>,
+    ) -> Option<CatalogueRef> {
         let Some(v) = self
             .selected
             .as_ref()
@@ -256,7 +267,7 @@ impl CataloguePanel {
         egui::ScrollArea::vertical()
             .id_salt("catalogue-detail")
             .auto_shrink(false)
-            .show(ui, |ui| self.fields(ui, &v, shared))
+            .show(ui, |ui| self.fields(ui, &v, shared, latest[v.key.as_str()]))
             .inner
     }
 
@@ -265,9 +276,9 @@ impl CataloguePanel {
         ui: &mut egui::Ui,
         v: &ValveType,
         shared: &Shared,
+        latest: u32,
     ) -> Option<CatalogueRef> {
         let catalogue = &shared.catalogue;
-        let latest = latest_versions(catalogue)[v.key.as_str()];
         let mut place = None;
         // New parts and new versions use the latest version, whichever version is on screen.
         let newest = CatalogueRef::new(&v.key, latest);
@@ -287,13 +298,13 @@ impl CataloguePanel {
             }
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
-                let drawable = catalogue.symbol_of(&newest).is_some();
+                let refusal = place_refusal(catalogue, &newest);
                 let place_button = ui
-                    .add_enabled(drawable, theme::primary("Place in schematic"))
-                    .on_hover_text(format!("Adds {newest} to the circuit on the Schematic tab."))
-                    .on_disabled_hover_text(format!(
-                        "{newest} has no symbol, so it can't be drawn. Give it one in a new version."
-                    ));
+                    .add_enabled(refusal.is_none(), theme::primary("Place in schematic"))
+                    .on_hover_text(format!(
+                        "Adds {newest} to the circuit on the Schematic tab."
+                    ))
+                    .on_disabled_hover_text(refusal.unwrap_or_default());
                 if place_button.clicked() {
                     place = Some(newest.clone());
                 }
@@ -323,7 +334,7 @@ impl CataloguePanel {
 
         let def = v.symbol.as_ref().and_then(|s| catalogue.symbol_def(s));
         theme::section(ui, |ui| {
-            overline(ui, "SYMBOL");
+            theme::column_title(ui, "SYMBOL");
             let size = Vec2::new(ui.available_width(), 200.0);
             symbol_preview(ui, size, def, "How Hydra draws it", |ui| {
                 symbol_reference(ui, v.symbol.as_ref());
@@ -352,7 +363,7 @@ impl CataloguePanel {
         });
 
         theme::section(ui, |ui| {
-            overline(ui, "MOUNTING");
+            theme::column_title(ui, "MOUNTING");
             match &v.mounting {
                 Some(m) => ui.monospace(m),
                 None => ui.label(RichText::new("Not given").color(LIGHT.secondary)),
@@ -361,7 +372,7 @@ impl CataloguePanel {
 
         if !v.params.is_null() {
             theme::section(ui, |ui| {
-                overline(ui, "PARAMETERS");
+                theme::column_title(ui, "PARAMETERS");
                 let params = serde_json::to_string(&v.params).unwrap_or_default();
                 ui.add(egui::Label::new(RichText::new(params).monospace()).wrap());
             });
@@ -370,12 +381,12 @@ impl CataloguePanel {
         let r = v.reference();
         let parts: Vec<_> = catalogue.parts_of(&r).collect();
         theme::section(ui, |ui| {
-            overline(ui, &format!("PARTS ({})", parts.len()));
+            theme::column_title(ui, &format!("PARTS ({})", parts.len()));
             if parts.is_empty() {
                 ui.label(RichText::new("No parts listed for this version.").color(LIGHT.secondary));
                 return;
             }
-            let width = ui.available_width() - 2.0;
+            let width = ui.available_width();
             // Part number and options; the row's 12 px margins and gap come off the width.
             let number = ((width - 36.0) * 0.5).max(0.0);
             theme::table(ui, width, |ui| {
@@ -401,7 +412,7 @@ impl CataloguePanel {
         });
 
         theme::section(ui, |ui| {
-            overline(ui, "DATASHEET");
+            theme::column_title(ui, "DATASHEET");
             match (shared.datasheets.get(&v.reference()), &shared.db) {
                 (Some(sha256), Some(db)) => {
                     let open = egui::Button::new("Open datasheet").min_size(Vec2::new(0.0, 32.0));
@@ -544,8 +555,8 @@ impl Editor {
         // Form fields are 32 px.
         ui.spacing_mut().interact_size.y = 32.0;
         let width = ui.available_width().max(360.0);
-        // Field and value; the row's 12 px margins and gap come off the table's width.
-        let cols = [110.0, (width - 110.0 - 36.0).max(0.0)];
+        // Field and value; the table's edges, the row's 12 px margins and the gap come off.
+        let cols = [110.0, (width - 2.0 - 24.0 - 12.0 - 110.0).max(0.0)];
         theme::table(ui, width, |ui| {
             theme::table_row(ui, LIGHT.panel, |ui| {
                 theme::cell(ui, cols[0], |ui| {
@@ -654,15 +665,20 @@ impl Editor {
                 ui.spinner();
             }
             if save.clicked() {
-                match self.finished() {
-                    Ok(v) => {
-                        if let Some(db) = &shared.db {
-                            self.saving = true;
-                            self.error = None;
-                            db.send(Request::SaveValveType(v));
-                        }
+                match (self.finished(), &shared.db) {
+                    (Ok(v), Some(db)) => {
+                        self.saving = true;
+                        self.error = None;
+                        db.send(Request::SaveValveType(v));
                     }
-                    Err(e) => self.error = Some(e),
+                    (Ok(_), None) => {
+                        self.error = Some(
+                            "Saving needs the database connection, which is gone. Your edits \
+                             stay here; save again once it is back."
+                                .into(),
+                        )
+                    }
+                    (Err(e), _) => self.error = Some(e),
                 }
             }
         });
@@ -743,8 +759,8 @@ const ROW_PADDING: f32 = 18.0;
 /// Each column's width in a list `width` wide. When the list is narrower than the columns
 /// want, every column shrinks alike and long text is cut short.
 fn column_widths(width: f32) -> [f32; 7] {
-    // A row's 12 px margins and the 12 px gaps between its cells.
-    let room = (width - 24.0 - 12.0 * (COLUMNS.len() - 1) as f32).max(0.0);
+    // A row's 12 px margins and 1 px edges, and the 12 px gaps between its cells.
+    let room = (width - 26.0 - 12.0 * (COLUMNS.len() - 1) as f32).max(0.0);
     let fixed: f32 = COLUMNS.iter().filter_map(|c| c.1).sum();
     let scale = (room / (fixed + MANUFACTURER_MIN)).min(1.0);
     COLUMNS.map(|(_, w)| match w {
@@ -802,6 +818,11 @@ fn list_cells(
     });
 }
 
+/// A list row's name for screen readers: series, code and version, so versions differ.
+fn row_name(v: &ValveType) -> String {
+    format!("{} {}, version {}", v.series, v.code, v.version)
+}
+
 /// What the list says about a valve type: its symbol is missing, a newer version exists, or it
 /// is a draft without a symbol. A normal valve type says nothing, as a normal valve shows no
 /// colour.
@@ -812,6 +833,20 @@ fn row_status(v: &ValveType, latest: u32, catalogue: &Catalogue) -> Option<(Mark
         }
         _ if latest > v.version => Some((Mark::Warning, format!("Version {latest} is newer"))),
         None => Some((Mark::Warning, "Draft, no symbol".into())),
+        Some(_) => None,
+    }
+}
+
+/// Why the valve type `newest` can't be placed in the schematic, or `None` when it can.
+fn place_refusal(catalogue: &Catalogue, newest: &CatalogueRef) -> Option<String> {
+    let symbol = catalogue.valve_type(newest).and_then(|t| t.symbol.as_ref());
+    match symbol {
+        None => Some(format!(
+            "{newest} has no symbol, so it can't be drawn. Give it one in a new version."
+        )),
+        Some(s) if catalogue.symbol_def(s).is_none() => Some(format!(
+            "Symbol {s} of {newest} is missing from the catalogue, so it can't be drawn."
+        )),
         Some(_) => None,
     }
 }
@@ -849,15 +884,6 @@ fn symbol_reference(ui: &mut egui::Ui, symbol: Option<&CatalogueRef>) {
     }
 }
 
-/// A section title in capitals, in the secondary colour.
-fn overline(ui: &mut egui::Ui, title: &str) {
-    ui.label(
-        RichText::new(title)
-            .text_style(theme::overline())
-            .color(LIGHT.secondary),
-    );
-}
-
 /// The latest version of each valve type's key.
 fn latest_versions(catalogue: &Catalogue) -> HashMap<&str, u32> {
     let mut latest: HashMap<&str, u32> = HashMap::new();
@@ -871,10 +897,10 @@ fn latest_versions(catalogue: &Catalogue) -> HashMap<&str, u32> {
 /// Valve types matching the search, latest version of each key unless `all_versions`.
 fn visible_rows<'a>(
     catalogue: &'a Catalogue,
+    latest: &HashMap<&str, u32>,
     search: &str,
     all_versions: bool,
 ) -> Vec<&'a ValveType> {
-    let latest = latest_versions(catalogue);
     let needle = search.trim().to_lowercase();
     let mut rows: Vec<&ValveType> = catalogue
         .valve_types
@@ -966,6 +992,8 @@ mod tests {
     #[test]
     fn search_shows_latest_versions_unless_asked() {
         let c = catalogue();
+        let latest = latest_versions(&c);
+        let visible_rows = |c, search, all| visible_rows(c, &latest, search, all);
         let z11: Vec<_> = visible_rows(&c, "rpe3", false)
             .iter()
             .map(|v| v.reference())
@@ -1073,17 +1101,17 @@ mod tests {
         assert!(h.query_by_label("vt-demo-4-2@1").is_none());
         // Rows read as selectable, named by series and code.
         let row = |h: &egui_kittest::Harness<'static, State>| {
-            h.get_by_role_and_label(Role::Button, "DEMO-06 4-2-S")
+            h.get_by_role_and_label(Role::Button, "DEMO-06 4-2-S, version 1")
                 .accesskit_node()
                 .toggled()
         };
         assert_eq!(row(&h), Some(Toggled::False));
-        h.get_by_role_and_label(Role::Button, "DEMO-06 4-2-S")
+        h.get_by_role_and_label(Role::Button, "DEMO-06 4-2-S, version 1")
             .click();
         h.run();
         assert_eq!(row(&h), Some(Toggled::True));
         assert_eq!(
-            h.get_by_role_and_label(Role::Button, "DEMO-CV 1")
+            h.get_by_role_and_label(Role::Button, "DEMO-CV 1, version 1")
                 .accesskit_node()
                 .toggled(),
             Some(Toggled::False)
@@ -1216,6 +1244,11 @@ mod tests {
             h.query_by_label_contains("Symbol sym-gone@1 is missing")
                 .is_some()
         );
+        assert!(
+            h.get_by_label("Place in schematic")
+                .accesskit_node()
+                .is_disabled()
+        );
     }
 
     #[test]
@@ -1335,7 +1368,20 @@ mod tests {
     #[test]
     fn every_row_is_as_tall_as_the_list_assumes() {
         // The list lays out only the rows in view, so a taller row would shift the rest.
-        let (mut h, _sent) = panel_harness(catalogue(), false);
+        // Text too long for its column is cut short rather than wrapped onto a second line.
+        let mut c = catalogue();
+        let mut long = c.valve_types[1].clone();
+        long.key = "vt-demo-long".into();
+        long.series = "DEMO-SERIES-WITH-A-VERY-LONG-NAME".into();
+        long.code = "CODE-THAT-GOES-ON-AND-ON".into();
+        long.mounting = Some("A MOUNTING PATTERN NAMED AT GREAT LENGTH".into());
+        long.manufacturer = "long".into();
+        c.manufacturers.push(hydra_core::Manufacturer {
+            key: "long".into(),
+            name: "A manufacturer whose name is far longer than its column could ever hold".into(),
+        });
+        c.valve_types.push(long);
+        let (mut h, _sent) = panel_harness(c, false);
         h.get_by_label("All versions").click();
         h.run();
         let tops: Vec<f64> = h
@@ -1347,7 +1393,7 @@ mod tests {
             })
             .map(|b| b.y0)
             .collect();
-        assert_eq!(tops.len(), 13);
+        assert_eq!(tops.len(), 14);
         let body = egui::TextStyle::Body.resolve(&h.ctx.global_style());
         let height = h.ctx.fonts_mut(|f| f.row_height(&body)) + ROW_PADDING;
         // A row with a status mark among them, at the top.
@@ -1361,8 +1407,133 @@ mod tests {
     }
 
     #[test]
+    fn the_detail_panel_and_the_editor_keep_their_width() {
+        // A box drawn wider than the room it was given grows a resizable panel or window a
+        // little every frame.
+        let (mut h, _sent) = panel_harness(catalogue(), true);
+        h.state_mut().0.selected = Some(CatalogueRef::new("vt-demo-4-2", 1));
+        h.run();
+        h.get_by_label("Edit as new version").click();
+        h.run();
+        let measure = |h: &egui_kittest::Harness<'static, State>| {
+            let heading = h.get_by_role_and_label(Role::Label, "DEMO-06 4-2-S").rect();
+            let field = h.get_by_role_and_label(Role::TextInput, "Code").rect();
+            (heading.left(), field.width())
+        };
+        let before = measure(&h);
+        for _ in 0..20 {
+            h.step();
+        }
+        assert_eq!(measure(&h), before);
+    }
+
+    #[test]
+    fn place_refusal_says_why_in_words() {
+        let mut c = catalogue();
+        let r = CatalogueRef::new("vt-demo-4-2", 1);
+        assert_eq!(place_refusal(&c, &r), None);
+        let t = c
+            .valve_types
+            .iter_mut()
+            .find(|v| v.key == "vt-demo-4-2")
+            .unwrap();
+        t.symbol = None;
+        assert_eq!(
+            place_refusal(&c, &r).unwrap(),
+            "vt-demo-4-2@1 has no symbol, so it can't be drawn. Give it one in a new version."
+        );
+        let t = c
+            .valve_types
+            .iter_mut()
+            .find(|v| v.key == "vt-demo-4-2")
+            .unwrap();
+        t.symbol = Some(CatalogueRef::new("sym-gone", 1));
+        assert_eq!(
+            place_refusal(&c, &r).unwrap(),
+            "Symbol sym-gone@1 of vt-demo-4-2@1 is missing from the catalogue, so it can't be \
+             drawn."
+        );
+    }
+
+    #[test]
+    fn saving_without_the_database_says_so_and_keeps_the_edits() {
+        let (mut h, sent) = panel_harness(catalogue(), true);
+        h.state_mut().0.selected = Some(CatalogueRef::new("vt-demo-4-2", 1));
+        h.run();
+        h.get_by_label("Edit as new version").click();
+        h.run();
+        h.state_mut().0.editor.as_mut().unwrap().draft.code = "4-2-X".into();
+        h.state_mut().1.db = None;
+        h.run();
+        h.get_by_label("Save as new version").click();
+        h.run();
+        assert!(
+            h.query_by_label_contains("Saving needs the database connection")
+                .is_some()
+        );
+        assert!(sent.try_recv().is_err());
+        assert_eq!(h.state().0.editor.as_ref().unwrap().draft.code, "4-2-X");
+    }
+
+    #[test]
+    fn an_empty_catalogue_says_so_and_a_search_says_nothing_matched() {
+        let (mut h, _sent) = panel_harness(Catalogue::default(), false);
+        assert!(
+            h.query_by_label("The catalogue has no valve types.")
+                .is_some()
+        );
+        h.state_mut().0.search = "nothing".into();
+        h.run();
+        assert!(
+            h.query_by_label("No valve types match the search.")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_last_row_of_a_long_list_scrolls_into_view_and_selects() {
+        let mut c = catalogue();
+        for i in 0..300 {
+            let mut v = c.valve_types[1].clone();
+            v.key = format!("vt-demo-long-{i:03}");
+            v.series = "DEMO-LONG".into();
+            v.code = format!("{i:03}");
+            c.valve_types.push(v);
+        }
+        let (mut h, _sent) = panel_harness(c, false);
+        let last = "DEMO-TH 1, version 1";
+        // Only the rows in view are laid out.
+        assert!(h.query_by_label(last).is_none());
+        let input = h.input_mut();
+        input
+            .events
+            .push(egui::Event::PointerMoved(egui::pos2(300.0, 400.0)));
+        input.events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: Vec2::new(0.0, -100_000.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        // The wheel scrolls smoothly over a few frames.
+        h.run_steps(30);
+        assert!(h.query_by_label("RPE3-06 Z11, version 2").is_none());
+        h.get_by_role_and_label(Role::Button, last).click();
+        h.run();
+        assert_eq!(
+            h.state().0.selected,
+            Some(CatalogueRef::new("vt-demo-throttle", 1))
+        );
+        let row = h.get_by_role_and_label(Role::Button, last);
+        assert_eq!(row.accesskit_node().toggled(), Some(Toggled::True));
+        assert!(
+            h.query_by_role_and_label(Role::Label, "DEMO-TH 1")
+                .is_some()
+        );
+    }
+
+    #[test]
     fn columns_fill_the_list_and_shrink_alike_when_narrow() {
-        let gaps = 24.0 + 12.0 * 6.0;
+        let gaps = 26.0 + 12.0 * 6.0;
         let wide = column_widths(1200.0);
         assert_eq!(wide[0], 100.0);
         assert!((wide.iter().sum::<f32>() + gaps - 1200.0).abs() < 0.01);

@@ -21,6 +21,7 @@ pub fn draw_fitted(ui: &mut egui::Ui, size: Vec2, primitives: &[Primitive]) {
 
 /// A symbol preview: `symbol` fitted in `size` on the sheet colour, over a caption strip with
 /// `caption` at its left and what `right` adds at its right, such as the symbol's reference.
+/// `size` includes the 1 px edge, so `ui.available_width()` fits without growing the panel.
 pub fn symbol_preview(
     ui: &mut egui::Ui,
     size: Vec2,
@@ -32,6 +33,7 @@ pub fn symbol_preview(
         .fill(LIGHT.sheet)
         .stroke(Stroke::new(1.0, LIGHT.border))
         .show(ui, |ui| {
+            let size = Vec2::new((size.x - 2.0).max(0.0), size.y);
             ui.set_width(size.x);
             ui.spacing_mut().item_spacing.y = 0.0;
             match symbol {

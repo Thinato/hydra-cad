@@ -445,12 +445,13 @@ pub fn list_row(ui: &mut Ui, selected: bool, name: &str, add: impl FnOnce(&mut U
 }
 
 /// A table: square, `width` wide on `surface` with a `border` edge, its rows laid out flush.
+/// `width` includes the edge, so `ui.available_width()` fits without growing the panel.
 pub fn table(ui: &mut Ui, width: f32, rows: impl FnOnce(&mut Ui)) {
     Frame::new()
         .fill(LIGHT.surface)
         .stroke(Stroke::new(1.0, LIGHT.border))
         .show(ui, |ui| {
-            ui.set_width(width);
+            ui.set_width((width - 2.0).max(0.0));
             ui.spacing_mut().item_spacing.y = 0.0;
             rows(ui);
         });
@@ -1009,6 +1010,8 @@ mod tests {
             .expect("the table's border edge");
         assert_eq!(frame.fill, LIGHT.surface);
         assert_eq!(frame.corner_radius, CornerRadius::ZERO, "tables are square");
+        // The edge is inside the width asked for, so a table as wide as its panel fits it.
+        assert_eq!(frame.rect.width(), 300.0);
         assert!(rects(&painted).iter().any(|r| r.fill == LIGHT.panel));
         let dividers = painted
             .iter()
