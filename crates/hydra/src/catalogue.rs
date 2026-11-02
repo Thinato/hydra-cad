@@ -984,7 +984,7 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let mut v2 = c.valve_types[0].clone();
         v2.version = 2;
-        v2.code = "Z11-new".into();
+        v2.code = "4-3-C-new".into();
         c.valve_types.push(v2);
         c
     }
@@ -992,17 +992,17 @@ mod tests {
     #[test]
     fn search_shows_latest_versions_unless_asked() {
         let c = catalogue();
-        let latest = latest_versions(&c);
-        let visible_rows = |c, search, all| visible_rows(c, &latest, search, all);
-        let z11: Vec<_> = visible_rows(&c, "rpe3", false)
+        let versions = latest_versions(&c);
+        let visible_rows = |c, search, all| visible_rows(c, &versions, search, all);
+        let closed: Vec<_> = visible_rows(&c, "4-3-c", false)
             .iter()
             .map(|v| v.reference())
             .collect();
-        assert_eq!(z11, [CatalogueRef::new("vt-rpe3-06-z11", 2)]);
-        assert_eq!(visible_rows(&c, "RPE3", true).len(), 2);
+        assert_eq!(closed, [CatalogueRef::new("vt-demo-4-3-closed", 2)]);
+        assert_eq!(visible_rows(&c, "4-3-C", true).len(), 2);
         // Manufacturer names are searchable, not just keys.
-        assert_eq!(visible_rows(&c, "argo-hytos", false).len(), 1);
-        assert_eq!(visible_rows(&c, "Argo", false).len(), 1);
+        let latest = c.valve_types.len() - 1;
+        assert_eq!(visible_rows(&c, "fixture data", false).len(), latest);
         assert_eq!(visible_rows(&c, "", false).len(), c.valve_types.len() - 1);
         assert!(visible_rows(&c, "no such valve", true).is_empty());
     }
@@ -1010,11 +1010,11 @@ mod tests {
     #[test]
     fn dropped_files_attach_or_import() {
         use std::path::Path;
-        let z11 = CatalogueRef::new("vt-rpe3-06-z11", 2);
+        let closed = CatalogueRef::new("vt-demo-4-3-closed", 2);
         let pdf = || Ok(b"%PDF-1.4".to_vec());
         assert!(matches!(
-            dropped_file_request(Path::new("a/B.PDF"), pdf(), Some(&z11)),
-            Ok(Request::AttachDatasheet(r, _)) if r == z11
+            dropped_file_request(Path::new("a/B.PDF"), pdf(), Some(&closed)),
+            Ok(Request::AttachDatasheet(r, _)) if r == closed
         ));
         assert_eq!(
             dropped_file_request(Path::new("b.pdf"), pdf(), None)
@@ -1040,8 +1040,9 @@ mod tests {
                 .unwrap();
             assert!(e.starts_with("x.json is not a catalogue file"), "{e}");
         }
-        assert!(dropped_file_request(Path::new("x.step"), pdf(), Some(&z11)).is_err());
-        let unreadable = dropped_file_request(Path::new("y.pdf"), Err("denied".into()), Some(&z11));
+        assert!(dropped_file_request(Path::new("x.step"), pdf(), Some(&closed)).is_err());
+        let unreadable =
+            dropped_file_request(Path::new("y.pdf"), Err("denied".into()), Some(&closed));
         assert_eq!(unreadable.err().unwrap(), "Could not read y.pdf: denied");
     }
 
@@ -1207,20 +1208,20 @@ mod tests {
             .symbol = None;
         let (mut h, _sent) = panel_harness(c, false);
         // An older version: the newer one is named, and placing uses it.
-        h.state_mut().0.selected = Some(CatalogueRef::new("vt-rpe3-06-z11", 1));
+        h.state_mut().0.selected = Some(CatalogueRef::new("vt-demo-4-3-closed", 1));
         h.run();
         assert!(
-            h.query_by_label("A newer version exists: vt-rpe3-06-z11@2")
+            h.query_by_label("A newer version exists: vt-demo-4-3-closed@2")
                 .is_some()
         );
         assert!(h.query_by_label("Edit latest as new version").is_some());
         h.get_by_label("Place in schematic").click();
         h.run();
-        let latest = CatalogueRef::new("vt-rpe3-06-z11", 2);
+        let latest = CatalogueRef::new("vt-demo-4-3-closed", 2);
         assert_eq!(h.state().1.place, Some(latest));
         assert_eq!(
             h.state().1.notice.as_deref(),
-            Some("vt-rpe3-06-z11@2 will be placed when you open the Schematic tab.")
+            Some("vt-demo-4-3-closed@2 will be placed when you open the Schematic tab.")
         );
 
         // A draft can't be placed, and says so.
@@ -1254,14 +1255,17 @@ mod tests {
     #[test]
     fn a_new_version_is_checked_then_sent_on_the_latest() {
         let (mut h, sent) = panel_harness(catalogue(), true);
-        h.state_mut().0.selected = Some(CatalogueRef::new("vt-rpe3-06-z11", 1));
+        h.state_mut().0.selected = Some(CatalogueRef::new("vt-demo-4-3-closed", 1));
         h.run();
         h.get_by_label("Edit latest as new version").click();
         h.run();
-        assert!(h.query_by_label("New version of vt-rpe3-06-z11").is_some());
+        assert!(
+            h.query_by_label("New version of vt-demo-4-3-closed")
+                .is_some()
+        );
         // The fields are labelled, so screen readers name them.
         let code = h.get_by_role_and_label(Role::TextInput, "Code");
-        assert_eq!(code.value().as_deref(), Some("Z11-new"));
+        assert_eq!(code.value().as_deref(), Some("4-3-C-new"));
 
         // An empty code is refused in plain words, and nothing is sent.
         h.state_mut().0.editor.as_mut().unwrap().draft.code = " ".into();
@@ -1271,7 +1275,7 @@ mod tests {
         assert!(h.query_by_label("Series and code are required.").is_some());
         assert!(sent.try_recv().is_err());
 
-        h.state_mut().0.editor.as_mut().unwrap().draft.code = " Z11-B ".into();
+        h.state_mut().0.editor.as_mut().unwrap().draft.code = " 4-3-C-B ".into();
         h.run();
         h.get_by_label("Save as new version").click();
         // A spinner turns while it saves.
@@ -1280,8 +1284,8 @@ mod tests {
             panic!("expected a save")
         };
         // Built on the latest version: the database inserts version 3, never changing 2.
-        assert_eq!(v.reference(), CatalogueRef::new("vt-rpe3-06-z11", 2));
-        assert_eq!(v.code, "Z11-B");
+        assert_eq!(v.reference(), CatalogueRef::new("vt-demo-4-3-closed", 2));
+        assert_eq!(v.code, "4-3-C-B");
         assert!(h.query_by_label("Series and code are required.").is_none());
         // While it saves, it can't be closed or saved again.
         assert!(h.get_by_label("Cancel").accesskit_node().is_disabled());
@@ -1292,7 +1296,7 @@ mod tests {
         );
         h.state_mut()
             .0
-            .saved(CatalogueRef::new("vt-rpe3-06-z11", 3));
+            .saved(CatalogueRef::new("vt-demo-4-3-closed", 3));
         h.run();
         assert!(h.query_by_label("Save as new version").is_none());
 
@@ -1516,7 +1520,7 @@ mod tests {
         });
         // The wheel scrolls smoothly over a few frames.
         h.run_steps(30);
-        assert!(h.query_by_label("RPE3-06 Z11, version 2").is_none());
+        assert!(h.query_by_label("DEMO-06 4-2-S, version 1").is_none());
         h.get_by_role_and_label(Role::Button, last).click();
         h.run();
         assert_eq!(

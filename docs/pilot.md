@@ -8,7 +8,7 @@ on-site database, using the signed installer from the draft release.
 1. Install. Windows: no SmartScreen warning. macOS: no Gatekeeper warning on first launch.
 2. Start Hydra. The sign-in window names the right server; a wrong password says so; with
    "Remember me" ticked, the next start signs in without asking.
-3. Catalogue: search finds RPE3-06; open a datasheet; the 3D tab shows a valve.
+3. Catalogue: search finds DEMO-06; open a datasheet; the 3D tab shows a valve.
 4. Schematic: open a saved circuit, move a valve, connect two ports, undo, redo, save. Open
    History, preview and restore an older revision.
 5. Proposals: review a pending proposal; reject one with a note.

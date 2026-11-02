@@ -10,7 +10,7 @@
     {"id": "B2", "kind": "port", "label": "B2"},
     {"id": "RV1", "kind": "valve", "valve_type": "vt-demo-relief@1"},
     {"id": "K1", "kind": "valve", "valve_type": "vt-demo-check@1"},
-    {"id": "V1", "kind": "valve", "valve_type": "vt-rpe3-06-z11@1"},
+    {"id": "V1", "kind": "valve", "valve_type": "vt-demo-4-3-closed@1"},
     {"id": "V2", "kind": "valve", "valve_type": "vt-demo-4-2@1"},
     {"id": "O1", "kind": "valve", "valve_type": "vt-demo-orifice@1"}
   ],

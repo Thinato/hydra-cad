@@ -3,18 +3,18 @@ use serde_json::json;
 
 fn catalogue() -> Catalogue {
     serde_json::from_value(json!({
-        "manufacturers": [{"key": "argo", "name": "Argo-Hytos"}],
+        "manufacturers": [{"key": "demo", "name": "Demo"}],
         "symbol_defs": [{"key": "sym-check", "version": 1, "definition": {"kind": "check", "spring": true}}],
         "valve_types": [
-            {"key": "vt-check", "version": 1, "manufacturer": "argo", "series": "VJ3", "code": "06, \"soft\"",
+            {"key": "vt-check", "version": 1, "manufacturer": "demo", "series": "DEMO-CV", "code": "06, \"soft\"",
              "symbol": "sym-check@1"},
-            {"key": "vt-spool", "version": 1, "manufacturer": "argo", "series": "RPE3-06", "code": "Z11",
+            {"key": "vt-spool", "version": 1, "manufacturer": "demo", "series": "DEMO-06", "code": "4-3-C",
              "symbol": "sym-check@1"}
         ],
         "parts": [
             {"part_number": "=HYPERLINK(\"x\")", "valve_type": "vt-check@1"},
-            {"part_number": "RPE3-063Z11/02400E1", "valve_type": "vt-spool@1"},
-            {"part_number": "RPE3-063Z11/01200E1", "valve_type": "vt-spool@1"}
+            {"part_number": "DEMO-06-4-3-C-24DC", "valve_type": "vt-spool@1"},
+            {"part_number": "DEMO-06-4-3-C-12DC", "valve_type": "vt-spool@1"}
         ],
         "blocks": [{"key": "blk", "version": 1, "name": "Germani block"}]
     }))
@@ -54,15 +54,20 @@ fn bom_groups_by_valve_type_in_designator_order() {
     assert_eq!(
         summary,
         [
-            (vec!["K1"], 1, "VJ3 06, \"soft\"", Some("=HYPERLINK(\"x\")")),
+            (
+                vec!["K1"],
+                1,
+                "DEMO-CV 06, \"soft\"",
+                Some("=HYPERLINK(\"x\")")
+            ),
             // Two orderable parts: the engineer picks one.
-            (vec!["V2", "V10"], 2, "RPE3-06 Z11", None),
+            (vec!["V2", "V10"], 2, "DEMO-06 4-3-C", None),
             // Unknown rows stay on the list instead of vanishing.
             (vec!["X1"], 1, "", None),
             (vec![], 1, "Germani block", None),
         ]
     );
-    assert_eq!(lines[0].manufacturer, "Argo-Hytos");
+    assert_eq!(lines[0].manufacturer, "Demo");
     assert_eq!(lines[3].catalogue.as_ref().unwrap().to_string(), "blk@1");
 }
 
@@ -78,8 +83,8 @@ fn csv_quotes_fields_and_defuses_formulas() {
         rows,
         [
             "Item,Position,Quantity,Designators,Manufacturer,Description,Part number,Catalogue,Status,Requested",
-            r#"1,,1,K1,Argo-Hytos,"VJ3 06, ""soft""","'=HYPERLINK(""x"")",vt-check@1,,"#,
-            "2,,2,V2 V10,Argo-Hytos,RPE3-06 Z11,,vt-spool@1,,",
+            r#"1,,1,K1,Demo,"DEMO-CV 06, ""soft""","'=HYPERLINK(""x"")",vt-check@1,,"#,
+            "2,,2,V2 V10,Demo,DEMO-06 4-3-C,,vt-spool@1,,",
             "3,,1,X1,,,,vt-gone@3,,",
             "4,,1,,,Germani block,,blk@1,,",
             "",
