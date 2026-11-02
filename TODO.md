@@ -22,11 +22,12 @@ Open work after the block outline and mirrored symbols (8e8f237). Tick items off
 
 The look is in [docs/design.md](docs/design.md) and `crates/hydra/src/theme.rs`, which installs the colours, the bundled IBM Plex fonts and the type scale.
 
-- [ ] Restyle the tabs on the theme, one PR each: 3D still to do.
+- [x] Restyle the tabs on the theme, one PR each.
   - [x] Proposals, with the data that exists today. It added the painted status marks (▲ ■ ⇄ ✓ ◆ ● ✕, `theme::Mark`), status chips, banners, and the primary and danger buttons to `theme.rs`.
   - [x] Schematic, around the sheet: toolbar groups, the import banner, the parts list, the inspector, the issues panel and the status bar. It added `theme::group`, `section` and `list_row`, and a button in `banner`. The sheet itself is the next item.
   - [x] Catalogue: the toolbar with search, the valve-type table with a status per row, the detail panel, the new-version editor as a fields table, and the drop overlay on palette colours. It moved the Proposals tables to `theme::table`, `table_row`, `cell` and `column_title`, and the symbol preview to `schematic::symbol_preview`.
   - [x] Account: sections for the account, your password, the users table with marked status and the about box; the offline banner; the sign-in window as a dialog; the app-wide status line above the tabs with the error banner, the notice, the update link and the database and user at the right. It added `theme::field` and `theme::dialog`.
+  - [x] 3D: a toolbar with the model preview, the side panel in sections (block, faces as a table, the selected valve, problems as marked lines), the view on a `viewport` palette token with palette-coloured models, and a status bar. With it, the tab strip on the theme (`theme::dock_style`, the active tab's accent edge) and the Proposals tab's waiting count, and banner marks centred on their first line.
 - [x] Schematic sheet as on the boards: an ISO A sheet (A4 to A0) on the desk with the 5 mm grid, working lines heavier than pilot and drain, a short dash of its own for drain lines, and a 2 px selection frame. The SVG and PDF are the same sheet, lettered in Plex.
 - [ ] The installers ship no licence files for the fonts compiled into the binary: Plex's OFL is readable in the app, but egui's own fonts (Ubuntu, Hack, Noto Emoji, emoji-icon-font) aren't. Add the licences to the MSI and DMG, or show them beside Plex's.
 - [x] Schematic: a title block in the sheet's corner (name, schema, revision, drawn by, checked), also in the SVG and PDF exports. Still open:
