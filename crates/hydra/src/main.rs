@@ -54,6 +54,8 @@ struct Panels {
     account: account::AccountPanel,
     /// Set when the database comes from hydra.ini, so each user signs in.
     signin: Option<SignIn>,
+    /// Where egui_dock drew each tab this frame, for the active tabs' accent edge.
+    tab_rects: Vec<(Tab, egui::Rect)>,
 }
 
 impl TabViewer for Panels {
@@ -67,7 +69,11 @@ impl TabViewer for Panels {
         match tab {
             Tab::Schematic => "Schematic".into(),
             Tab::Catalogue => "Catalogue".into(),
-            Tab::Proposals => "Proposals".into(),
+            // The waiting count the Proposals tab loaded, never a guess: none before it has.
+            Tab::Proposals => match self.shared.db.as_ref().and(self.proposals.waiting()) {
+                Some(n) => theme::counted("Proposals", n),
+                None => "Proposals".into(),
+            },
             Tab::Account => "Account".into(),
             Tab::View3d => "3D".into(),
         }
@@ -85,6 +91,30 @@ impl TabViewer for Panels {
 
     fn is_closeable(&self, _tab: &Tab) -> bool {
         false
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
+        // Clipped to what shows of a strip that scrolls.
+        self.tab_rects.push((*tab, response.interact_rect));
+    }
+}
+
+/// The tabs in the theme's dock style, each strip's active tab with its 3 px accent top edge.
+fn show_dock(ui: &mut egui::Ui, dock: &mut DockState<Tab>, panels: &mut Panels) {
+    panels.tab_rects.clear();
+    DockArea::new(dock)
+        .style(theme::dock_style(ui.style()))
+        .show_close_buttons(false)
+        .show_leaf_close_all_buttons(false)
+        .show_leaf_collapse_buttons(false)
+        .show_inside(ui, panels);
+    for (_, leaf) in dock.iter_leaves() {
+        let active = leaf.tabs.get(leaf.active.0);
+        for (_, rect) in panels.tab_rects.iter().filter(|(t, _)| Some(t) == active) {
+            if rect.is_positive() {
+                theme::active_tab_edge(ui.painter(), *rect);
+            }
+        }
     }
 }
 
@@ -263,11 +293,7 @@ impl eframe::App for HydraApp {
             panels.signin.as_mut(),
             self.update.as_ref(),
         );
-        DockArea::new(&mut self.dock)
-            .show_close_buttons(false)
-            .show_leaf_close_all_buttons(false)
-            .show_leaf_collapse_buttons(false)
-            .show_inside(ui, &mut self.panels);
+        show_dock(ui, &mut self.dock, &mut self.panels);
         if let Some(s) = &mut self.panels.signin {
             s.ui(ui.ctx(), &mut self.panels.shared);
         }
@@ -459,6 +485,7 @@ fn main() -> eframe::Result {
                             .ok(),
                     ),
                     signin,
+                    tab_rects: Vec::new(),
                 },
                 updates,
                 update: None,
@@ -489,6 +516,7 @@ mod tests {
             proposals: proposals::ProposalsPanel::default(),
             account: account::AccountPanel::default(),
             signin: None,
+            tab_rects: Vec::new(),
         };
         // Signing out retires the worker: it gets no more requests, so it exits once done.
         let db = panels.shared.db.take().unwrap();
@@ -541,6 +569,7 @@ mod tests {
             proposals: proposals::ProposalsPanel::default(),
             account: account::AccountPanel::default(),
             signin: None,
+            tab_rects: Vec::new(),
         };
         let boss = hydra_db::Account {
             user: "boss".into(),
@@ -598,6 +627,7 @@ mod tests {
             proposals: proposals::ProposalsPanel::default(),
             account: account::AccountPanel::default(),
             signin,
+            tab_rects: Vec::new(),
         };
         (panels, inbox, outbox)
     }
@@ -641,6 +671,92 @@ mod tests {
                 .unwrap()
                 .contains("still holds the old one")
         );
+    }
+
+    #[test]
+    fn the_proposals_tab_counts_what_waits_for_review() {
+        use hydra_db::ProposalStatus::{Approved, Pending};
+        let record = proposals::tests::record;
+        let ctx = egui::Context::default();
+        let (mut panels, _inbox, outbox) = panels_with_db(None);
+        let title = |p: &mut Panels| p.title(&mut Tab::Proposals).text().to_string();
+        // Not loaded yet: no count, not a guess.
+        assert_eq!(title(&mut panels), "Proposals");
+        outbox
+            .send(Reply::Proposals(vec![
+                record(Pending),
+                record(Approved),
+                record(Pending),
+            ]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(title(&mut panels), "Proposals 2 ");
+        let egui::WidgetText::LayoutJob(job) = panels.title(&mut Tab::Proposals) else {
+            panic!("a title with a badge")
+        };
+        assert_eq!(job.sections[1].format.background, theme::LIGHT.agent.strong);
+        // A review fetches the list again, and the count follows it.
+        outbox.send(Reply::ProposalRejected).unwrap();
+        outbox
+            .send(Reply::Proposals(vec![record(Pending)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(title(&mut panels), "Proposals 1 ");
+        outbox
+            .send(Reply::Proposals(vec![record(Approved)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(title(&mut panels), "Proposals");
+        // Signed out, an old sign-in's count doesn't show.
+        outbox
+            .send(Reply::Proposals(vec![record(Pending)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        panels.shared.db = None;
+        assert_eq!(title(&mut panels), "Proposals");
+    }
+
+    #[test]
+    fn the_active_tab_has_the_accent_edge_and_the_panel_colour() {
+        type Dock = (DockState<Tab>, Panels);
+        let dock = DockState::new(vec![Tab::Schematic, Tab::Catalogue, Tab::Account]);
+        let mut h = theme::harness(
+            egui::vec2(900.0, 500.0),
+            |ui, (dock, panels): &mut Dock| show_dock(ui, dock, panels),
+            (dock, panels_with_db(None).0),
+        );
+        h.run();
+        let check = |h: &egui_kittest::Harness<Dock>, active: Tab| {
+            let rects = &h.state().1.tab_rects;
+            assert_eq!(rects.len(), 3, "every tab was drawn");
+            let shapes: Vec<_> = (h.output().shapes.iter())
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Rect(r) => Some((r.rect, r.fill)),
+                    _ => None,
+                })
+                .collect();
+            for (tab, rect) in rects {
+                let edge = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 3.0));
+                let edged = shapes.contains(&(edge, theme::LIGHT.accent));
+                assert_eq!(edged, *tab == active, "accent edge on {}", *tab as u8);
+                let fill = if *tab == active {
+                    theme::LIGHT.panel
+                } else {
+                    theme::LIGHT.chrome
+                };
+                assert!(
+                    shapes.contains(&(*rect, fill)),
+                    "tab {} on {fill:?}",
+                    *tab as u8
+                );
+            }
+        };
+        check(&h, Tab::Schematic);
+        let (dock, _) = h.state_mut();
+        let found = dock.find_tab(&Tab::Account).unwrap();
+        dock.set_active_tab(found).unwrap();
+        h.run();
+        check(&h, Tab::Account);
     }
 
     type Strip = (Shared, Option<SignIn>, Option<Update>);

@@ -34,6 +34,8 @@ pub struct Palette {
     pub sheet: Color32,
     /// Around the sheet.
     pub desk: Color32,
+    /// The 3D view's ground: dark, so the shaded grey models stand out. No text is drawn on it.
+    pub viewport: Color32,
     /// Sheet grid lines every 5 mm and every 25 mm.
     pub grid: Color32,
     pub grid_major: Color32,
@@ -86,6 +88,7 @@ pub const LIGHT: Palette = Palette {
     hover: hex(0xEEF1F4),
     sheet: hex(0xFFFFFF),
     desk: hex(0xCDD3DA),
+    viewport: hex(0x2B3139),
     grid: hex(0xE4E8ED),
     grid_major: hex(0xCFD5DC),
     ink: hex(0x14181F),
@@ -339,13 +342,15 @@ pub fn banner<R>(
             ui.set_width(ui.available_width());
             let body = TextStyle::Body.resolve(ui.style());
             let bold = FontId::new(body.size, FontFamily::Name(SEMIBOLD.into()));
+            // Centred, as the mark is: the first line is as tall as the row the mark starts,
+            // and text sits at its bottom by default.
+            let format = |font| TextFormat {
+                valign: Align::Center,
+                ..TextFormat::simple(font, LIGHT.ink)
+            };
             let mut job = LayoutJob::default();
-            job.append(first, 0.0, TextFormat::simple(bold, LIGHT.ink));
-            job.append(
-                &format!(" {rest}"),
-                0.0,
-                TextFormat::simple(body, LIGHT.ink),
-            );
+            job.append(first, 0.0, format(bold));
+            job.append(&format!(" {rest}"), 0.0, format(body));
             // The action follows the text, as it is read, and wraps with it.
             ui.horizontal_wrapped(|ui| {
                 let side = ui.text_style_height(&TextStyle::Body);
@@ -549,6 +554,89 @@ pub fn dialog<R>(
                 .hline(rect.x_range(), rect.top(), Stroke::new(1.0, LIGHT.divider));
             strip.inner
         })
+}
+
+/// egui_dock's look on the theme: square 32 px tabs on a `chrome` strip, the inactive ones
+/// `secondary` text with no edge, the active one `ink` on `panel` with a `border` edge, open
+/// to the tab below it. egui_dock can't draw the active tab's 3 px accent top edge;
+/// [`active_tab_edge`] paints it.
+pub fn dock_style(style: &egui::Style) -> egui_dock::Style {
+    let p = &LIGHT;
+    let mut dock = egui_dock::Style::from_egui(style);
+    dock.tab_bar.bg_fill = p.chrome;
+    dock.tab_bar.height = 40.0;
+    dock.tab_bar.inner_margin = Margin {
+        left: 8,
+        right: 8,
+        top: 8,
+        bottom: 0,
+    };
+    dock.tab_bar.corner_radius = CornerRadius::ZERO;
+    dock.tab_bar.hline_color = p.border;
+    let tab = |bg_fill, outline_color, text_color| egui_dock::TabInteractionStyle {
+        outline_color,
+        corner_radius: CornerRadius::ZERO,
+        bg_fill,
+        text_color,
+    };
+    let t = &mut dock.tab;
+    t.active = tab(p.panel, p.border, p.ink);
+    t.focused = t.active.clone();
+    t.inactive = tab(p.chrome, Color32::TRANSPARENT, p.secondary);
+    t.hovered = tab(p.hover, Color32::TRANSPARENT, p.ink);
+    // Keyboard focus is the accent ring, as on every control.
+    for (focus, base) in [
+        (&mut t.active_with_kb_focus, &t.active),
+        (&mut t.focused_with_kb_focus, &t.focused),
+        (&mut t.inactive_with_kb_focus, &t.inactive),
+    ] {
+        *focus = egui_dock::TabInteractionStyle {
+            outline_color: p.accent,
+            ..base.clone()
+        };
+    }
+    t.spacing = 2.0;
+    t.minimum_width = Some(64.0);
+    dock
+}
+
+/// The active tab's 3 px `accent` top edge, painted over the tab egui_dock drew in `tab`.
+pub fn active_tab_edge(painter: &Painter, tab: Rect) {
+    let edge = Rect::from_min_max(tab.min, egui::pos2(tab.max.x, tab.min.y + 3.0));
+    painter.rect_filled(edge, 0.0, LIGHT.accent);
+}
+
+/// A tab title with a count badge after it: `n` in Plex Mono SemiBold caption size,
+/// `on_accent` on the `agent` tone's strong colour, for work the assistant left waiting. The
+/// title takes the tab's text colour.
+pub fn counted(title: &str, n: usize) -> WidgetText {
+    let sizes = style(&LIGHT).text_styles;
+    let mut job = LayoutJob::default();
+    let format = |font_id, color| TextFormat {
+        font_id,
+        color,
+        valign: Align::Center,
+        ..Default::default()
+    };
+    job.append(
+        title,
+        0.0,
+        format(sizes[&TextStyle::Button].clone(), Color32::PLACEHOLDER),
+    );
+    let mono = FontId::new(
+        sizes[&TextStyle::Small].size,
+        FontFamily::Name(MONO_SEMIBOLD.into()),
+    );
+    job.append(
+        &format!(" {n} "),
+        8.0,
+        TextFormat {
+            background: LIGHT.agent.strong,
+            expand_bg: 3.0,
+            ..format(mono, LIGHT.on_accent)
+        },
+    );
+    job.into()
 }
 
 /// Install the fonts and the palette's style, and keep the app in light mode whatever the
@@ -777,6 +865,8 @@ mod tests {
                 pairs.push(("accent", p.accent, bg));
             }
             pairs.push(("accent text", p.accent_text, p.accent_tint));
+            // The Proposals tab's count badge.
+            pairs.push(("count", p.on_accent, p.agent.strong));
             // A selected row and a changed table row carry ordinary text.
             for bg in [p.accent_tint, p.unlisted.tint] {
                 pairs.push(("ink", p.ink, bg));
@@ -987,6 +1077,89 @@ mod tests {
         }
         assert!(button.is_positive(), "the action is laid out");
         assert!(text_right < button.left(), "{text_right} vs {button:?}");
+    }
+
+    #[test]
+    fn a_banners_mark_is_centred_on_its_first_line() {
+        for rest in [
+            "Check it.",
+            &"Check every part against the drawing. ".repeat(8),
+        ] {
+            let painted = shapes(|ui| {
+                ui.set_max_width(400.0);
+                banner(ui, Mark::Error, "Imported from a drawing.", rest, |_| ());
+            });
+            // The ■ mark is a square in the tone's text colour.
+            let mark = rects(&painted)
+                .into_iter()
+                .find(|r| r.fill == LIGHT.missing.text)
+                .expect("the mark")
+                .rect;
+            let text = painted
+                .iter()
+                .find_map(|s| match s {
+                    Shape::Text(t) => Some(t),
+                    _ => None,
+                })
+                .expect("the text");
+            let first = &text.galley.rows[0];
+            let line = text.pos.y + first.pos.y + first.row.glyphs[0].logical_rect().center().y;
+            assert!(
+                (mark.center().y - line).abs() <= 1.0,
+                "mark centre {} vs first line centre {line} ({} rows)",
+                mark.center().y,
+                text.galley.rows.len()
+            );
+        }
+    }
+
+    #[test]
+    fn the_tab_strip_is_chrome_and_the_active_tab_panel_with_an_accent_top_edge() {
+        let dock = dock_style(&style(&LIGHT));
+        assert_eq!(dock.tab_bar.bg_fill, LIGHT.chrome);
+        let t = &dock.tab;
+        for active in [&t.active, &t.focused] {
+            assert_eq!(
+                (active.bg_fill, active.text_color),
+                (LIGHT.panel, LIGHT.ink)
+            );
+            assert_eq!(active.outline_color, LIGHT.border);
+        }
+        assert_eq!(
+            (t.inactive.bg_fill, t.inactive.text_color),
+            (LIGHT.chrome, LIGHT.secondary)
+        );
+        assert_eq!(t.inactive.outline_color, Color32::TRANSPARENT);
+        assert_eq!(t.active_with_kb_focus.outline_color, LIGHT.accent);
+        assert_eq!(t.active_with_kb_focus.bg_fill, LIGHT.panel);
+        // Square, like panels.
+        assert_eq!(t.active.corner_radius, CornerRadius::ZERO);
+
+        let tab = Rect::from_min_size(egui::pos2(10.0, 8.0), Vec2::new(90.0, 32.0));
+        let painted = shapes(|ui| active_tab_edge(ui.painter(), tab));
+        let edge = rects(&painted)
+            .into_iter()
+            .find(|r| r.fill == LIGHT.accent)
+            .expect("the accent edge")
+            .rect;
+        assert_eq!(edge, Rect::from_min_size(tab.min, Vec2::new(90.0, 3.0)));
+    }
+
+    #[test]
+    fn a_count_badge_follows_the_title_in_the_agent_tone() {
+        let title = counted("Proposals", 3);
+        assert_eq!(title.text(), "Proposals 3 ");
+        let WidgetText::LayoutJob(job) = title else {
+            panic!("a layout job")
+        };
+        // The title keeps the tab's colour; the count is on the agent tone.
+        assert_eq!(job.sections[0].format.color, Color32::PLACEHOLDER);
+        let badge = &job.sections[1].format;
+        assert_eq!(
+            (badge.background, badge.color),
+            (LIGHT.agent.strong, LIGHT.on_accent)
+        );
+        assert_eq!(badge.font_id.family, FontFamily::Name(MONO_SEMIBOLD.into()));
     }
 
     #[test]

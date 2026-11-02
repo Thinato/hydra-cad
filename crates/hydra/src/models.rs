@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use eframe::egui;
+use eframe::egui::{self, Color32, Margin, RichText};
 use glam::Mat4;
 use hydra_core::{Circuit, Command, ComponentKind, Issue, Severity};
 use hydra_mesh::Mesh;
@@ -12,11 +12,21 @@ use hydra_mesh::Mesh;
 use crate::catalogue::Shared;
 use crate::db::Request;
 use crate::editor::SchematicEditor;
+use crate::theme::{self, LIGHT, Mark};
 use crate::viewer3d::{Instance, Viewer3d};
 
-const BLOCK_COLOUR: [f32; 3] = [0.62, 0.64, 0.68];
-const VALVE_COLOUR: [f32; 3] = [0.25, 0.45, 0.75];
-const SELECTED_COLOUR: [f32; 3] = [0.95, 0.6, 0.15];
+/// How to move round the view, for the status bar.
+const VIEW_KEYS: &str = "Drag to turn · scroll or pinch to zoom · double-click fits";
+
+/// The colour a model is shaded in: the block light grey, valves darker, and the valve
+/// selected in the schematic in the accent, as selection is everywhere.
+fn tint(component: Option<&str>, selected: Option<&str>) -> Color32 {
+    match component {
+        None => LIGHT.border,
+        Some(c) if Some(c) == selected => LIGHT.accent,
+        Some(_) => LIGHT.border_strong,
+    }
+}
 
 /// A model to draw: which asset, and where in block coordinates (millimetres, Z up).
 #[derive(Debug, Clone, PartialEq)]
@@ -35,20 +45,26 @@ const IDENTITY: [[f64; 4]; 4] = [
     [0.0, 0.0, 0.0, 1.0],
 ];
 
+/// A note on what the 3D view can't show, with the mark of its tone: ■ an error, ▲ a warning.
+pub type Note = (Mark, String);
+
 /// What the 3D view shows for `circuit`, and notes on what it can't show.
 pub fn scene(
     circuit: &Circuit,
     selected: Option<&str>,
     shared: &Shared,
-) -> (Vec<Placed>, Vec<String>) {
+) -> (Vec<Placed>, Vec<Note>) {
     let catalogue = &shared.catalogue;
     let (mut placed, mut notes) = (Vec::new(), Vec::new());
-    let valve_model = |component: &str, notes: &mut Vec<String>| {
+    let valve_model = |component: &str, notes: &mut Vec<Note>| {
         let ComponentKind::Valve(v) = &circuit.component(component)?.kind else {
             return None;
         };
         let Some(valve_type) = &v.valve_type else {
-            notes.push(format!("{component} is missing from the catalogue."));
+            notes.push((
+                Mark::Error,
+                format!("{component} is missing from the catalogue."),
+            ));
             return None;
         };
         let model = shared.valve_models.get(valve_type).cloned();
@@ -58,7 +74,10 @@ pub fn scene(
                 .map_or(valve_type.to_string(), |v| {
                     format!("{} {}", v.series, v.code)
                 });
-            notes.push(format!("{component} ({name}) has no 3D model."));
+            notes.push((
+                Mark::Warning,
+                format!("{component} ({name}) has no 3D model."),
+            ));
         }
         model
     };
@@ -73,7 +92,10 @@ pub fn scene(
                     transform: IDENTITY,
                     component: None,
                 }),
-                None => notes.push(format!("Block {} has no 3D model.", block.name)),
+                None => notes.push((
+                    Mark::Warning,
+                    format!("Block {} has no 3D model.", block.name),
+                )),
             }
             for (component, face) in &assembly.mounts {
                 // Unknown faces are validation issues, listed with the others.
@@ -89,7 +111,7 @@ pub fn scene(
                         transform,
                         component: Some(component.clone()),
                     }),
-                    Err(e) => notes.push(format!("Block {}: {e}", block.name)),
+                    Err(e) => notes.push((Mark::Error, format!("Block {}: {e}", block.name))),
                 }
             }
         }
@@ -194,25 +216,45 @@ impl ModelPanel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, shared: &Shared, editor: &mut SchematicEditor) {
-        if let Some(p) = &self.preview {
-            let mut close = false;
-            ui.horizontal(|ui| {
-                close = ui.button("Close preview").clicked();
-                ui.strong(&p.name);
-                ui.label(&p.size);
+        let fill = |color| egui::Frame::new().fill(color);
+        let mut close = false;
+        egui::Panel::top("3d-toolbar")
+            .frame(fill(LIGHT.panel).inner_margin(Margin::symmetric(12, 8)))
+            .show(ui, |ui| {
+                ui.spacing_mut().interact_size.y = 32.0;
+                ui.horizontal_wrapped(|ui| match &self.preview {
+                    Some(p) => {
+                        close = ui.button("Close preview").clicked();
+                        ui.label(
+                            RichText::new(&p.name)
+                                .family(egui::FontFamily::Name(theme::SEMIBOLD.into())),
+                        );
+                        ui.label(RichText::new(&p.size).monospace().color(LIGHT.secondary));
+                    }
+                    None => {
+                        let pick = ui.button("Preview a model file…").on_hover_text(
+                            "Show a .glb file on its own, with its size, before attaching it",
+                        );
+                        if pick.clicked() {
+                            self.pick_preview();
+                        }
+                    }
+                });
             });
+        egui::Panel::bottom("3d-status")
+            .frame(fill(LIGHT.chrome).inner_margin(Margin::symmetric(12, 4)))
+            .show(ui, |ui| {
+                let keys = RichText::new(VIEW_KEYS).small().color(LIGHT.secondary);
+                ui.add(egui::Label::new(keys).wrap());
+            });
+        if let Some(p) = &self.preview {
             let scene = [Instance {
                 key: p.key.clone(),
                 mesh: p.mesh.clone(),
                 transform: Mat4::IDENTITY,
-                color: VALVE_COLOUR,
+                color: LIGHT.border_strong,
             }];
-            match &mut self.viewer {
-                Some(viewer) => viewer.ui(ui, &scene),
-                None => {
-                    ui.label("3D needs the wgpu renderer.");
-                }
-            }
+            self.viewport(ui, &scene, None);
             if close {
                 self.preview = None;
             }
@@ -226,21 +268,23 @@ impl ModelPanel {
                     self.models.insert(p.sha256.clone(), Model::Loading);
                 }
             }
-        } else {
-            notes.push("3D models come from the shared database.".into());
         }
         for p in &placed {
             if let Some(Model::Failed(e)) = self.models.get(&p.sha256) {
                 let what = p.component.as_deref().unwrap_or("The block");
-                notes.push(format!("{what}: {e}"));
+                notes.push((Mark::Error, format!("{what}: {e}")));
             }
         }
 
         egui::Panel::left("assembly")
-            .default_size(210.0)
+            .default_size(240.0)
+            .min_size(200.0)
+            .max_size(420.0)
             .resizable(true)
+            .frame(fill(LIGHT.panel))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
+                    .auto_shrink(false)
                     .show(ui, |ui| self.assembly(ui, shared, editor, &notes));
             });
 
@@ -252,26 +296,38 @@ impl ModelPanel {
                     key: p.sha256.clone(),
                     mesh: mesh.clone(),
                     transform: Mat4::from_cols_array_2d(&p.transform.map(|c| c.map(|v| v as f32))),
-                    color: match &p.component {
-                        None => BLOCK_COLOUR,
-                        Some(c) if Some(c.as_str()) == editor.selected() => SELECTED_COLOUR,
-                        Some(_) => VALVE_COLOUR,
-                    },
+                    color: tint(p.component.as_deref(), editor.selected()),
                 }),
                 Some(Model::Failed(_)) => {}
                 _ => loading += 1,
             }
         }
-        if loading > 0 {
-            ui.weak(format!("Loading {loading} model(s)…"));
-        } else if placed.is_empty() {
-            ui.weak("Choose a block for the circuit, or select a valve in the schematic, to see it in 3D.");
+        let hint = if loading > 0 {
+            Some(format!("Loading {loading} model(s)…"))
+        } else if placed.is_empty() && notes.is_empty() {
+            // With notes, the panel says why nothing shows.
+            Some(
+                "Choose a block for the circuit, or select a valve in the schematic, to see it in 3D."
+                    .into(),
+            )
+        } else {
+            None
+        };
+        self.viewport(ui, &scene, hint);
+    }
+
+    /// The view filling what is left, with a hint in `secondary` above it when there is one.
+    fn viewport(&mut self, ui: &mut egui::Ui, scene: &[Instance], hint: Option<String>) {
+        let renderer = self.viewer.is_some();
+        let hint = hint.or_else(|| (!renderer).then(|| "3D needs the wgpu renderer.".into()));
+        if let Some(hint) = hint {
+            let hint = RichText::new(hint).color(LIGHT.secondary);
+            egui::Frame::new()
+                .inner_margin(Margin::symmetric(12, 8))
+                .show(ui, |ui| ui.add(egui::Label::new(hint).wrap()));
         }
-        match &mut self.viewer {
-            Some(viewer) => viewer.ui(ui, &scene),
-            None => {
-                ui.label("3D needs the wgpu renderer.");
-            }
+        if let Some(viewer) = self.viewer.as_mut() {
+            viewer.ui(ui, scene);
         }
     }
 
@@ -280,132 +336,199 @@ impl ModelPanel {
         ui: &mut egui::Ui,
         shared: &Shared,
         editor: &mut SchematicEditor,
-        notes: &[String],
+        notes: &[Note],
     ) {
         let catalogue = &shared.catalogue;
         let circuit = editor.circuit();
         let current = circuit.assembly.as_ref().map(|a| a.block.clone());
         let mut edit = None;
 
-        ui.heading("Block");
         let label = |r: &Option<hydra_core::CatalogueRef>| match r {
             None => "None".to_string(),
             Some(r) => catalogue
                 .block(r)
                 .map_or(r.to_string(), |b| format!("{} (v{})", b.name, b.version)),
         };
-        let mut choice = current.clone();
-        egui::ComboBox::from_id_salt("block")
-            .selected_text(label(&current))
-            .width(ui.available_width())
-            .truncate()
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut choice, None, "None");
-                // The latest version of each block, plus the one in use if it is older.
-                let mut blocks: Vec<_> = catalogue
-                    .blocks
-                    .iter()
-                    .filter(|b| {
-                        Some(b.reference()) == current
-                            || !catalogue
-                                .blocks
-                                .iter()
-                                .any(|o| o.key == b.key && o.version > b.version)
-                    })
-                    .collect();
-                blocks.sort_by(|a, b| (&a.name, a.version).cmp(&(&b.name, b.version)));
-                for b in blocks {
-                    let r = Some(b.reference());
-                    let text = label(&r);
-                    ui.selectable_value(&mut choice, r, text);
-                }
-            });
-        if choice != current {
-            edit = Some(Command::SetBlock { block: choice });
-        }
+        theme::section(ui, |ui| {
+            theme::column_title(ui, "BLOCK");
+            let mut choice = current.clone();
+            egui::ComboBox::from_id_salt("block")
+                .selected_text(label(&current))
+                .width(ui.available_width())
+                .truncate()
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut choice, None, "None");
+                    // The latest version of each block, plus the one in use if it is older.
+                    let mut blocks: Vec<_> = catalogue
+                        .blocks
+                        .iter()
+                        .filter(|b| {
+                            Some(b.reference()) == current
+                                || !catalogue
+                                    .blocks
+                                    .iter()
+                                    .any(|o| o.key == b.key && o.version > b.version)
+                        })
+                        .collect();
+                    blocks.sort_by(|a, b| (&a.name, a.version).cmp(&(&b.name, b.version)));
+                    for b in blocks {
+                        let r = Some(b.reference());
+                        let text = label(&r);
+                        ui.selectable_value(&mut choice, r, text);
+                    }
+                });
+            if let Some(r) = &current {
+                ui.label(
+                    RichText::new(r.to_string())
+                        .monospace()
+                        .color(LIGHT.secondary),
+                );
+            }
+            if choice != current {
+                edit = Some(Command::SetBlock { block: choice });
+            }
+        });
 
         if let Some(assembly) = &circuit.assembly
             && let Some(block) = catalogue.block(&assembly.block)
         {
-            ui.add_space(6.0);
-            ui.heading("Faces");
-            egui::Grid::new("faces").num_columns(2).show(ui, |ui| {
-                for face in &block.mount_faces {
-                    ui.label(&face.name).on_hover_text(&face.pattern);
-                    let holder = assembly
-                        .mounts
-                        .iter()
-                        .find(|(_, f)| **f == face.name)
-                        .map(|(c, _)| c.clone());
-                    let mut choice = holder.clone();
-                    egui::ComboBox::from_id_salt(("face", &face.name))
-                        .selected_text(choice.as_deref().unwrap_or("—"))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut choice, None, "—");
-                            // Only valves whose mounting pattern fits this face.
-                            for c in &circuit.components {
-                                // Red valves and items have no mounting to fit.
-                                let Some(valve_type) =
-                                    c.valve().and_then(|v| v.valve_type.as_ref())
-                                else {
-                                    continue;
-                                };
-                                let fits = catalogue.valve_type(valve_type).is_some_and(|v| {
-                                    v.mounting.as_deref() == Some(face.pattern.as_str())
-                                });
-                                if fits {
-                                    ui.selectable_value(&mut choice, Some(c.id.clone()), &c.id);
-                                }
-                            }
+            theme::section(ui, |ui| {
+                theme::column_title(ui, "FACES");
+                let width = ui.available_width();
+                // The table's edge, its cells' padding and the gap between them.
+                let face_width = 84.0;
+                let valve_width = (width - 2.0 - 24.0 - 12.0 - face_width).max(60.0);
+                theme::table(ui, width, |ui| {
+                    theme::table_row(ui, LIGHT.panel, |ui| {
+                        theme::cell(ui, face_width, |ui| {
+                            theme::column_title(ui, "FACE");
                         });
-                    ui.end_row();
-                    if choice != holder {
-                        edit = Some(match (choice, holder) {
-                            (Some(c), _) => Command::Mount {
-                                component: c,
-                                face: Some(face.name.clone()),
-                            },
-                            (None, Some(h)) => Command::Mount {
-                                component: h,
-                                face: None,
-                            },
-                            (None, None) => unreachable!("choice differs from holder"),
+                        theme::cell(ui, valve_width, |ui| {
+                            theme::column_title(ui, "VALVE");
                         });
+                    });
+                    for face in &block.mount_faces {
+                        let holder = assembly
+                            .mounts
+                            .iter()
+                            .find(|(_, f)| **f == face.name)
+                            .map(|(c, _)| c.clone());
+                        let mut choice = holder.clone();
+                        theme::table_row(ui, Color32::TRANSPARENT, |ui| {
+                            theme::cell(ui, face_width, |ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                ui.monospace(&face.name).on_hover_text(&face.pattern);
+                                ui.label(
+                                    RichText::new(&face.pattern).small().color(LIGHT.secondary),
+                                );
+                            });
+                            theme::cell(ui, valve_width, |ui| {
+                                egui::ComboBox::from_id_salt(("face", &face.name))
+                                    .selected_text(choice.as_deref().unwrap_or("—"))
+                                    .width(valve_width)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut choice, None, "—");
+                                        // Only valves whose mounting pattern fits this face.
+                                        for c in &circuit.components {
+                                            // Red valves and items have no mounting to fit.
+                                            let Some(valve_type) =
+                                                c.valve().and_then(|v| v.valve_type.as_ref())
+                                            else {
+                                                continue;
+                                            };
+                                            let fits =
+                                                catalogue.valve_type(valve_type).is_some_and(|v| {
+                                                    v.mounting.as_deref()
+                                                        == Some(face.pattern.as_str())
+                                                });
+                                            if fits {
+                                                ui.selectable_value(
+                                                    &mut choice,
+                                                    Some(c.id.clone()),
+                                                    &c.id,
+                                                );
+                                            }
+                                        }
+                                    });
+                            });
+                        });
+                        if choice != holder {
+                            edit = Some(match (choice, holder) {
+                                (Some(c), _) => Command::Mount {
+                                    component: c,
+                                    face: Some(face.name.clone()),
+                                },
+                                (None, Some(h)) => Command::Mount {
+                                    component: h,
+                                    face: None,
+                                },
+                                (None, None) => unreachable!("choice differs from holder"),
+                            });
+                        }
                     }
-                    ui.weak(&face.pattern);
-                    ui.end_row();
+                });
+            });
+        }
+
+        // The valve selected in the schematic: what it is, its catalogue ref and its face.
+        if let Some(c) = editor.selected().and_then(|id| circuit.component(id))
+            && let ComponentKind::Valve(v) = &c.kind
+        {
+            theme::section(ui, |ui| {
+                theme::column_title(ui, "SELECTED");
+                ui.horizontal_wrapped(|ui| {
+                    let id = RichText::new(&c.id)
+                        .family(egui::FontFamily::Name(theme::MONO_SEMIBOLD.into()));
+                    ui.label(id);
+                    if let Some(t) = v.valve_type.as_ref().and_then(|r| catalogue.valve_type(r)) {
+                        let what = format!("{} {}", t.series, t.code);
+                        ui.label(RichText::new(what).color(LIGHT.secondary));
+                    }
+                });
+                if let Some(r) = &v.valve_type {
+                    ui.label(
+                        RichText::new(r.to_string())
+                            .monospace()
+                            .color(LIGHT.secondary),
+                    );
+                }
+                let face = (circuit.assembly.as_ref()).and_then(|a| a.mounts.get(&c.id));
+                if let Some(face) = face {
+                    ui.label(format!("On face {face}"));
                 }
             });
         }
 
-        ui.add_space(6.0);
-        for issue in circuit
-            .validate(catalogue)
-            .into_iter()
-            .filter(is_assembly_issue)
-        {
-            let colour = match issue.severity() {
-                Severity::Error => ui.visuals().error_fg_color,
-                Severity::Warning => ui.visuals().warn_fg_color,
-            };
-            ui.colored_label(colour, issue.to_string());
-        }
-        for note in notes {
-            ui.weak(note);
-        }
         if let Some(command) = edit {
             self.status = editor.edit(command).err();
         }
-        if let Some(s) = &self.status {
-            ui.colored_label(ui.visuals().warn_fg_color, s);
-        }
-        ui.add_space(6.0);
-        if ui
-            .button("Preview a model file…")
-            .on_hover_text("Show a .glb file on its own, with its size, before attaching it")
-            .clicked()
-        {
-            self.pick_preview();
+        let circuit = editor.circuit();
+        let issues = circuit
+            .validate(catalogue)
+            .into_iter()
+            .filter(is_assembly_issue);
+        let lines: Vec<Note> = issues
+            .map(|issue| {
+                let mark = match issue.severity() {
+                    Severity::Error => Mark::Error,
+                    Severity::Warning => Mark::Warning,
+                };
+                (mark, issue.to_string())
+            })
+            .chain(notes.iter().cloned())
+            .chain(self.status.clone().map(|s| (Mark::Error, s)))
+            .collect();
+        let offline = shared.db.is_none();
+        if !lines.is_empty() || offline {
+            theme::section(ui, |ui| {
+                for (mark, line) in lines {
+                    theme::marked(ui, mark, line);
+                }
+                if offline {
+                    let hint = "3D models come from the shared database.";
+                    ui.label(RichText::new(hint).color(LIGHT.secondary));
+                }
+            });
         }
     }
 
@@ -483,7 +606,10 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(notes, ["V2 (DEMO-06 4-2-S) has no 3D model."]);
+        assert_eq!(
+            notes,
+            [(Mark::Warning, "V2 (DEMO-06 4-2-S) has no 3D model.".into())]
+        );
 
         // Without a block, the selected valve is shown on its own.
         let mut loose = demo();
@@ -498,24 +624,24 @@ mod tests {
         assert_eq!(placed, []);
         assert_eq!(
             notes[0],
-            "Block Demo manifold block (fixture data, matches fixtures/models/demo-block.step) has no 3D model."
+            (
+                Mark::Warning,
+                "Block Demo manifold block (fixture data, matches fixtures/models/demo-block.step) has no 3D model.".into()
+            )
         );
     }
 
     type State = (ModelPanel, Shared, SchematicEditor);
 
     fn harness(circuit: Circuit) -> Harness<'static, State> {
-        let mut h = crate::theme::themed(
-            Harness::builder()
-                .with_size(egui::Vec2::new(900.0, 600.0))
-                .build_ui_state(
-                    |ui, (p, s, e): &mut State| p.ui(ui, s, e),
-                    (
-                        ModelPanel::new(None),
-                        shared(),
-                        SchematicEditor::new(circuit, None),
-                    ),
-                ),
+        let mut h = theme::harness(
+            egui::Vec2::new(900.0, 800.0),
+            |ui, (p, s, e): &mut State| p.ui(ui, s, e),
+            (
+                ModelPanel::new(None),
+                shared(),
+                SchematicEditor::new(circuit, None),
+            ),
         );
         h.run();
         h
@@ -543,7 +669,12 @@ mod tests {
         let mut loose = demo();
         loose.assembly = None;
         let mut h = harness(loose);
+        let hint =
+            "Choose a block for the circuit, or select a valve in the schematic, to see it in 3D.";
+        assert!(h.query_by_label(hint).is_some());
         choose(&mut h, 0, BLOCK_V2);
+        // The panel says why nothing shows: no models, nothing mounted.
+        assert!(h.query_by_label(hint).is_none());
         assert_eq!(mounts(&h), []);
         assert!(h.query_by_label("V1 is not mounted on the block").is_some());
 
@@ -664,12 +795,73 @@ mod tests {
                 .is_some()
         );
         // The circuit's block is out of the way.
-        assert!(h.query_by_label("Block").is_none());
+        assert!(h.query_by_label("BLOCK").is_none());
         h.get_by_label("Close preview").click();
         h.run();
         assert!(h.state().0.preview.is_none());
-        assert!(h.query_by_label("Block").is_some());
+        assert!(h.query_by_label("BLOCK").is_some());
         assert!(Preview::load("x".into(), b"not a model").is_err());
+    }
+
+    /// The colour `text` is painted in, if it is.
+    fn colour_of(h: &Harness<State>, text: &str) -> Option<Color32> {
+        h.output().shapes.iter().find_map(|c| match &c.shape {
+            egui::Shape::Text(t) if t.galley.text() == text => {
+                Some(t.galley.job.sections[0].format.color)
+            }
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn the_panel_marks_problems_in_their_tone_and_hints_in_secondary() {
+        let mut c = demo();
+        // F3 is CETOP 5: V1 doesn't fit it.
+        c.assembly
+            .as_mut()
+            .unwrap()
+            .mounts
+            .insert("V1".into(), "F3".into());
+        let mismatch = c
+            .validate(&shared().catalogue)
+            .into_iter()
+            .find(|i| matches!(i, Issue::PatternMismatch { .. }))
+            .expect("V1 doesn't fit F3")
+            .to_string();
+        let h = harness(c);
+        for title in ["BLOCK", "FACES", "FACE", "VALVE"] {
+            assert!(h.query_by_label(title).is_some(), "{title}");
+        }
+        // The block's ref in Data type.
+        assert!(h.query_by_label("blk-demo@1").is_some());
+        assert_eq!(colour_of(&h, &mismatch), Some(LIGHT.missing.text));
+        let no_model = "Block Demo manifold block (fixture data, matches fixtures/models/demo-block.step) has no 3D model.";
+        assert_eq!(colour_of(&h, no_model), Some(LIGHT.unlisted.text));
+        let offline = "3D models come from the shared database.";
+        assert_eq!(colour_of(&h, offline), Some(LIGHT.secondary));
+        // Nothing selected, nothing about a selection.
+        assert!(h.query_by_label("SELECTED").is_none());
+    }
+
+    #[test]
+    fn the_selected_valve_shows_its_ref_and_face() {
+        let mut h = harness(demo());
+        h.state_mut().2.select("V1".into());
+        h.run();
+        assert!(h.query_by_label("SELECTED").is_some());
+        assert!(h.query_by_label("vt-demo-4-3-closed@1").is_some());
+        assert!(h.query_by_label("On face F1").is_some());
+        // A port is no valve: nothing to show.
+        h.state_mut().2.select("P".into());
+        h.run();
+        assert!(h.query_by_label("SELECTED").is_none());
+    }
+
+    #[test]
+    fn models_are_grey_and_the_selected_valve_takes_the_accent() {
+        assert_eq!(tint(None, Some("V1")), LIGHT.border);
+        assert_eq!(tint(Some("V2"), Some("V1")), LIGHT.border_strong);
+        assert_eq!(tint(Some("V1"), Some("V1")), LIGHT.accent);
     }
 
     #[test]
@@ -678,7 +870,10 @@ mod tests {
         let c = Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
         let (placed, notes) = scene(&c, Some("5.2"), &shared());
         assert_eq!(placed, []);
-        assert_eq!(notes, ["5.2 is missing from the catalogue."]);
+        assert_eq!(
+            notes,
+            [(Mark::Error, "5.2 is missing from the catalogue.".into())]
+        );
         assert_eq!(scene(&c, Some("X1"), &shared()).0, []);
     }
 }

@@ -9,6 +9,8 @@ use eframe::egui_wgpu::{self, wgpu, wgpu::util::DeviceExt};
 use glam::{Mat4, Vec3};
 use hydra_mesh::Mesh;
 
+use crate::theme::LIGHT;
+
 /// Set `NativeOptions::depth_buffer` to this; egui-wgpu maps 32 bits to
 /// `Depth32Float` (`egui_wgpu::depth_format_from_bits`), which the pipeline must match.
 pub const DEPTH_BUFFER_BITS: u8 = 32;
@@ -63,7 +65,8 @@ pub struct Instance {
     pub key: String,
     pub mesh: Arc<Mesh>,
     pub transform: Mat4,
-    pub color: [f32; 3],
+    /// Shaded from this colour, a palette token.
+    pub color: egui::Color32,
 }
 
 struct GpuMesh {
@@ -206,7 +209,12 @@ impl Viewer3d {
             capacity,
             bind_group,
         });
-        Ok(Self {
+        Ok(Self::unfitted())
+    }
+
+    /// The camera before it has seen a scene.
+    fn unfitted() -> Self {
+        Self {
             center: Vec3::ZERO,
             radius: 1.0,
             // Seen from the front left, above: Hydra's model space is Z up.
@@ -214,7 +222,7 @@ impl Viewer3d {
             pitch: 0.5,
             zoom: 1.0,
             fitted: Vec::new(),
-        })
+        }
     }
 
     /// Fit the camera to the scene's bounding box when the scene changed.
@@ -285,8 +293,7 @@ impl Viewer3d {
         let right = Vec3::Z.cross(dir).normalize_or_zero();
         let light = (dir + Vec3::Z * 0.4 + right * 0.3).normalize();
 
-        ui.painter()
-            .rect_filled(rect, 0.0, egui::Color32::from_gray(40));
+        ui.painter().rect_filled(rect, 0.0, LIGHT.viewport);
         let view_proj = (proj * view).to_cols_array_2d();
         let light_dir = light.extend(0.0).to_array();
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
@@ -299,7 +306,7 @@ impl Viewer3d {
                             view_proj,
                             model: i.transform.to_cols_array_2d(),
                             light_dir,
-                            color: [i.color[0], i.color[1], i.color[2], 1.0],
+                            color: i.color.to_normalized_gamma_f32(),
                         };
                         (i.key.clone(), i.mesh.clone(), uniforms)
                     })
@@ -383,5 +390,22 @@ fn upload(device: &wgpu::Device, mesh: &Mesh) -> GpuMesh {
             usage: wgpu::BufferUsages::INDEX,
         }),
         index_count: mesh.indices.len() as u32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_view_is_drawn_on_the_viewport_colour() {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(Default::default(), |ui| Viewer3d::unfitted().ui(ui, &[]));
+        out.textures_delta.clear();
+        let ground = out.shapes.iter().find_map(|c| match &c.shape {
+            egui::Shape::Rect(r) => Some(r.fill),
+            _ => None,
+        });
+        assert_eq!(ground, Some(LIGHT.viewport));
     }
 }

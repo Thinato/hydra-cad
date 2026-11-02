@@ -192,6 +192,17 @@ impl ProposalsPanel {
         self.row_checks = None;
     }
 
+    /// How many proposals in the loaded list wait for review: `None` before a list has
+    /// arrived, or with none waiting.
+    pub fn waiting(&self) -> Option<usize> {
+        let list = self.list.as_ref()?;
+        let n = list
+            .iter()
+            .filter(|p| p.status == ProposalStatus::Pending)
+            .count();
+        (n > 0).then_some(n)
+    }
+
     /// An approve or reject went through; the list is fetched again.
     pub fn reviewed(&mut self, shared: &Shared) {
         self.busy = false;
@@ -805,7 +816,7 @@ fn actions(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::mpsc::{Receiver, channel};
 
     use eframe::egui::accesskit::{Role, Toggled};
@@ -820,7 +831,7 @@ mod tests {
         Shared::new(serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap())
     }
 
-    fn record(status: ProposalStatus) -> ProposalRecord {
+    pub(crate) fn record(status: ProposalStatus) -> ProposalRecord {
         let proposal: Proposal = serde_json::from_value(serde_json::json!({
             "valve_type": {
                 "key": "vt-demo-new", "version": 0, "manufacturer": "demo",
