@@ -351,13 +351,20 @@ pub fn banner<R>(
             let mut job = LayoutJob::default();
             job.append(first, 0.0, format(bold));
             job.append(&format!(" {rest}"), 0.0, format(body));
-            // The action follows the text, as it is read, and wraps with it.
-            ui.horizontal_wrapped(|ui| {
+            // The mark in a column of its own, so wrapped lines hang beside it, centred on the
+            // first line: as tall as the row the text beside it starts.
+            ui.horizontal_top(|ui| {
                 let side = ui.text_style_height(&TextStyle::Body);
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
-                mark.paint(ui.painter(), rect.shrink(side * 0.15), tone.text);
-                ui.add(Label::new(job).wrap());
-                action(ui)
+                let row = Vec2::new(side, ui.spacing().interact_size.y);
+                let (rect, _) = ui.allocate_exact_size(row, Sense::hover());
+                let square = Rect::from_center_size(rect.center(), Vec2::splat(side));
+                mark.paint(ui.painter(), square.shrink(side * 0.15), tone.text);
+                // The action follows the text, as it is read, and wraps with it.
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(Label::new(job).wrap());
+                    action(ui)
+                })
+                .inner
             })
             .inner
         })
@@ -1104,6 +1111,24 @@ mod tests {
                 .expect("the text");
             let first = &text.galley.rows[0];
             let line = text.pos.y + first.pos.y + first.row.glyphs[0].logical_rect().center().y;
+            // Every line hangs beside the mark, the wrapped ones too.
+            let left = |row: &egui::epaint::text::PlacedRow| {
+                text.pos.x + row.pos.x + row.row.glyphs[0].pos.x
+            };
+            assert!(left(first) > mark.right(), "the text is beside the mark");
+            assert_eq!(
+                text.galley.rows.len() > 1,
+                rest.len() > 100,
+                "the long one wraps"
+            );
+            for row in &text.galley.rows[1..] {
+                assert!(
+                    (left(row) - left(first)).abs() < 0.5,
+                    "a wrapped line starts at {} under the mark, not at {}",
+                    left(row),
+                    left(first)
+                );
+            }
             assert!(
                 (mark.center().y - line).abs() <= 1.0,
                 "mark centre {} vs first line centre {line} ({} rows)",
