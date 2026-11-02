@@ -2293,7 +2293,6 @@ dependencies = [
 name = "hydra-symbols"
 version = "0.1.0"
 dependencies = [
- "epaint_default_fonts",
  "hydra-core",
  "insta",
  "serde_json",

@@ -29,7 +29,7 @@ When in doubt, prefer refusing or warning in plain words over guessing.
 | Crate | Role | Key files |
 | --- | --- | --- |
 | `crates/hydra-core` | Domain model. No UI, no database. | `circuit.rs` (the circuit document and `SCHEMA_VERSION`, plus validation `Issue`s), `symbol.rs` (`SymbolDef` kinds and ports), `catalogue.rs` (versioned rows, `key@version` refs, ratings and functions), `edit.rs` (`Command`s and `Document` with undo), `status.rs` (valve status, stand-ins), `import.rs` (checks on AI-imported circuits), `proposal.rs` (catalogue proposals), `bom.rs` |
-| `crates/hydra-symbols` | Symbol definitions → lines, circles and text in mm (x right, y down); circuit layout, block outline, SVG/PDF | `lib.rs` (`render_symbol`, `render_component`, `render_circuit`, `block_outline`), `svg.rs` |
+| `crates/hydra-symbols` | Symbol definitions → lines, circles and text in mm (x right, y down); circuit layout, block outline, the sheet and its title block, SVG/PDF | `lib.rs` (`render_symbol`, `render_component`, `render_circuit`, `block_outline`, `sheet`, `title_block`, `Pen`), `svg.rs` (Plex from `crates/hydra/fonts/` for the PDF) |
 | `crates/hydra-mesh` | glTF → triangle meshes in CAD space (mm, Z up); model alignment | `lib.rs` (`load_glb` is a trust boundary) |
 | `crates/hydra-db` | Postgres migrations, schema guard, repositories, the `hydra-admin` CLI | `migrations/`, `lib.rs` (`check_schema`), `catalogue.rs`, `circuits.rs`, `proposals.rs`, `users.rs`, `bin/hydra-admin.rs` |
 | `crates/hydra-mcp` | MCP server for the AI assistant | `lib.rs`: tools, plus `GUIDE`, the format and rules the assistant follows. Changing it changes the assistant's behaviour. |
@@ -143,6 +143,7 @@ Each rule comes with its reason. Breaking one either corrupts something that can
   - Sheet units are millimetres, x right, y down.
   - A part's placement is position, `rotation` (clockwise quarter turns) and `mirror` (a flip left to right, applied before the rotation).
   - Unrotated symbols stand upright, with inlets at the bottom and outlets at the top.
+  - A line's weight and dash come from its `Pen`, never from the painter, so the canvas, SVG and PDF agree; the line table is in `docs/design.md`.
   - `in_block` lists the parts inside the manifold block, which is drawn as a dash-dot outline.
 - **3D conventions:**
   - Model space is CAD space: mm, Z up. glTF Y-up metres are converted on load.

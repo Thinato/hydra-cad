@@ -11,7 +11,9 @@ use hydra_core::{
 
 mod route;
 mod svg;
-pub use svg::{to_pdf, to_svg};
+pub use svg::{
+    PLEX_SANS, PLEX_SANS_CONDENSED_SEMIBOLD, PLEX_SANS_SEMIBOLD, sheet_pdf, sheet_svg, to_svg,
+};
 
 pub type Point = [f32; 2];
 
@@ -20,7 +22,7 @@ pub enum Primitive {
     Polyline {
         points: Vec<Point>,
         closed: bool,
-        dashed: bool,
+        pen: Pen,
         filled: bool,
     },
     Circle {
@@ -33,7 +35,65 @@ pub enum Primitive {
         text: String,
         size: f32,
         align: Align,
+        font: Font,
     },
+}
+
+/// How a line is drawn, as on paper: its weight and dash, read the same way by the canvas, the
+/// SVG and the PDF. Circles are drawn with [`Pen::Body`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pen {
+    /// Symbol bodies: envelopes, arrows, springs, port circles.
+    Body,
+    /// Working lines.
+    Working,
+    /// Pilot lines.
+    Pilot,
+    /// Drain lines, with a shorter dash than pilot lines.
+    Drain,
+    /// The block's dash-dot outline, whose dashes are drawn as separate lines.
+    Outline,
+    /// A valve's status frame.
+    Frame,
+    /// The title block's outer frame.
+    Border,
+    /// The title block's inner rules.
+    Rule,
+}
+
+impl Pen {
+    /// Line width in millimetres.
+    pub fn width(self) -> f32 {
+        match self {
+            Pen::Working | Pen::Border => 0.5,
+            Pen::Body | Pen::Pilot | Pen::Drain | Pen::Outline => 0.35,
+            Pen::Frame | Pen::Rule => 0.25,
+        }
+    }
+
+    /// Dash and gap lengths in millimetres, or `None` for a solid line.
+    pub fn dash(self) -> Option<[f32; 2]> {
+        match self {
+            Pen::Pilot => Some([1.6, 0.8]),
+            Pen::Drain => Some([0.6, 0.6]),
+            Pen::Frame => Some([1.0, 0.8]),
+            _ => None,
+        }
+    }
+}
+
+/// Lettering. Every face is IBM Plex, bundled for the canvas and the PDF.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Font {
+    /// Plex Sans: everything on the drawing.
+    Sans,
+    /// Plex Sans SemiBold: the title block's circuit name.
+    Bold,
+    /// Plex Sans Condensed SemiBold, in capitals: the title block's field labels.
+    Caption,
+    /// Plex Sans SemiBold, a fact to act on: "not saved", "edited", "not yet" checked. The
+    /// canvas letters it in the warning colour; exports stay black.
+    Warning,
 }
 
 /// Horizontal text alignment around `at`; text is vertically centred on it.
@@ -67,7 +127,7 @@ fn line(a: Point, b: Point) -> Primitive {
     Primitive::Polyline {
         points: vec![a, b],
         closed: false,
-        dashed: false,
+        pen: Pen::Body,
         filled: false,
     }
 }
@@ -76,16 +136,16 @@ fn open(points: Vec<Point>) -> Primitive {
     Primitive::Polyline {
         points,
         closed: false,
-        dashed: false,
+        pen: Pen::Body,
         filled: false,
     }
 }
 
-fn dashed(points: Vec<Point>) -> Primitive {
+fn pilot(points: Vec<Point>) -> Primitive {
     Primitive::Polyline {
         points,
         closed: false,
-        dashed: true,
+        pen: Pen::Pilot,
         filled: false,
     }
 }
@@ -94,7 +154,7 @@ fn rect(x: f32, y: f32, w: f32, h: f32) -> Primitive {
     Primitive::Polyline {
         points: vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
         closed: true,
-        dashed: false,
+        pen: Pen::Body,
         filled: false,
     }
 }
@@ -105,6 +165,7 @@ fn text(at: Point, s: &str, align: Align) -> Primitive {
         text: s.to_string(),
         size: LABEL,
         align,
+        font: Font::Sans,
     }
 }
 
@@ -122,7 +183,7 @@ fn arrow_head(from: Point, tip: Point) -> Primitive {
             [base[0] + uy * w, base[1] - ux * w],
         ],
         closed: true,
-        dashed: false,
+        pen: Pen::Body,
         filled: true,
     }
 }
@@ -208,7 +269,7 @@ fn side_port(d: &mut Drawing, name: &str, x: f32, y: f32, left: bool) {
 
 /// Dashed pilot line from a port on the left side into `tip`.
 fn pilot_from_left(d: &mut Drawing, name: &str, x: f32, tip: Point) {
-    d.primitives.push(dashed(vec![[x, tip[1]], tip]));
+    d.primitives.push(pilot(vec![[x, tip[1]], tip]));
     d.primitives.push(arrow_head([x, tip[1]], tip));
     side_port(d, name, x, tip[1], true);
 }
@@ -224,7 +285,7 @@ fn triangle(tip: Point, base_mid: Point, half: f32) -> Primitive {
             [base_mid[0] - nx, base_mid[1] - ny],
         ],
         closed: true,
-        dashed: false,
+        pen: Pen::Body,
         filled: true,
     }
 }
@@ -266,7 +327,7 @@ fn flow_control(
     if pilot_port {
         // Dashed pilot from the right into the box, on the compensator's side.
         let (x, tip) = (h + 4.0, [h, -2.0]);
-        d.primitives.push(dashed(vec![[x, tip[1]], tip]));
+        d.primitives.push(pilot(vec![[x, tip[1]], tip]));
         d.primitives.push(arrow_head([x, tip[1]], tip));
         side_port(&mut d, "X", x, tip[1], false);
     }
@@ -346,8 +407,12 @@ fn hydraulic_motor(bidirectional: bool, variable: bool, drain: bool) -> Drawing 
         d.primitives.extend(adjustable([0.0, 0.0], r + 1.0));
     }
     if drain {
-        d.primitives
-            .push(dashed(vec![[r * 0.7, r * 0.7], [r + 1.0, r * 0.7]]));
+        d.primitives.push(Primitive::Polyline {
+            points: vec![[r * 0.7, r * 0.7], [r + 1.0, r * 0.7]],
+            closed: false,
+            pen: Pen::Drain,
+            filled: false,
+        });
         side_port(&mut d, "L", r + 1.0, r * 0.7, false);
     }
     vertical_ports(&mut d, "B", "A", r);
@@ -528,7 +593,7 @@ fn actuator(d: &mut Drawing, kind: Actuator, x: f32, oy: f32, left: bool) {
         }
         Actuator::Pilot => {
             let tip = [near, mid];
-            d.primitives.push(dashed(vec![[far, mid], tip]));
+            d.primitives.push(pilot(vec![[far, mid], tip]));
             d.primitives.push(arrow_head([far, mid], tip));
         }
         Actuator::Detent => {
@@ -587,7 +652,7 @@ fn relief(adj: bool, pilot_port: bool) -> Drawing {
         pilot_from_left(&mut d, "X", -h - 4.0, [-h, 0.0]);
     } else {
         // Pilot line from P to the left end.
-        d.primitives.push(dashed(vec![
+        d.primitives.push(pilot(vec![
             [0.0, h + 1.5],
             [-h - 2.0, h + 1.5],
             [-h - 2.0, 0.0],
@@ -675,7 +740,7 @@ fn plug(at: Point, wires: &[Primitive]) -> Primitive {
             corner(-1.0, 1.0),
         ],
         closed: true,
-        dashed: false,
+        pen: Pen::Body,
         filled: true,
     }
 }
@@ -689,6 +754,188 @@ fn rotate(p: Point, r: Rotation) -> Point {
         Rotation::R180 => [-x, -y],
         Rotation::R270 => [y, -x],
     }
+}
+
+/// ISO 216 A sheets in landscape, smallest first: name, width and height in mm.
+const SHEETS: [(&str, f32, f32); 5] = [
+    ("A4", 297.0, 210.0),
+    ("A3", 420.0, 297.0),
+    ("A2", 594.0, 420.0),
+    ("A1", 841.0, 594.0),
+    ("A0", 1189.0, 841.0),
+];
+/// Paper round the drawing, and between the title block and the sheet's edges.
+const SHEET_MARGIN: f32 = 10.0;
+/// Room a sheet keeps for its corner snapping to the 5 mm grid, which moves the drawing up to
+/// 2.5 mm off centre, so the margin is never less than [`SHEET_MARGIN`].
+const SNAP: f32 = 5.0;
+/// Room between the drawing and the title block under it.
+const TITLE_GAP: f32 = 5.0;
+/// Height of the title block's two rows.
+const TITLE_ROWS: [f32; 2] = [8.0, 10.0];
+/// Narrowest title block; a long circuit name widens it.
+const TITLE_WIDTH: f32 = 120.0;
+/// Space between a title block cell's edge and its text.
+const TITLE_PAD: f32 = 3.0;
+
+/// The sheet of paper a circuit is drawn on, in the drawing's millimetres.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sheet {
+    /// The ISO size, e.g. `A3`; `None` when the drawing is larger than A0.
+    pub size: Option<&'static str>,
+    pub min: Point,
+    pub max: Point,
+}
+
+/// What the title block says. Hydra prints only what it knows; the rest reads "—".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Title {
+    pub name: String,
+    pub schema: u32,
+    /// The saved revision on the sheet; `None` for a circuit never saved.
+    pub revision: Option<i32>,
+    /// Changed since that revision was saved.
+    pub edited: bool,
+    /// The AI assistant imported the circuit from a drawing.
+    pub imported: bool,
+    /// An import nobody has checked against its drawing yet. Hydra records no check, so a
+    /// circuit that isn't waiting for one says nothing about being checked.
+    pub unchecked: bool,
+}
+
+impl Title {
+    /// The second row's cells: label, value, and the value's lettering.
+    pub fn fields(&self) -> [(&'static str, String, Font); 3] {
+        let unknown = || "—".to_string();
+        let drawn_by = match self.imported {
+            true => "AI assistant".to_string(),
+            false => unknown(),
+        };
+        let revision = match (self.revision, self.edited) {
+            (None, _) => ("not saved".to_string(), Font::Warning),
+            (Some(n), true) => (format!("{n}, edited"), Font::Warning),
+            (Some(n), false) => (n.to_string(), Font::Sans),
+        };
+        let checked = match self.unchecked {
+            true => ("not yet".to_string(), Font::Warning),
+            false => (unknown(), Font::Sans),
+        };
+        [
+            ("DRAWN BY", drawn_by, Font::Sans),
+            ("REVISION", revision.0, revision.1),
+            ("CHECKED", checked.0, checked.1),
+        ]
+    }
+
+    /// Width and height of the block: wide enough for the name and schema on its first row.
+    fn size(&self) -> [f32; 2] {
+        let width = |s: &str, em: f32| s.chars().count() as f32 * em;
+        // SemiBold capitals run wider than the 0.6 em the drawing's labels are estimated at.
+        let first = width(&self.name, 3.5 * 0.72)
+            + width(&self.schema_text(), LABEL * 0.6)
+            + 3.0 * TITLE_PAD;
+        [first.max(TITLE_WIDTH), TITLE_ROWS[0] + TITLE_ROWS[1]]
+    }
+
+    fn schema_text(&self) -> String {
+        format!("schema {}", self.schema)
+    }
+}
+
+/// The smallest landscape A sheet, A4 to A0, that holds the drawing with a margin round it and
+/// the title block, if any, under it in the bottom right corner. The drawing is centred above
+/// the title block, and the sheet's corner is on the 5 mm grid, so the grid lines up with the
+/// drawing's.
+pub fn sheet(drawing: &[Primitive], title: Option<&Title>) -> Sheet {
+    let (lo, hi) = bounds(drawing).unwrap_or(([0.0; 2], [0.0; 2]));
+    let [tw, th] = title.map_or([0.0; 2], Title::size);
+    let strip = if title.is_some() { th + TITLE_GAP } else { 0.0 };
+    let need = [
+        (hi[0] - lo[0]).max(tw) + 2.0 * SHEET_MARGIN + SNAP,
+        hi[1] - lo[1] + strip + 2.0 * SHEET_MARGIN + SNAP,
+    ];
+    let grid = |v: f32| (v / 5.0).round() * 5.0;
+    // ponytail: past A0 the sheet is cut to the drawing, a size no printer takes; a drawing
+    // that large needs splitting into sheets.
+    let (size, w, h) = (SHEETS.iter())
+        .find(|(_, w, h)| need[0] <= *w && need[1] <= *h)
+        .map_or(
+            (None, grid(need[0] + 2.5), grid(need[1] + 2.5)),
+            |&(n, w, h)| (Some(n), w, h),
+        );
+    let min = [
+        grid((lo[0] + hi[0] - w) / 2.0),
+        grid((lo[1] + hi[1] - (h - strip)) / 2.0),
+    ];
+    Sheet {
+        size,
+        min,
+        max: [min[0] + w, min[1] + h],
+    }
+}
+
+/// The title block in the sheet's bottom right corner, like a paper drawing's: the circuit's
+/// name and schema, then who drew it, the revision and whether it was checked.
+pub fn title_block(sheet: &Sheet, title: &Title) -> Vec<Primitive> {
+    let [w, _] = title.size();
+    let [x1, y1] = [sheet.max[0] - SHEET_MARGIN, sheet.max[1] - SHEET_MARGIN];
+    let (x0, y0) = (x1 - w, y1 - TITLE_ROWS[0] - TITLE_ROWS[1]);
+    let ym = y0 + TITLE_ROWS[0];
+    let rule = |a: Point, b: Point| Primitive::Polyline {
+        points: vec![a, b],
+        closed: false,
+        pen: Pen::Rule,
+        filled: false,
+    };
+    let lettering =
+        |at: Point, text: String, size: f32, align: Align, font: Font| Primitive::Text {
+            at,
+            text,
+            size,
+            align,
+            font,
+        };
+    let mid = y0 + TITLE_ROWS[0] / 2.0;
+    let mut out = vec![
+        Primitive::Polyline {
+            points: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+            closed: true,
+            pen: Pen::Border,
+            filled: false,
+        },
+        rule([x0, ym], [x1, ym]),
+        lettering(
+            [x0 + TITLE_PAD, mid],
+            title.name.clone(),
+            3.5,
+            Align::Start,
+            Font::Bold,
+        ),
+        lettering(
+            [x1 - TITLE_PAD, mid],
+            title.schema_text(),
+            LABEL,
+            Align::End,
+            Font::Sans,
+        ),
+    ];
+    // Columns two, one and one quarters wide, as on the boards.
+    let lefts = [x0, x0 + w / 2.0, x0 + w * 0.75];
+    for (x, (label, value, font)) in lefts.into_iter().zip(title.fields()) {
+        if x > x0 {
+            out.push(rule([x, ym], [x, y1]));
+        }
+        let at = |dy: f32| [x + TITLE_PAD, ym + dy];
+        out.push(lettering(
+            at(2.8),
+            label.into(),
+            1.8,
+            Align::Start,
+            Font::Caption,
+        ));
+        out.push(lettering(at(6.8), value, LABEL, Align::Start, font));
+    }
+    out
 }
 
 /// Bounding box `(min, max)` of the primitives; text counts as its estimated extent.
@@ -715,6 +962,7 @@ pub fn bounds(primitives: &[Primitive]) -> Option<(Point, Point)> {
                 text,
                 size,
                 align,
+                ..
             } => {
                 let w = text.chars().count() as f32 * size * 0.6;
                 let x0 = match align {
@@ -762,12 +1010,12 @@ fn draw_component(
             Primitive::Polyline {
                 points,
                 closed,
-                dashed,
+                pen,
                 filled,
             } => Primitive::Polyline {
                 points: points.into_iter().map(at).collect(),
                 closed,
-                dashed,
+                pen,
                 filled,
             },
             Primitive::Circle {
@@ -785,6 +1033,7 @@ fn draw_component(
                 text,
                 size,
                 align,
+                font,
             } => {
                 // A mirror and a half turn each swap the side; both together cancel out.
                 let align = match (place.mirror != (place.rotation == Rotation::R180), align) {
@@ -797,6 +1046,7 @@ fn draw_component(
                     text,
                     size,
                     align,
+                    font,
                 }
             }
         });
@@ -910,7 +1160,7 @@ fn draw_component(
                     [min[0] - pad, max[1] + pad],
                 ],
                 closed: true,
-                dashed: true,
+                pen: Pen::Frame,
                 filled: false,
             });
             let words = beside(&words, below + pad);
@@ -1108,10 +1358,16 @@ fn parts_and_wires(
     for net in &circuit.nets {
         starts.push(wires.len());
         if let Some(drawn) = (circuit.layout.wires.get(&net.id)).or(routed.get(net.id.as_str())) {
-            // Pilot and drain wires are dashed.
-            wires.extend(drawn.iter().map(|w| match w.kind {
-                LineKind::Working => open(w.points.clone()),
-                LineKind::Pilot | LineKind::Drain => dashed(w.points.clone()),
+            // Pilot and drain wires are dashed, each its own way.
+            wires.extend(drawn.iter().map(|w| Primitive::Polyline {
+                points: w.points.clone(),
+                closed: false,
+                pen: match w.kind {
+                    LineKind::Working => Pen::Working,
+                    LineKind::Pilot => Pen::Pilot,
+                    LineKind::Drain => Pen::Drain,
+                },
+                filled: false,
             }));
             let drawn: Vec<&[Point]> = drawn.iter().map(|w| &w.points[..]).collect();
             if !dotted {
@@ -1266,7 +1522,7 @@ fn automatic_wires(
                 if let Primitive::Polyline {
                     points,
                     closed: true,
-                    dashed: true,
+                    pen: Pen::Frame,
                     ..
                 } = p
                 {
@@ -1282,7 +1538,7 @@ fn automatic_wires(
                     p,
                     Primitive::Polyline {
                         closed: true,
-                        dashed: true,
+                        pen: Pen::Frame,
                         ..
                     }
                 )
@@ -2085,7 +2341,7 @@ pub fn wire_warnings(circuit: &Circuit, catalogue: &Catalogue) -> Vec<String> {
                 .collect();
             let symbol: Vec<Primitive> = (drawing.primitives.into_iter())
                 .filter(|p| !matches!(p, Primitive::Text { .. }))
-                .filter(|p| !matches!(p, Primitive::Polyline { dashed: true, .. }))
+                .filter(|p| !matches!(p, Primitive::Polyline { pen, .. } if pen.dash().is_some()))
                 .collect();
             let (lo, hi) = bounds(&symbol)?;
             Some((c, lo, hi, outward))
@@ -2257,7 +2513,7 @@ fn dash_dot(corners: &[Point], ports: &[Point]) -> Vec<Primitive> {
         return vec![Primitive::Polyline {
             points: corners.to_vec(),
             closed: true,
-            dashed: true,
+            pen: Pen::Pilot,
             filled: false,
         }];
     }
@@ -2299,7 +2555,12 @@ fn dash_dot(corners: &[Point], ports: &[Point]) -> Vec<Primitive> {
                         .filter(|(s, e)| e - s > 0.01)
                         .collect();
                 }
-                out.extend(pieces.into_iter().map(|(s, e)| line(at(s), at(e))));
+                out.extend(pieces.into_iter().map(|(s, e)| Primitive::Polyline {
+                    points: vec![at(s), at(e)],
+                    closed: false,
+                    pen: Pen::Outline,
+                    filled: false,
+                }));
             }
             pos += step;
             used += step;

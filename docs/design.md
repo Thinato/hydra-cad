@@ -48,18 +48,26 @@ Rules:
 - **Status is never colour alone.** It always comes with a word and a mark of its own shape: ▲ part not listed or warning, ■ missing or error, ⇄ stand-in, ✓ approved or checked, ◆ assistant, ● waiting, ✕ rejected. That way a status survives a black-and-white printout and reads for colour-blind engineers.
   - The marks are painted as shapes, not typed: `theme::Mark` names them and `Mark::paint` draws one in a rect. Plex has none of ▲ ■ ◆ ● ✕. egui's fallback fonts cover some of them in some families, and ✕ in none.
 - **Contrast is checked.** Text is at least 4.5:1 on every background it sits on. Edges and marks that must be seen (input borders, status frames, the accent) are at least 3:1. Amber and red also differ in lightness, not hue alone. The theme tests check all three for every palette.
-- **The sheet keeps ISO 1219 as on paper.** Lines are black ink and line kinds differ by dash pattern. UI colour reaches the sheet only as an overlay: the selection frame (2 px accent) and the status frame (`strong`). It never colours the lines themselves.
+- **The sheet keeps ISO 1219 as on paper.** Lines are black ink and line kinds differ by weight and dash pattern. UI colour reaches the sheet only as an overlay: the selection frame (2 px accent) and the status frame (2 px `strong`), both with `RADIUS` corners. It never colours the lines themselves. The one exception is the title block's "edited", "not saved" and "not yet" words, lettered in `unlisted.text` on the canvas.
+- **One drawing everywhere.** Each line carries its `hydra_symbols::Pen`, which says its weight and dash, so the canvas, the SVG and the PDF draw it alike. The canvas never draws a line thinner than 1 px. Exports are pure black on white, as printed and photocopied; the canvas uses `ink`.
 
-| Line | Weight | Pattern |
-| --- | --- | --- |
-| Working | 0.50 mm | solid |
-| Pilot | 0.35 mm | dash |
-| Drain | 0.35 mm | short dash |
-| Block outline | 0.35 mm | dash-dot |
+| Line | `Pen` | Weight | Pattern |
+| --- | --- | --- | --- |
+| Working | `Working` | 0.50 mm | solid |
+| Pilot | `Pilot` | 0.35 mm | dash 1.6, gap 0.8 |
+| Drain | `Drain` | 0.35 mm | short dash 0.6, gap 0.6 |
+| Block outline | `Outline` | 0.35 mm | dash-dot, drawn as separate dashes |
+| Symbol bodies, port circles | `Body` | 0.35 mm | solid |
+| Status frame | `Frame` | 0.25 mm | dash 1.0, gap 0.8 |
+| Title block frame / rules | `Border` / `Rule` | 0.50 / 0.25 mm | solid |
+
+Symbol bodies are 0.35 mm, not 0.50: a 10 mm envelope's springs, arrow heads and spool lines fill in at 0.50, and the lighter body lets the working lines read as the circuit's paths.
+
+- **The sheet** is the smallest landscape ISO A size, A4 to A0, that holds the drawing with 10 mm of paper round it and the title block under it (`hydra_symbols::sheet`). The drawing is centred above the title block, and the sheet's corner lies on the 5 mm grid, so the grid lines up with the drawing's coordinates; the sheet keeps 5 mm spare for that snap, so the margin is never under 10 mm. While a part is dragged, the sheet stays the document's. A drawing larger than A0 gets a sheet cut to fit it. The canvas paints `desk` round the sheet, a 1 px `border_strong` edge, and the grid: `grid` every 5 mm and `grid_major` on the drawing's multiples of 25 mm, the 5 mm lines left out once they would be closer than 4 px. Exports are the sheet, without the grid. Double-click fits the whole sheet.
 
 ## Type
 
-IBM Plex, chosen to match the lettering of the engineers' paper drawings. It is bundled in the binary from the unmodified upstream files in `crates/hydra/fonts/`, under the SIL Open Font License. The licence is in `OFL.txt` and can be read in the app (Account tab, "Font licence: IBM Plex"). egui's own fonts stay behind Plex as fallbacks.
+IBM Plex, chosen to match the lettering of the engineers' paper drawings. It is bundled in the binary from the unmodified upstream files in `crates/hydra/fonts/`, under the SIL Open Font License. `hydra-symbols` includes Plex Sans Regular, SemiBold and Condensed SemiBold from the same folder as `PLEX_SANS`, `PLEX_SANS_SEMIBOLD` and `PLEX_SANS_CONDENSED_SEMIBOLD`, which `theme.rs` installs too, so the binary holds each face once; the PDF export embeds them, the SVG names the same families, so the exports letter as the canvas does. The licence is in `OFL.txt` and can be read in the app (Account tab, "Font licence: IBM Plex"). egui's own fonts stay behind Plex as fallbacks.
 
 | Style | In code | Font | Use |
 | --- | --- | --- | --- |
@@ -109,7 +117,7 @@ The Components board shows each one. How they map to egui, with the `theme` help
 - **List rows:** `theme::list_row(ui, selected, name, add)`: a 1 px `divider` under each row; the selected row is `accent_tint` with a 1 px `accent` edge all round (never a coloured stripe down one side), and a focused row gets the same edge. A clickable row tells screen readers its name and whether it is selected (`WidgetInfo::selected`). The review queue and the parts list use it.
 - **Segmented control:** joined `Button::selected` segments in a `theme::group`; the selected one is `accent_tint`. The review queue's Waiting / All and the Issues / Extra BOM lines / Import notes switch under the sheet are ones.
 - **Issue list:** one row per issue: the severity word with its mark, the part as a link that selects it on the sheet, then the message. Errors come first.
-- **Title block:** in the corner of the sheet: the circuit name, schema, drawn by, revision with an "edited" mark, and checked by. It replaces the toolbar's revision text and prints in the SVG and PDF.
+- **Title block:** in the sheet's bottom right corner, 10 mm in, drawn by `hydra_symbols::title_block` so it prints in the SVG and PDF too. A 120 mm box (wider for a long name), a 0.50 mm frame and 0.25 mm rules: the circuit name in Plex Sans SemiBold and "schema N" on the first row, then DRAWN BY, REVISION and CHECKED in columns two, one and one quarters wide, their labels in Plex Sans Condensed SemiBold capitals (`secondary` on the canvas). It says only what Hydra knows: an import was drawn by the AI assistant, and at its first revision it is checked "not yet"; anything else reads "—". Hydra records no check, so the block never says a circuit was checked. The revision reads "not saved" for a new circuit, and "4, edited" with unsaved changes, in an export too, since an export is the circuit as it is. It replaces the toolbar's revision text; screen readers and kittests read it from the sheet's accessible label.
 - **Dialogs:** a 16 px title, a sentence saying that nothing has been lost and what the choice is, then the buttons right-aligned on a panel-coloured footer, with the primary button last.
 
 ## Layout of a tab
@@ -132,7 +140,8 @@ Approve stays off while a problem is open, and the action bar says why.
 Built so far: the queue, each waiting row with its check (■ problems, ▲ replaces a released type, ✓ checks pass), the header with its chips, the symbol on the sheet, the replace banner, the fields and parts tables, the notes, and the action bar pinned under the detail with its problem count. The step list, the datasheet page beside the symbol, each field's source page and the activity feed wait for data hydra-mcp doesn't record yet (see TODO.md).
 
 The Schematic tab follows the board around the sheet:
-- the toolbar's groups: file (Save as the primary button), edit, place (valve type, Place, Add port, Add part), the Draw wires toggle, and Export at the right, still read last; below them the circuit's name, the note for the next save, the revision and what happened last;
+- the toolbar's groups: file (Save as the primary button), edit, place (valve type, Place, Add port, Add part), the Draw wires toggle, and Export at the right, still read last; below them the circuit's name, the note for the next save and what happened last;
+- the sheet on the desk, with its grid and title block;
 - the unchecked-import banner with Mark checked;
 - the parts list on the left: valves with their series and code and a status chip, items, and block ports as chips; a click selects the part;
 - the inspector on the right: the part's designator and what it is, its status chip and why in plain words, CATALOGUE, USE INSTEAD with the stand-ins and the port mapping, the label or bill-of-materials fields, and PLACEMENT (Rotate R, Mirror M, Delete, In block, Plugged); for a selected wire its kind, Delete wire and Draw net automatically;
@@ -140,24 +149,17 @@ The Schematic tab follows the board around the sheet:
 - the status bar: the pointer's position on the sheet in mm, the zoom in points per mm (not a percentage, since screens differ in how big a point is) and the essential keys for the mode, with every key in its hover.
 - An issue links the part it is about only when it knows the part's id (`Issue::component`, or the part the outline is cut round); the drawn-wire messages link none. Nothing is guessed from a message's words.
 
-The revision stays as toolbar text until the title block is drawn on the sheet.
-
 ## Not built yet
 
 The boards show the target. `theme.rs` is in place, but these parts are still to come in the restyle PRs (see TODO.md):
-- **The sheet:**
-  - the grid and the desk around it (the canvas is plain white today);
-  - the title block;
-  - line weights: one stroke weight is drawn today. Pilot and drain share one dash, and the drain's short dash isn't drawn yet;
-  - the 2 px selection frame (1.5 px today);
-  - lettering in Plex in the SVG and PDF exports (they use Ubuntu Light).
+- **The sheet:** the title block's date and who drew or checked it, which need the revision's author and time from the database (the editor doesn't get them today); designators in Plex Mono SemiBold on the sheet, as the boards letter them (the sheet letters everything in Plex Sans).
 - **The tabs:**
   - the tab strip's 3 px accent edge and the Proposals count;
   - toolbar groups, side panels and the status bar on the Catalogue, Account and 3D tabs;
   - icons on the Undo and Redo buttons, which are words today;
   - on the Proposals tab: the assistant's step list, the datasheet page beside the symbol, each field's source page and the activity feed, which need new data from hydra-mcp;
   - primary buttons and chips in the Catalogue, Account and 3D tabs.
-- **Older literals:** a few places in older code still write literal colours or sizes: `schematic.rs` (sheet white and black ink), `viewer3d.rs`, and the catalogue's drop overlay. They move to the palette as their tab is restyled.
+- **Older literals:** a few places in older code still write literal colours or sizes: `viewer3d.rs` and the catalogue's drop overlay. They move to the palette as their tab is restyled.
 
 ## Adding a theme
 

@@ -9,7 +9,7 @@ Status: early development. The circuit model, symbol rendering, the schematic ed
 | Crate | What it holds |
 | --- | --- |
 | `crates/hydra-core` | Domain model: catalogue rows and manifold blocks with their mount faces, symbol definitions, circuit JSON (schema v5; v1 to v4 still read), validation, and the edit commands with undo/redo. No UI or database code. |
-| `crates/hydra-symbols` | Turns symbol definitions into lines, circles and text, lays out whole circuits, and writes SVG. |
+| `crates/hydra-symbols` | Turns symbol definitions into lines, circles and text, lays out whole circuits on an ISO A sheet with a title block, and writes SVG and PDF lettered in IBM Plex (from `crates/hydra/fonts/`). |
 | `crates/hydra-mesh` | Loads glTF models into triangle meshes in Hydra's model space (millimetres, Z up) and runs the 3D smoke test. |
 | `crates/hydra-db` | Postgres migrations (`migrations/`), the schema guard, the catalogue and circuit repositories, and the `hydra-admin` tool. |
 | `crates/hydra-mcp` | The `hydra-mcp` MCP server: lets an AI assistant read datasheets and the catalogue and submit catalogue proposals for review. |

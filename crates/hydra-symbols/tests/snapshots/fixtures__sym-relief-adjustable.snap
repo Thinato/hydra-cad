@@ -3,7 +3,7 @@ source: crates/hydra-symbols/tests/fixtures.rs
 expression: to_svg(&drawing.primitives)
 ---
 <svg xmlns="http://www.w3.org/2000/svg" width="21.00mm" height="20.00mm" viewBox="-9.00 -10.00 21.00 20.00">
-<g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
+<g fill="none" stroke="black" stroke-width="0.35" stroke-linecap="round" stroke-linejoin="round">
 <polygon points="-5.00,-5.00 5.00,-5.00 5.00,5.00 -5.00,5.00"/>
 <polyline points="-1.50,4.00 -1.50,-4.00"/>
 <polygon points="-1.50,-4.00 -0.90,-2.40 -2.10,-2.40" fill="black"/>
@@ -12,11 +12,11 @@ expression: to_svg(&drawing.primitives)
 <polyline points="5.00,0.00 5.42,1.50 6.25,-1.50 7.08,1.50 7.92,-1.50 8.75,1.50 9.58,-1.50 10.00,0.00"/>
 <polyline points="5.00,2.50 10.00,-2.50"/>
 <polygon points="10.00,-2.50 9.29,-0.94 8.44,-1.79" fill="black"/>
-<polyline points="0.00,6.50 -7.00,6.50 -7.00,0.00 -5.00,0.00" stroke-dasharray="1,0.8"/>
+<polyline points="0.00,6.50 -7.00,6.50 -7.00,0.00 -5.00,0.00" stroke-dasharray="1.6,0.8"/>
 <polygon points="-5.00,0.00 -6.60,0.60 -6.60,-0.60" fill="black"/>
 <polyline points="0.00,-5.00 0.00,-8.00"/>
 <polyline points="0.00,5.00 0.00,8.00"/>
-<text x="1.00" y="-6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
-<text x="1.00" y="6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
+<text x="1.00" y="-6.50" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">T</text>
+<text x="1.00" y="6.50" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">P</text>
 </g>
 </svg>

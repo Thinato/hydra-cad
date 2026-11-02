@@ -3,14 +3,14 @@ source: crates/hydra-symbols/tests/fixtures.rs
 expression: to_svg(&drawing.primitives)
 ---
 <svg xmlns="http://www.w3.org/2000/svg" width="16.00mm" height="20.00mm" viewBox="-8.00 -10.00 16.00 20.00">
-<g fill="none" stroke="black" stroke-width="0.25" stroke-linecap="round" stroke-linejoin="round">
+<g fill="none" stroke="black" stroke-width="0.35" stroke-linecap="round" stroke-linejoin="round">
 <polygon points="-6.00,-5.00 6.00,-5.00 6.00,5.00 -6.00,5.00"/>
-<text x="0.00" y="0.00" font-size="2.5" font-family="sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">PB10</text>
+<text x="0.00" y="0.00" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="middle" dominant-baseline="central" fill="black" stroke="none">PB10</text>
 <polyline points="-3.00,-5.00 -3.00,-8.00"/>
-<text x="-2.00" y="-6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">1</text>
+<text x="-2.00" y="-6.50" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">1</text>
 <polyline points="3.00,-5.00 3.00,-8.00"/>
-<text x="4.00" y="-6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">2</text>
+<text x="4.00" y="-6.50" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">2</text>
 <polyline points="0.00,5.00 0.00,8.00"/>
-<text x="1.00" y="6.50" font-size="2.5" font-family="sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">3</text>
+<text x="1.00" y="6.50" font-size="2.5" font-family="'IBM Plex Sans', sans-serif" text-anchor="start" dominant-baseline="central" fill="black" stroke="none">3</text>
 </g>
 </svg>
