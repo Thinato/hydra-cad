@@ -1,7 +1,8 @@
 //! Drawing helpers: paint hydra-symbols primitives with the egui painter.
 
 use eframe::egui::{self, Align2, FontFamily, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
-use hydra_symbols::{Align, Font, Pen, Point, Primitive, Sheet, bounds};
+use hydra_core::SymbolDef;
+use hydra_symbols::{Align, Font, Pen, Point, Primitive, Sheet, bounds, render_symbol};
 
 use crate::theme::{self, LIGHT};
 
@@ -16,6 +17,50 @@ pub fn draw_fitted(ui: &mut egui::Ui, size: Vec2, primitives: &[Primitive]) {
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let (pan, zoom) = fit(bounds(primitives), size);
     paint_sheet(&ui.painter_at(rect), rect, pan, zoom, None, primitives);
+}
+
+/// A symbol preview: `symbol` fitted in `size` on the sheet colour, over a caption strip with
+/// `caption` at its left and what `right` adds at its right, such as the symbol's reference.
+/// `size` includes the 1 px edge, so `ui.available_width()` fits without growing the panel.
+pub fn symbol_preview(
+    ui: &mut egui::Ui,
+    size: Vec2,
+    symbol: Option<&SymbolDef>,
+    caption: &str,
+    right: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Frame::new()
+        .fill(LIGHT.sheet)
+        .stroke(Stroke::new(1.0, LIGHT.border))
+        .show(ui, |ui| {
+            let size = Vec2::new((size.x - 2.0).max(0.0), size.y);
+            ui.set_width(size.x);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            match symbol {
+                Some(def) => draw_fitted(ui, size, &render_symbol(def).primitives),
+                None => {
+                    ui.allocate_exact_size(size, Sense::hover());
+                }
+            }
+            let strip = egui::Frame::new()
+                .fill(LIGHT.panel)
+                .inner_margin(egui::Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(caption)
+                                .small()
+                                .family(FontFamily::Name(theme::SEMIBOLD.into())),
+                        );
+                        let layout = egui::Layout::right_to_left(egui::Align::Center);
+                        ui.with_layout(layout, right);
+                    });
+                });
+            let rect = strip.response.rect;
+            ui.painter()
+                .hline(rect.x_range(), rect.top(), Stroke::new(1.0, LIGHT.border));
+        });
 }
 
 /// Pan and zoom that fit the box `(min, max)` into a view of `size` with a small margin.

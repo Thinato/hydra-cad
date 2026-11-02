@@ -6,11 +6,10 @@
 use eframe::egui::{self, Color32, FontFamily, RichText, Stroke, Vec2};
 use hydra_core::{Catalogue, CatalogueRef, Proposal, SymbolDef};
 use hydra_db::{ProposalRecord, ProposalStatus};
-use hydra_symbols::render_symbol;
 
 use crate::catalogue::Shared;
 use crate::db::Request;
-use crate::schematic::draw_fitted;
+use crate::schematic::symbol_preview;
 use crate::theme::{self, LIGHT, Mark};
 
 #[derive(Default)]
@@ -423,44 +422,6 @@ fn section(ui: &mut egui::Ui, title: &str) {
     ui.label(RichText::new(title).text_style(theme::heading()));
 }
 
-/// A bordered table: square, with `rows` laid out flush.
-fn table(ui: &mut egui::Ui, width: f32, rows: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new()
-        .fill(LIGHT.surface)
-        .stroke(Stroke::new(1.0, LIGHT.border))
-        .show(ui, |ui| {
-            ui.set_width(width);
-            ui.spacing_mut().item_spacing.y = 0.0;
-            rows(ui);
-        });
-}
-
-/// One table row on `fill`, with a divider under it.
-fn row(ui: &mut egui::Ui, fill: Color32, cells: impl FnOnce(&mut egui::Ui)) {
-    let r = egui::Frame::new()
-        .fill(fill)
-        .inner_margin(egui::Margin::symmetric(12, 6))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing = Vec2::new(12.0, 4.0);
-            ui.horizontal_top(cells);
-        });
-    let rect = r.response.rect;
-    ui.painter().hline(
-        rect.x_range(),
-        rect.bottom(),
-        Stroke::new(1.0, LIGHT.divider),
-    );
-}
-
-/// A table cell `width` wide.
-fn cell(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) {
-    ui.vertical(|ui| {
-        ui.set_width(width);
-        add(ui);
-    });
-}
-
 /// One proposal: header, symbol, fields, parts, notes and, while it waits, the action bar.
 /// Returns a request to send.
 fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -> Option<Request> {
@@ -559,7 +520,29 @@ fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -
                     });
 
                     ui.add_space(16.0);
-                    symbol_preview(ui, symbol, &proposal);
+                    let reference = match (&proposal.new_symbol, &v.symbol) {
+                        (Some(new), _) => Some(format!("new {}", new.reference())),
+                        (None, Some(s)) => Some(s.to_string()),
+                        (None, None) => None,
+                    };
+                    symbol_preview(
+                        ui,
+                        Vec2::new(360.0, 200.0),
+                        symbol,
+                        "How Hydra will draw it",
+                        |ui| match reference {
+                            Some(reference) => {
+                                ui.label(
+                                    RichText::new(reference)
+                                        .text_style(egui::TextStyle::Monospace)
+                                        .color(LIGHT.secondary),
+                                );
+                            }
+                            None => {
+                                theme::marked(ui, Mark::Error, RichText::new("No symbol").small());
+                            }
+                        },
+                    );
 
                     if pending && let Some(b) = base.as_ref().filter(|b| b.symbol.is_some()) {
                         ui.add_space(16.0);
@@ -584,17 +567,17 @@ fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -
                             ui,
                             &format!("Parts of the new version ({})", checked.parts.len()),
                         );
-                        table(ui, width, |ui| {
+                        theme::table(ui, width, |ui| {
                             for (number, options, how) in &checked.parts {
-                                row(ui, Color32::TRANSPARENT, |ui| {
-                                    cell(ui, 200.0, |ui| {
+                                theme::table_row(ui, Color32::TRANSPARENT, |ui| {
+                                    theme::cell(ui, 200.0, |ui| {
                                         ui.label(
                                             RichText::new(number).family(FontFamily::Name(
                                                 theme::MONO_SEMIBOLD.into(),
                                             )),
                                         );
                                     });
-                                    cell(ui, 64.0, |ui| {
+                                    theme::cell(ui, 64.0, |ui| {
                                         ui.label(RichText::new(*how).color(LIGHT.secondary));
                                     });
                                     ui.label(RichText::new(options).color(LIGHT.secondary));
@@ -618,70 +601,6 @@ fn detail(ui: &mut egui::Ui, review: &mut Review, shared: &Shared, busy: bool) -
     request
 }
 
-/// The symbol as Hydra will draw it, on the sheet, with its reference in a caption strip.
-fn symbol_preview(ui: &mut egui::Ui, symbol: Option<&SymbolDef>, proposal: &Proposal) {
-    let size = Vec2::new(360.0, 200.0);
-    egui::Frame::new()
-        .fill(LIGHT.sheet)
-        .stroke(Stroke::new(1.0, LIGHT.border))
-        .show(ui, |ui| {
-            ui.set_width(size.x);
-            ui.spacing_mut().item_spacing.y = 0.0;
-            match symbol {
-                Some(def) => draw_fitted(ui, size, &render_symbol(def).primitives),
-                None => {
-                    ui.allocate_exact_size(size, egui::Sense::hover());
-                }
-            }
-            let caption = egui::Frame::new()
-                .fill(LIGHT.panel)
-                .inner_margin(egui::Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("How Hydra will draw it")
-                                .small()
-                                .family(FontFamily::Name(theme::SEMIBOLD.into())),
-                        );
-                        let reference = match (&proposal.new_symbol, &proposal.valve_type.symbol) {
-                            (Some(new), _) => Some(format!("new {}", new.reference())),
-                            (None, Some(s)) => Some(s.to_string()),
-                            (None, None) => None,
-                        };
-                        match reference {
-                            Some(reference) => {
-                                let right = egui::Layout::right_to_left(egui::Align::Center);
-                                ui.with_layout(right, |ui| {
-                                    ui.label(
-                                        RichText::new(reference)
-                                            .text_style(egui::TextStyle::Monospace)
-                                            .color(LIGHT.secondary),
-                                    );
-                                });
-                            }
-                            None => {
-                                let right = egui::Layout::right_to_left(egui::Align::Center);
-                                ui.with_layout(right, |ui| {
-                                    theme::marked(
-                                        ui,
-                                        Mark::Error,
-                                        RichText::new("No symbol").small(),
-                                    );
-                                });
-                            }
-                        }
-                    });
-                });
-            let top = caption.response.rect.top();
-            ui.painter().hline(
-                caption.response.rect.x_range(),
-                top,
-                Stroke::new(1.0, LIGHT.border),
-            );
-        });
-}
-
 /// The fields table: what the proposal sets, editable while it waits, beside what it was.
 fn fields(
     ui: &mut egui::Ui,
@@ -695,11 +614,7 @@ fn fields(
     // Field, value and was; the row's 12 px margins and gaps come off the table's width.
     let cols = [150.0, ((width - 150.0 - 72.0) * 0.6).max(0.0)];
     let header = |ui: &mut egui::Ui, text: &str| {
-        ui.label(
-            RichText::new(text)
-                .text_style(theme::overline())
-                .color(LIGHT.secondary),
-        );
+        theme::column_title(ui, text);
     };
     // One row: the label, a CHANGED chip when the value differs from the base, the value, and
     // what it was.
@@ -714,14 +629,14 @@ fn fields(
         } else {
             Color32::TRANSPARENT
         };
-        row(ui, fill, |ui| {
-            cell(ui, cols[0], |ui| {
+        theme::table_row(ui, fill, |ui| {
+            theme::cell(ui, cols[0], |ui| {
                 ui.label(RichText::new(label).text_style(theme::label()));
                 if old.is_some() {
                     theme::chip(ui, Mark::Warning, "Changed");
                 }
             });
-            cell(ui, cols[1], |ui| value(ui));
+            theme::cell(ui, cols[1], |ui| value(ui));
             if let Some(old) = old {
                 ui.label(
                     RichText::new(format!(
@@ -733,10 +648,10 @@ fn fields(
             }
         });
     };
-    table(ui, width, |ui| {
-        row(ui, LIGHT.panel, |ui| {
-            cell(ui, cols[0], |ui| header(ui, "FIELD"));
-            cell(ui, cols[1], |ui| {
+    theme::table(ui, width, |ui| {
+        theme::table_row(ui, LIGHT.panel, |ui| {
+            theme::cell(ui, cols[0], |ui| header(ui, "FIELD"));
+            theme::cell(ui, cols[1], |ui| {
                 header(
                     ui,
                     if pending {

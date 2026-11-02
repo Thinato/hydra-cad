@@ -15,7 +15,6 @@ anyhow.workspace = true
 bytemuck.workspace = true
 eframe.workspace = true
 egui_dock.workspace = true
-egui_extras.workspace = true
 glam.workspace = true
 keyring.workspace = true
 rfd.workspace = true
