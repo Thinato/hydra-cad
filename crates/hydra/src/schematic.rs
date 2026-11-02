@@ -11,6 +11,13 @@ const GRID: f32 = 5.0;
 const MAJOR: usize = 5;
 /// Grid lines closer than this on screen are left out.
 const GRID_MIN_PX: f32 = 4.0;
+/// The zoom's range in px per mm. Never 0: text sized by it must stay positive.
+const ZOOM: (f32, f32) = (0.05, 200.0);
+
+/// `zoom` within [`ZOOM`]; NaN becomes the smallest.
+pub fn clamp_zoom(zoom: f32) -> f32 {
+    zoom.max(ZOOM.0).min(ZOOM.1)
+}
 
 /// Draw primitives scaled to fit a fixed-size box, e.g. a symbol preview.
 pub fn draw_fitted(ui: &mut egui::Ui, size: Vec2, primitives: &[Primitive]) {
@@ -69,7 +76,8 @@ pub fn fit(bounds: Option<(Point, Point)>, size: Vec2) -> (Vec2, f32) {
         return (Vec2::ZERO, 1.0);
     };
     let extent = Vec2::new(x1 - x0, y1 - y0).max(Vec2::splat(1.0));
-    let zoom = (size.x / extent.x).min(size.y / extent.y) * 0.9;
+    // A view with no room, such as a squeezed canvas, still gets a usable zoom.
+    let zoom = clamp_zoom((size.x / extent.x).min(size.y / extent.y) * 0.9);
     let centre = Vec2::new(x0 + x1, y0 + y1) / 2.0;
     (size / 2.0 - centre * zoom, zoom)
 }
@@ -85,6 +93,10 @@ pub fn paint_sheet(
     sheet: Option<(&Sheet, &[Primitive])>,
     primitives: &[Primitive],
 ) {
+    // Nothing to see, and text at no size would trip epaint.
+    if !rect.is_positive() || !(zoom > 0.0 && zoom.is_finite()) {
+        return;
+    }
     let origin = rect.min + pan;
     let to_screen = |[x, y]: Point| origin + Vec2::new(x, y) * zoom;
     let printed = match sheet {
@@ -221,7 +233,42 @@ fn paint(painter: &egui::Painter, prim: &Primitive, to_screen: &impl Fn(Point) -
 
 #[cfg(test)]
 mod tests {
-    use super::grid_lines;
+    use super::*;
+
+    #[test]
+    fn the_zoom_is_never_0_or_not_finite() {
+        assert_eq!(clamp_zoom(0.0), 0.05);
+        assert_eq!(clamp_zoom(-3.0), 0.05);
+        assert_eq!(clamp_zoom(f32::NAN), 0.05);
+        assert_eq!(clamp_zoom(f32::INFINITY), 200.0);
+        assert_eq!(clamp_zoom(6.0), 6.0);
+        let sheet = Some(([0.0, 0.0], [420.0, 297.0]));
+        for size in [Vec2::ZERO, Vec2::new(600.0, -40.0), Vec2::new(-1.0, 300.0)] {
+            assert_eq!(fit(sheet, size).1, 0.05, "{size:?}");
+        }
+        // A view with room fits as before: 90 % of the tighter side.
+        assert_eq!(fit(sheet, Vec2::new(840.0, 1000.0)).1, 1.8);
+    }
+
+    #[test]
+    fn a_sheet_at_no_zoom_paints_nothing_rather_than_panicking() {
+        let text = [Primitive::Text {
+            at: [10.0, 10.0],
+            text: "P".into(),
+            size: 2.5,
+            align: Align::Start,
+            font: Font::Sans,
+        }];
+        let ctx = egui::Context::default();
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0));
+        // Text at size 0 or NaN trips epaint's "Bad px_scale_factor" assertion.
+        for zoom in [0.0, f32::NAN] {
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                paint_sheet(&ui.painter_at(rect), rect, Vec2::ZERO, zoom, None, &text);
+            });
+            out.textures_delta.clear();
+        }
+    }
 
     #[test]
     fn grid_lines_fall_on_multiples_of_5_mm_with_25_mm_majors_and_thin_out() {
