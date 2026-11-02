@@ -59,6 +59,18 @@ struct Uniforms {
     color: [f32; 4],
 }
 
+impl Uniforms {
+    /// `instance`'s draw: its placement and its palette colour as the shader's 0..1 values.
+    fn new(instance: &Instance, view_proj: [[f32; 4]; 4], light_dir: [f32; 4]) -> Self {
+        Self {
+            view_proj,
+            model: instance.transform.to_cols_array_2d(),
+            light_dir,
+            color: instance.color.to_normalized_gamma_f32(),
+        }
+    }
+}
+
 /// One mesh to draw, placed in the scene. `key` names the mesh for the GPU cache, e.g. its hash.
 #[derive(Clone)]
 pub struct Instance {
@@ -213,7 +225,7 @@ impl Viewer3d {
     }
 
     /// The camera before it has seen a scene.
-    fn unfitted() -> Self {
+    pub(crate) fn unfitted() -> Self {
         Self {
             center: Vec3::ZERO,
             radius: 1.0,
@@ -302,12 +314,7 @@ impl Viewer3d {
                 scene
                     .iter()
                     .map(|i| {
-                        let uniforms = Uniforms {
-                            view_proj,
-                            model: i.transform.to_cols_array_2d(),
-                            light_dir,
-                            color: i.color.to_normalized_gamma_f32(),
-                        };
+                        let uniforms = Uniforms::new(i, view_proj, light_dir);
                         (i.key.clone(), i.mesh.clone(), uniforms)
                     })
                     .collect(),
@@ -407,5 +414,19 @@ mod tests {
             _ => None,
         });
         assert_eq!(ground, Some(LIGHT.viewport));
+    }
+
+    #[test]
+    fn a_models_palette_colour_reaches_the_shader() {
+        let instance = Instance {
+            key: "m".into(),
+            mesh: Arc::new(Mesh::default()),
+            transform: Mat4::IDENTITY,
+            color: LIGHT.accent,
+        };
+        let u = Uniforms::new(&instance, Mat4::IDENTITY.to_cols_array_2d(), [0.0; 4]);
+        // #1F5FAD, opaque.
+        let expected = [0x1F_u8, 0x5F, 0xAD, 0xFF].map(|v| f32::from(v) / 255.0);
+        assert_eq!(u.color, expected);
     }
 }

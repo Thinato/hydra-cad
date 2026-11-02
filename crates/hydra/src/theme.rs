@@ -610,7 +610,6 @@ pub fn active_tab_edge(painter: &Painter, tab: Rect) {
 /// `on_accent` on the `agent` tone's strong colour, for work the assistant left waiting. The
 /// title takes the tab's text colour.
 pub fn counted(title: &str, n: usize) -> WidgetText {
-    let sizes = style(&LIGHT).text_styles;
     let mut job = LayoutJob::default();
     let format = |font_id, color| TextFormat {
         font_id,
@@ -618,15 +617,8 @@ pub fn counted(title: &str, n: usize) -> WidgetText {
         valign: Align::Center,
         ..Default::default()
     };
-    job.append(
-        title,
-        0.0,
-        format(sizes[&TextStyle::Button].clone(), Color32::PLACEHOLDER),
-    );
-    let mono = FontId::new(
-        sizes[&TextStyle::Small].size,
-        FontFamily::Name(MONO_SEMIBOLD.into()),
-    );
+    job.append(title, 0.0, format(button_font(), Color32::PLACEHOLDER));
+    let mono = FontId::new(CAPTION, FontFamily::Name(MONO_SEMIBOLD.into()));
     job.append(
         &format!(" {n} "),
         8.0,
@@ -696,13 +688,21 @@ fn fonts() -> FontDefinitions {
     fonts
 }
 
+/// Caption size, `TextStyle::Small`.
+const CAPTION: f32 = 12.0;
+
+/// Button type, `TextStyle::Button`: Plex Sans Medium 13.
+fn button_font() -> FontId {
+    FontId::new(13.0, FontFamily::Name(MEDIUM.into()))
+}
+
 fn style(p: &Palette) -> egui::Style {
     let mut style = egui::Style::default();
     let family = |name: &str| FontFamily::Name(name.into());
     style.text_styles = [
-        (TextStyle::Small, FontId::proportional(12.0)),
+        (TextStyle::Small, FontId::proportional(CAPTION)),
         (TextStyle::Body, FontId::proportional(14.0)),
-        (TextStyle::Button, FontId::new(13.0, family(MEDIUM))),
+        (TextStyle::Button, button_font()),
         (TextStyle::Monospace, FontId::monospace(13.0)),
         (TextStyle::Heading, FontId::new(20.0, family(SEMIBOLD))),
         (heading(), FontId::new(16.0, family(SEMIBOLD))),

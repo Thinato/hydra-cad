@@ -278,7 +278,7 @@ impl ModelPanel {
 
         egui::Panel::left("assembly")
             .default_size(240.0)
-            .min_size(200.0)
+            .min_size(210.0)
             .max_size(420.0)
             .resizable(true)
             .frame(fill(LIGHT.panel))
@@ -304,8 +304,8 @@ impl ModelPanel {
         }
         let hint = if loading > 0 {
             Some(format!("Loading {loading} model(s)…"))
-        } else if placed.is_empty() && notes.is_empty() {
-            // With notes, the panel says why nothing shows.
+        } else if placed.is_empty() && notes.is_empty() && editor.circuit().assembly.is_none() {
+            // With a block or notes, the panel says why nothing shows.
             Some(
                 "Choose a block for the circuit, or select a valve in the schematic, to see it in 3D."
                     .into(),
@@ -318,8 +318,11 @@ impl ModelPanel {
 
     /// The view filling what is left, with a hint in `secondary` above it when there is one.
     fn viewport(&mut self, ui: &mut egui::Ui, scene: &[Instance], hint: Option<String>) {
-        let renderer = self.viewer.is_some();
-        let hint = hint.or_else(|| (!renderer).then(|| "3D needs the wgpu renderer.".into()));
+        // Without the renderer nothing else can show, so that comes first.
+        let hint = match self.viewer {
+            None => Some("3D needs the wgpu renderer.".to_string()),
+            Some(_) => hint,
+        };
         if let Some(hint) = hint {
             let hint = RichText::new(hint).color(LIGHT.secondary);
             egui::Frame::new()
@@ -638,7 +641,8 @@ mod tests {
             egui::Vec2::new(900.0, 800.0),
             |ui, (p, s, e): &mut State| p.ui(ui, s, e),
             (
-                ModelPanel::new(None),
+                // Paints nothing without the GPU resources the app installs.
+                ModelPanel::new(Some(Viewer3d::unfitted())),
                 shared(),
                 SchematicEditor::new(circuit, None),
             ),
@@ -841,6 +845,42 @@ mod tests {
         assert_eq!(colour_of(&h, offline), Some(LIGHT.secondary));
         // Nothing selected, nothing about a selection.
         assert!(h.query_by_label("SELECTED").is_none());
+        assert!(h.query_by_label("3D needs the wgpu renderer.").is_none());
+        // Without the renderer, that is what the view says, whatever else is going on.
+        let mut loose = demo();
+        loose.assembly = None;
+        let mut h = harness(loose);
+        h.state_mut().0.viewer = None;
+        h.run();
+        assert!(h.query_by_label("3D needs the wgpu renderer.").is_some());
+        assert!(h.query_by_label_contains("Choose a block").is_none());
+    }
+
+    #[test]
+    fn a_model_that_fails_to_load_is_an_error_and_an_unknown_block_needs_no_hint() {
+        let mut h = harness(demo());
+        h.state_mut().1 = with_models(shared());
+        h.state_mut()
+            .0
+            .loaded("block".into(), Err("not a glTF file".into()));
+        h.run();
+        assert_eq!(
+            colour_of(&h, "The block: not a glTF file"),
+            Some(LIGHT.missing.text)
+        );
+
+        // A block the catalogue doesn't have: its error says so, not the "choose" hint.
+        let mut c = demo();
+        c.assembly.as_mut().unwrap().block = CatalogueRef::new("blk-gone", 1);
+        let unknown = c
+            .validate(&shared().catalogue)
+            .into_iter()
+            .find(|i| matches!(i, Issue::UnknownBlock(_)))
+            .expect("an unknown block")
+            .to_string();
+        let h = harness(c);
+        assert_eq!(colour_of(&h, &unknown), Some(LIGHT.missing.text));
+        assert!(h.query_by_label_contains("Choose a block").is_none());
     }
 
     #[test]

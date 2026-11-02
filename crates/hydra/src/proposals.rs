@@ -203,6 +203,14 @@ impl ProposalsPanel {
         (n > 0).then_some(n)
     }
 
+    /// Fetch the queue unless it is loaded or on its way: on connecting, for the tab's count,
+    /// and on the tab's first view. After a failure, Refresh retries.
+    pub fn load(&mut self, shared: &Shared) {
+        if self.list.is_none() && !self.busy && self.error.is_none() {
+            self.refresh(shared);
+        }
+    }
+
     /// An approve or reject went through; the list is fetched again.
     pub fn reviewed(&mut self, shared: &Shared) {
         self.busy = false;
@@ -228,10 +236,7 @@ impl ProposalsPanel {
             ui.weak("Proposals need the shared database.");
             return;
         }
-        // Load once on first view; after a failure, Refresh retries.
-        if self.list.is_none() && !self.busy && self.error.is_none() {
-            self.refresh(shared);
-        }
+        self.load(shared);
         egui::Panel::left("proposal-list")
             .default_size(300.0)
             .min_size(220.0)
