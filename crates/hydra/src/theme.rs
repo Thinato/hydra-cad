@@ -362,6 +362,9 @@ pub fn banner<R>(
                 // The action follows the text, as it is read, and wraps with it.
                 ui.horizontal_wrapped(|ui| {
                     ui.add(Label::new(job).wrap());
+                    // A button keeps its words on one line and wraps to the next row whole,
+                    // rather than squeezing into a sliver.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     action(ui)
                 })
                 .inner
@@ -1185,6 +1188,20 @@ mod tests {
             (LIGHT.agent.strong, LIGHT.on_accent)
         );
         assert_eq!(badge.font_id.family, FontFamily::Name(MONO_SEMIBOLD.into()));
+    }
+
+    #[test]
+    fn a_banners_action_stays_on_one_line_when_narrow() {
+        let mut button = Rect::NOTHING;
+        shapes(|ui| {
+            ui.set_max_width(200.0);
+            banner(ui, Mark::Warning, "Imported.", "Check it.", |ui| {
+                button = ui.add(primary("Mark checked")).rect;
+            });
+        });
+        // One line of button type in a 32 px button, not two lines squeezed.
+        assert_eq!(button.height(), 32.0, "{button:?}");
+        assert!(button.width() > 80.0, "{button:?}");
     }
 
     #[test]

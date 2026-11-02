@@ -160,6 +160,10 @@ impl Panels {
                 Reply::Account(_) | Reply::Users(_) | Reply::UserFailed(_) if retired => {}
                 // Nor its proposals, which the Proposals tab counts: the current worker is
                 // asked instead, so the tab doesn't wait forever.
+                // ponytail: replies aren't tagged with the request they answer, so a stuck
+                // request from before a sign-in can make this ask twice (a duplicate list
+                // query), and a stray list reply can end the wait during an Approve (a second
+                // Approve is refused as already reviewed). Tag requests by worker if it matters.
                 Reply::Proposals(_) | Reply::ProposalFailed(_) if retired => {
                     self.proposals.refresh(&self.shared)
                 }
