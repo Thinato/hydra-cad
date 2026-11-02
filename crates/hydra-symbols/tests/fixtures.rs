@@ -2237,7 +2237,6 @@ fn sized(w: f32, h: f32) -> Vec<Primitive> {
 #[test]
 fn a_drawing_goes_on_the_smallest_landscape_a_sheet_that_holds_it() {
     let size = |w, h, title: Option<&Title>| sheet(&sized(w, h), title).size;
-    // 10 mm of paper all round.
     // 10 mm of paper all round, and 5 mm for the corner snapping to the grid.
     for (w, h, expected) in [
         (272.0, 185.0, "A4"),

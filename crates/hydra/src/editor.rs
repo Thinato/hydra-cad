@@ -334,7 +334,8 @@ impl SchematicEditor {
     }
 
     /// What the title block says about the circuit as it is now. Nothing records a check yet,
-    /// so it says only that an import at its first revision is waiting for one.
+    /// so it says only that an import, unsaved or at its first revision, is waiting for one.
+    /// The banner keeps to a saved first revision, since Mark checked needs one to save over.
     fn title(&self) -> Title {
         Title {
             name: self.doc.circuit.name.clone(),
@@ -342,7 +343,8 @@ impl SchematicEditor {
             revision: self.saved.as_ref().map(|s| s.revision),
             edited: self.doc.is_dirty(),
             imported: self.doc.circuit.import.is_some(),
-            unchecked: self.unchecked(),
+            unchecked: self.doc.circuit.import.is_some()
+                && self.saved.as_ref().is_none_or(|s| s.revision == 1),
         }
     }
 
@@ -4997,6 +4999,10 @@ mod tests {
             "{}",
             sheet(&h)
         );
+        assert!(sheet(&h).contains("checked: not yet"), "{}", sheet(&h));
+        // Opened without a saved revision, as offline from a file, nobody has checked it either.
+        let h = import_harness(None, false);
+        assert!(sheet(&h).contains("revision: not saved"), "{}", sheet(&h));
         assert!(sheet(&h).contains("checked: not yet"), "{}", sheet(&h));
         // Saving records no check, so a later revision doesn't claim one.
         let h = import_harness(Some(2), false);
