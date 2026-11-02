@@ -222,7 +222,8 @@ impl ProposalsPanel {
         self.error = Some(message);
     }
 
-    fn refresh(&mut self, shared: &Shared) {
+    /// Ask the current worker for the queue; the panel is busy until it answers.
+    pub fn refresh(&mut self, shared: &Shared) {
         if let Some(db) = &shared.db {
             db.send(Request::ListProposals {
                 pending_only: !self.show_reviewed,

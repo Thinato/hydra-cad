@@ -158,8 +158,11 @@ impl Panels {
                 Reply::WrongLogin | Reply::ConnectFailed(_) if retired => {}
                 // An old sign-in's account and users must not show under the current one.
                 Reply::Account(_) | Reply::Users(_) | Reply::UserFailed(_) if retired => {}
-                // Nor its proposals, which the Proposals tab counts.
-                Reply::Proposals(_) | Reply::ProposalFailed(_) if retired => {}
+                // Nor its proposals, which the Proposals tab counts: the current worker is
+                // asked instead, so the tab doesn't wait forever.
+                Reply::Proposals(_) | Reply::ProposalFailed(_) if retired => {
+                    self.proposals.refresh(&self.shared)
+                }
                 Reply::PasswordChanged if retired => {
                     self.shared.notice = Some("Your password was changed.".into())
                 }
@@ -823,6 +826,53 @@ mod tests {
         h.run();
         // Tabs stay on the main surface, where the edge is painted.
         assert!(!h.state_mut().1.allowed_in_windows(&mut Tab::View3d));
+    }
+
+    #[test]
+    fn a_proposals_request_the_old_worker_answers_is_asked_again() {
+        use hydra_db::ProposalStatus::Pending;
+        let record = proposals::tests::record;
+        let ctx = egui::Context::default();
+        let (mut panels, inbox, old_outbox) = panels_with_db(None);
+        panels.proposals.load(&panels.shared);
+        assert!(matches!(inbox.try_recv(), Ok(Request::ListProposals { .. })));
+        // A new password swaps in a new worker while the list is on its way.
+        let mut swap = |panels: &mut Panels| {
+            let old = panels.shared.db.take().unwrap();
+            panels.shared.retired.push(old.retire());
+            let (requests, inbox) = channel();
+            let (outbox, replies) = channel();
+            panels.shared.db = Some(Db::new(requests, replies));
+            (inbox, outbox)
+        };
+        let (new_inbox, new_outbox) = swap(&mut panels);
+        old_outbox
+            .send(Reply::Proposals(vec![record(Pending)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert!(
+            matches!(new_inbox.try_recv(), Ok(Request::ListProposals { .. })),
+            "asked again of the current worker"
+        );
+        new_outbox
+            .send(Reply::Proposals(vec![record(Pending), record(Pending)]))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert_eq!(panels.title(&mut Tab::Proposals).text(), "Proposals 2 ");
+
+        // A failure from the old worker is asked again too.
+        panels.proposals = proposals::ProposalsPanel::default();
+        panels.proposals.load(&panels.shared);
+        assert!(new_inbox.try_recv().is_ok());
+        let (newest_inbox, _newest_outbox) = swap(&mut panels);
+        new_outbox
+            .send(Reply::ProposalFailed("connection lost".into()))
+            .unwrap();
+        panels.poll_db(&ctx);
+        assert!(matches!(
+            newest_inbox.try_recv(),
+            Ok(Request::ListProposals { .. })
+        ));
     }
 
     type Strip = (Shared, Option<SignIn>, Option<Update>);
