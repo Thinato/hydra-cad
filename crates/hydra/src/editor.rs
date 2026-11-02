@@ -20,9 +20,11 @@ use hydra_symbols::{
 
 use crate::catalogue::Shared;
 use crate::db::Request;
-use crate::schematic::{draw_fitted, fit, paint_sheet};
+use crate::schematic::{clamp_zoom, draw_fitted, fit, paint_sheet};
 use crate::theme::{self, LIGHT, Mark};
 
+/// Below this width, in points, the tab is narrow: the parts list hides behind its toggle.
+const NARROW_TAB: f32 = 900.0;
 /// Parts snap to this grid, in millimetres.
 const GRID: f32 = 2.5;
 /// How close to a port anchor, in screen points, a press or release must be.
@@ -171,6 +173,8 @@ pub struct SchematicEditor {
     /// How often `valve_status` was recomputed, for tests.
     status_computed: usize,
     swap: Option<Swap>,
+    /// The parts list is shown in a narrow tab, where it hides behind its toolbar toggle.
+    parts_open: bool,
     /// Clicks draw wires: [`Self::route`] is the wire being drawn, once started.
     wiring: bool,
     route: Option<Route>,
@@ -215,6 +219,7 @@ impl SchematicEditor {
             valve_status: None,
             status_computed: 0,
             swap: None,
+            parts_open: false,
             wiring: false,
             route: None,
             bottom: Bottom::Issues,
@@ -742,11 +747,25 @@ impl SchematicEditor {
         let locked = self.awaiting.is_some();
         let status = self.circuit_status(shared);
         let issues = self.issues(shared);
+        // The sheet is the point of the tab, so it keeps most of it: in a narrow tab, such as the
+        // default dock's, the parts list hides behind its toggle and the inspector starts
+        // narrower, and the issues start at most three tenths of the tab's height. Only the
+        // starting sizes change: egui stores the size each panel is drawn at, so a maximum
+        // that follows the tab would shrink the panels for good as the window passes through
+        // smaller sizes. A narrow tab keeps its side panels' widths apart from a wide one's,
+        // so widening the window brings the wide layout back.
+        let narrow = ui.available_width() < NARROW_TAB;
+        let (parts_width, inspector_width) = if narrow {
+            (200.0, 260.0)
+        } else {
+            (248.0, 300.0)
+        };
+        let issues_height = (ui.available_height() * 0.3).clamp(90.0, 200.0);
         ui.add_enabled_ui(!locked, |ui| {
             let fill = |color| egui::Frame::new().fill(color);
             egui::Panel::top("schematic-toolbar")
                 .frame(fill(LIGHT.panel).inner_margin(egui::Margin::symmetric(12, 8)))
-                .show(ui, |ui| self.toolbar(ui, shared));
+                .show(ui, |ui| self.toolbar(ui, shared, narrow));
             if self.unchecked() {
                 egui::Panel::top("schematic-import")
                     .frame(egui::Frame::new())
@@ -759,21 +778,23 @@ impl SchematicEditor {
             // Each side panel stops short of the window, so the sheet always has room.
             egui::Panel::bottom("schematic-issues")
                 .resizable(true)
-                .default_size(200.0)
+                .default_size(issues_height)
                 .min_size(90.0)
                 .max_size(360.0)
                 .frame(fill(LIGHT.surface))
                 .show(ui, |ui| self.bottom_panel(ui, &issues));
-            egui::Panel::left("schematic-parts")
+            if !narrow || self.parts_open {
+                egui::Panel::left(egui::Id::new(("schematic-parts", narrow)))
+                    .resizable(true)
+                    .default_size(parts_width)
+                    .min_size(180.0)
+                    .max_size(400.0)
+                    .frame(fill(LIGHT.panel))
+                    .show(ui, |ui| self.parts(ui, &shared.catalogue, &status));
+            }
+            egui::Panel::right(egui::Id::new(("schematic-inspector", narrow)))
                 .resizable(true)
-                .default_size(248.0)
-                .min_size(180.0)
-                .max_size(400.0)
-                .frame(fill(LIGHT.panel))
-                .show(ui, |ui| self.parts(ui, &shared.catalogue, &status));
-            egui::Panel::right("schematic-inspector")
-                .resizable(true)
-                .default_size(300.0)
+                .default_size(inspector_width)
                 .min_size(240.0)
                 .max_size(480.0)
                 .frame(fill(LIGHT.panel))
@@ -793,9 +814,9 @@ impl SchematicEditor {
         self.dialogs(ui.ctx(), shared);
     }
 
-    /// File, edit and place groups, the wire toggle and Export, then the circuit's name, the
-    /// note for the next save and what happened last.
-    fn toolbar(&mut self, ui: &mut egui::Ui, shared: &Shared) {
+    /// File, edit and place groups, the parts toggle in a narrow tab, the wire toggle and
+    /// Export, then the circuit's name, the note for the next save and what happened last.
+    fn toolbar(&mut self, ui: &mut egui::Ui, shared: &Shared, narrow: bool) {
         let online = shared.db.is_some();
         let offline = "Needs the database connection";
         let busy = self.in_flight.is_some() || self.awaiting.is_some();
@@ -939,6 +960,15 @@ impl SchematicEditor {
                     }
                 });
             });
+            // In a narrow tab the parts list is a toggle, tinted while open, like the wires'.
+            if narrow
+                && ui
+                    .add(egui::Button::new("Parts").selected(self.parts_open))
+                    .on_hover_text("Show or hide the parts list")
+                    .clicked()
+            {
+                self.parts_open = !self.parts_open;
+            }
             // A toggle showing its key, tinted while on.
             let key = RichText::new("W").monospace().color(LIGHT.secondary);
             if ui
@@ -1372,7 +1402,9 @@ impl SchematicEditor {
 
     /// The selected part or wire, with every control that changes it.
     fn inspector(&mut self, ui: &mut egui::Ui, catalogue: &Catalogue, status: &CircuitStatus) {
-        egui::ScrollArea::vertical()
+        // Sideways too: a code wider than a narrow inspector scrolls inside it, rather than
+        // widening the panel over the sheet.
+        egui::ScrollArea::both()
             .id_salt("inspector")
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -1896,7 +1928,7 @@ impl SchematicEditor {
         }
         if let Some(pointer) = response.hover_pos() {
             let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
-            let zoom = (self.zoom * (scroll * 0.002).exp() * pinch).clamp(0.05, 200.0);
+            let zoom = clamp_zoom(self.zoom * (scroll * 0.002).exp() * pinch);
             let factor = zoom / self.zoom;
             if factor != 1.0 {
                 let anchor = pointer - rect.min;
@@ -5030,6 +5062,147 @@ mod tests {
         );
         let filled = (on_screen.width() / e.view.width()).max(on_screen.height() / e.view.height());
         assert!((filled - 0.9).abs() < 0.01, "{filled}");
+    }
+
+    /// The demo import, offline and unsaved, in a tab of `size`.
+    fn sized_harness(size: Vec2) -> Harness<'static, State> {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/circuits/demo-import-manifold.json"
+        );
+        let circuit = Circuit::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut h = theme::harness(
+            size,
+            |ui, (e, s): &mut State| e.ui(ui, s),
+            (SchematicEditor::new(circuit, None), shared()),
+        );
+        h.run_steps(4);
+        h
+    }
+
+    #[test]
+    fn a_narrow_tab_keeps_most_of_its_width_for_the_sheet_and_the_parts_behind_a_toggle() {
+        use egui::accesskit::{Role, Toggled};
+        // The Schematic tab in the default dock: 60 % of a 1200 px window.
+        let mut h = sized_harness(Vec2::new(720.0, 760.0));
+        let toggled = |h: &Harness<State>| h.get_by_label("Parts").accesskit_node().toggled();
+        let view = h.state().0.view;
+        assert!(view.width() >= 0.6 * 720.0, "{view:?}");
+        // The A3 sheet fits at a zoom its lettering can be read at, not as a thumbnail.
+        assert!(h.state().0.zoom >= 0.9, "{}", h.state().0.zoom);
+        assert!(h.query_by_label("PARTS").is_none());
+        assert_eq!(toggled(&h), Some(Toggled::False));
+        // A toolbar group too wide for what is left of its row starts the next one.
+        for label in ["Add part", "Parts", "Draw wires W", "Export"] {
+            let r = h.get_by_label(label).rect();
+            // The tab's edge: the harness less kittest's 8 px margin.
+            assert!(r.right() <= 712.0, "{label} runs off the toolbar: {r:?}");
+        }
+        // The inspector stays, narrower, and its codes don't widen it over the sheet.
+        assert!(
+            h.query_by_label_contains("Select a part on the sheet")
+                .is_some()
+        );
+        let e = &mut h.state_mut().0;
+        let valve = e.doc.circuit.components.iter_mut().find(|c| c.id == "5.1");
+        if let Some(Component {
+            kind: ComponentKind::Valve(v),
+            ..
+        }) = valve
+        {
+            v.part = Some("DEMO-06-4-3-T-24DC-A-LONG-ORDERING-CODE".into());
+        }
+        e.selected = Some("5.1".into());
+        h.run_steps(2);
+        let (catalogue, view) = (h.get_by_label("CATALOGUE").rect(), h.state().0.view);
+        assert!(catalogue.left() > view.right(), "{catalogue:?} {view:?}");
+        assert!(view.width() >= 0.6 * 720.0, "{view:?}");
+        // Opened, the list still picks a part, though the sheet gives it room for a while.
+        h.get_by_label("Parts").click();
+        h.run_steps(2);
+        assert_eq!(toggled(&h), Some(Toggled::True));
+        assert!(h.query_by_label("PARTS").is_some());
+        let view = h.state().0.view;
+        assert!(view.width() >= 0.33 * 720.0, "{view:?}");
+        h.get_by_role_and_label(Role::Button, "2.1").click();
+        h.run_steps(2);
+        assert_eq!(h.state().0.selected(), Some("2.1"));
+        h.get_by_label("Parts").click();
+        h.run_steps(2);
+        assert!(h.query_by_label("PARTS").is_none());
+        // Widened, the wide layout comes back whole; narrowed again, the list hides again.
+        h.set_size(Vec2::new(1400.0, 900.0));
+        h.run_steps(3);
+        assert!(h.query_by_label("PARTS").is_some());
+        assert!(h.query_by_label("Parts").is_none());
+        assert_eq!(h.state().0.view.width(), 1384.0 - 248.0 - 300.0);
+        h.set_size(Vec2::new(720.0, 760.0));
+        h.run_steps(3);
+        assert!(h.query_by_label("PARTS").is_none());
+        assert!(h.state().0.view.width() >= 0.6 * 720.0);
+    }
+
+    #[test]
+    fn a_wide_tab_keeps_the_parts_list_and_inspector_at_their_widths() {
+        let wide = Vec2::new(1400.0, 900.0);
+        // The tab is the harness less kittest's 8 px margins.
+        let sheet = 1384.0 - 248.0 - 300.0;
+        let mut h = sized_harness(wide);
+        assert!(h.query_by_label("PARTS").is_some());
+        assert!(h.query_by_label("Parts").is_none());
+        assert_eq!(h.state().0.view.width(), sheet);
+        // Passing through a smaller wide tab leaves the panels as they were.
+        h.set_size(Vec2::new(1100.0, 900.0));
+        h.run_steps(3);
+        h.set_size(wide);
+        h.run_steps(3);
+        assert_eq!(h.state().0.view.width(), sheet);
+        let mut h = sized_harness(Vec2::new(1000.0, 800.0));
+        assert!(h.query_by_label("PARTS").is_some());
+        h.set_size(wide);
+        h.run_steps(3);
+        assert_eq!(h.state().0.view.width(), sheet);
+        // So does a width the user dragged the inspector to.
+        let view = h.state().0.view;
+        let edge = Pos2::new(view.right() + 2.0, view.center().y);
+        drag(&mut h, edge, edge - Vec2::new(150.0, 0.0));
+        let inspector = |h: &Harness<State>| 1392.0 - h.state().0.view.right();
+        let dragged = inspector(&h);
+        assert!((dragged - 450.0).abs() <= 2.0, "{dragged}");
+        h.set_size(Vec2::new(1100.0, 900.0));
+        h.run_steps(3);
+        h.set_size(wide);
+        h.run_steps(3);
+        assert_eq!(inspector(&h), dragged);
+    }
+
+    #[test]
+    fn a_window_too_short_for_the_canvas_draws_without_panicking() {
+        // Short enough that the panels leave the canvas a sliver, nothing, or less than nothing.
+        let sizes = (100..=360).step_by(20).map(|h| Vec2::new(1200.0, h as f32));
+        for size in sizes.chain([Vec2::new(720.0, 200.0)]) {
+            let mut h = sized_harness(size);
+            let e = &h.state().0;
+            assert!(e.zoom > 0.0 && e.zoom.is_finite(), "{}", e.zoom);
+            // Refit, as a double-click does, and scroll far out over what is left of the canvas:
+            // unclamped, the zoom would underflow to 0.
+            h.state_mut().0.fitted_to = Some(Vec2::ZERO);
+            h.run_steps(2);
+            let at = h.state().0.view.center();
+            h.hover_at(at);
+            h.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: Vec2::new(0.0, -100_000.0),
+                modifiers: Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            });
+            h.run_steps(2);
+            let e = &h.state().0;
+            assert!(e.zoom > 0.0 && e.zoom.is_finite(), "{}", e.zoom);
+        }
+        // A short window still leaves the sheet some height: the issues give way.
+        let h = sized_harness(Vec2::new(1200.0, 400.0));
+        assert!(h.state().0.view.height() >= 120.0, "{:?}", h.state().0.view);
     }
 
     #[test]

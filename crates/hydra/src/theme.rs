@@ -363,6 +363,20 @@ pub fn banner<R>(
 /// `border` lines: a toolbar group or a segmented control. Give a segment
 /// `Button::selected` to show which one is on.
 pub fn group<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    // A wrapping row can't know a group's width before laying it out, so a group that didn't
+    // fit in the last frame starts a new row, rather than running off the row's end.
+    // ponytail: a group wider than a whole row (the Schematic's place group, below a tab of
+    // about 390 px) still runs off it; split or shrink the group if tabs get that narrow.
+    let width_id = ui.next_auto_id().with("group-width");
+    let row_started = ui.cursor().min.x > ui.max_rect().min.x;
+    if ui.layout().main_wrap
+        && row_started
+        && ui
+            .data(|d| d.get_temp::<f32>(width_id))
+            .is_some_and(|w| w > ui.available_size_before_wrap().x)
+    {
+        ui.end_row();
+    }
     let joined = ui.scope(|ui| {
         // Neighbours overlap by their 1 px edge, which is the divider between them.
         ui.spacing_mut().item_spacing.x = -1.0;
@@ -381,6 +395,8 @@ pub fn group<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         Stroke::new(1.0, LIGHT.border_strong),
         StrokeKind::Inside,
     );
+    let width = joined.response.rect.width();
+    ui.data_mut(|d| d.insert_temp(width_id, width));
     joined.inner
 }
 
