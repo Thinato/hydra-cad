@@ -835,9 +835,12 @@ mod tests {
         let ctx = egui::Context::default();
         let (mut panels, inbox, old_outbox) = panels_with_db(None);
         panels.proposals.load(&panels.shared);
-        assert!(matches!(inbox.try_recv(), Ok(Request::ListProposals { .. })));
+        assert!(matches!(
+            inbox.try_recv(),
+            Ok(Request::ListProposals { .. })
+        ));
         // A new password swaps in a new worker while the list is on its way.
-        let mut swap = |panels: &mut Panels| {
+        let swap = |panels: &mut Panels| {
             let old = panels.shared.db.take().unwrap();
             panels.shared.retired.push(old.retire());
             let (requests, inbox) = channel();
